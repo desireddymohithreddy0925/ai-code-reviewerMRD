@@ -39,9 +39,9 @@ function readFilesRecursively(dir, fileList = [], baseDir = dir) {
     if (stat.isDirectory()) {
       readFilesRecursively(filePath, fileList, baseDir);
     } else {
-      // Analyze only source code files (Python, JS, TS, HTML, CSS, Go, Rust, Java, C++)
+      // Analyze only source code files (Python, JS, TS, HTML, CSS, Go, Rust, Java, C++, PHP, Ruby, SQL)
       const ext = path.extname(file).toLowerCase();
-      const validExtensions = ['.js', '.jsx', '.ts', '.tsx', '.py', '.java', '.go', '.rs', '.cpp', '.h', '.cs'];
+      const validExtensions = ['.js', '.jsx', '.ts', '.tsx', '.py', '.java', '.go', '.rs', '.cpp', '.h', '.cs', '.php', '.rb', '.sql', '.html', '.css'];
       
       if (validExtensions.includes(ext)) {
         try {
@@ -57,6 +57,60 @@ function readFilesRecursively(dir, fileList = [], baseDir = dir) {
     }
   }
   return fileList;
+}
+
+// 🟢 Helper to scan for secrets/keys in code files
+function scanSecrets(fileContent) {
+  const findings = [];
+  const rules = [
+    {
+      type: "AWS Access Key Check",
+      regex: /AKIA[0-9A-Z]{16}/g,
+      description: "Potential AWS Access Key ID detected. If pushed to a public repository, malicious parties can hijack your AWS cloud infrastructure."
+    },
+    {
+      type: "GitHub Personal Access Token",
+      regex: /ghp_[a-zA-Z0-9]{36}/g,
+      description: "Hardcoded GitHub Personal Access Token detected. Unauthorized users can gain complete read/write access to your repositories."
+    },
+    {
+      type: "Stripe Secret API Key",
+      regex: /sk_live_[0-9a-zA-Z]{24}/g,
+      description: "Hardcoded live Stripe Secret Key detected. This can expose customer transaction history or result in financial exploitation."
+    },
+    {
+      type: "Google Cloud API Key",
+      regex: /AIzaSy[a-zA-Z0-9-_]{33}/g,
+      description: "Hardcoded Google Cloud API Key detected. Allows unauthorized usage of GCP billing services and resources."
+    },
+    {
+      type: "Database Connection Credentials",
+      regex: /(mongodb(?:\+srv)?:\/\/|postgres(?:ql)?:\/\/|mysql:\/\/)[a-zA-Z0-9_]+:[a-zA-Z0-9_]+@/gi,
+      description: "Database connection credentials detected directly in code. Exposes the database tables to global read/write breaches."
+    },
+    {
+      type: "Slack Incoming Webhook",
+      regex: /https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]{8}\/B[A-Z0-9]{8}\/[A-Za-z0-9]{24}/g,
+      description: "Hardcoded Slack Incoming Webhook detected. Allows external parties to send spam or phish users inside your workspace channels."
+    }
+  ];
+
+  const lines = fileContent.split('\n');
+  lines.forEach((line, idx) => {
+    rules.forEach(rule => {
+      rule.regex.lastIndex = 0;
+      if (rule.regex.test(line)) {
+        findings.push({
+          type: rule.type,
+          line: idx + 1,
+          description: rule.description,
+          suggestion: "Move this secret immediately to a protected environment configuration file (.env) and reference it as a dynamic variable instead."
+        });
+      }
+    });
+  });
+
+  return findings;
 }
 
 // 🟢 Helper to delete a folder recursively
@@ -128,6 +182,30 @@ app.post('/api/analyze', async (req, res) => {
         console.warn('⚠️ FastAPI engine not running, falling back to local Express review handler');
         // Let's generate a smart mockup review based on files so it works as an autonomous MVP
         reviewResult = mockAIReview(files);
+      }
+
+      // 3. Inject Regex-based Secret Detections into the analysis result
+      if (reviewResult && reviewResult.fileReviews) {
+        files.forEach(file => {
+          const secretFindings = scanSecrets(file.content);
+          if (secretFindings.length > 0) {
+            // Make sure the file exists in reviews
+            if (!reviewResult.fileReviews[file.name]) {
+              reviewResult.fileReviews[file.name] = { bugs: [], security: [], optimization: [], styling: [] };
+            }
+            // Append found secrets to security category
+            if (!reviewResult.fileReviews[file.name].security) {
+              reviewResult.fileReviews[file.name].security = [];
+            }
+            // Avoid duplicate additions
+            secretFindings.forEach(finding => {
+              const duplicate = reviewResult.fileReviews[file.name].security.some(s => s.line === finding.line && s.type === finding.type);
+              if (!duplicate) {
+                reviewResult.fileReviews[file.name].security.unshift(finding); // Place at top of security findings
+              }
+            });
+          }
+        });
       }
 
       // 3. Clean up folder
