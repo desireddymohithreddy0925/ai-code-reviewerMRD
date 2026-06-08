@@ -18,7 +18,9 @@ import {
   Copy,
   Check,
   Sun,
-  Moon
+  Moon,
+  Clock,
+  Trash2
 } from 'lucide-react';
 import mermaid from 'mermaid';
 
@@ -71,6 +73,16 @@ interface BackendResponse {
   repoName: string;
   filesReviewedCount: number;
   analysis: AnalysisData;
+}
+
+interface AuditHistoryEntry {
+  id: string;
+  repoUrl: string;
+  repoName: string;
+  auditedAt: string;
+  totalFindings: number;
+  overallGrade: string;
+  response: BackendResponse;
 }
 
 interface MermaidViewerProps {
@@ -231,6 +243,15 @@ export default function App() {
   const [activeExtFilter, setActiveExtFilter] = useState('All');
   const [activeTab, setActiveTab] = useState<'bugs' | 'security' | 'optimization' | 'styling' | 'metrics'>('bugs');
   const [apiError, setApiError] = useState<string | null>(null);
+  const [auditHistory, setAuditHistory] = useState<AuditHistoryEntry[]>(() => {
+    try {
+      const savedHistory = localStorage.getItem('reposage_audit_history');
+      return savedHistory ? JSON.parse(savedHistory) : [];
+    } catch (err) {
+      console.error('Failed to load audit history:', err);
+      return [];
+    }
+  });
 
   // Automated Issue Generator States
   const [isGssocLabelingEnabled, setIsGssocLabelingEnabled] = useState(true);
@@ -484,6 +505,63 @@ export default function App() {
     }
   };
 
+  const calculateTotalFindings = (result: BackendResponse) => {
+    return Object.values(result.analysis.fileReviews || {}).reduce((total, review) => {
+      return total +
+        (review.bugs?.length || 0) +
+        (review.security?.length || 0) +
+        (review.optimization?.length || 0) +
+        (review.styling?.length || 0);
+    }, 0);
+  };
+
+  const getAuditGrade = (totalFindings: number) => {
+    if (totalFindings === 0) return 'A';
+    if (totalFindings <= 5) return 'B';
+    if (totalFindings <= 15) return 'C';
+    return 'D';
+  };
+
+  const persistAuditHistory = (result: BackendResponse) => {
+    const totalFindings = calculateTotalFindings(result);
+    const entry: AuditHistoryEntry = {
+      id: `${result.repoName}-${Date.now()}`,
+      repoUrl,
+      repoName: result.repoName,
+      auditedAt: new Date().toISOString(),
+      totalFindings,
+      overallGrade: getAuditGrade(totalFindings),
+      response: result
+    };
+
+    setAuditHistory(prev => {
+      const updatedHistory = [
+        entry,
+        ...prev.filter(item => item.repoUrl !== repoUrl)
+      ].slice(0, 10);
+      localStorage.setItem('reposage_audit_history', JSON.stringify(updatedHistory));
+      return updatedHistory;
+    });
+  };
+
+  const loadAuditFromHistory = (entry: AuditHistoryEntry) => {
+    setRepoUrl(entry.repoUrl);
+    setAnalysisResult(entry.response);
+    setApiError(null);
+    setIsLoading(false);
+    setActiveDashboardView('audit');
+    setFileFilterQuery('');
+    setActiveExtFilter('All');
+
+    const filesList = Object.keys(entry.response.analysis.fileReviews || {});
+    setSelectedFile(filesList[0] || null);
+  };
+
+  const clearAuditHistory = () => {
+    setAuditHistory([]);
+    localStorage.removeItem('reposage_audit_history');
+  };
+
   // Submit Handler to Call Backend API
   const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -529,6 +607,7 @@ export default function App() {
 
       const data: BackendResponse = await response.json();
       setAnalysisResult(data);
+      persistAuditHistory(data);
       
       // Select the first file reviewed automatically
       const filesList = Object.keys(data.analysis.fileReviews);
@@ -823,6 +902,49 @@ export default function App() {
                 )}
               </button>
             </form>
+          </div>
+
+          {/* Recent Audit History */}
+          <div className="glass-panel" style={{ padding: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '12px' }}>
+              <div>
+                <h2 style={{ fontSize: '15px', fontWeight: 700, color: '#f3f4f6', margin: '0 0 4px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Clock size={18} style={{ color: '#60a5fa' }} /> Recent Audits
+                </h2>
+                <p style={{ margin: 0, fontSize: '11px', color: '#9ca3af' }}>Reload cached repository scans</p>
+              </div>
+              {auditHistory.length > 0 && (
+                <button
+                  onClick={clearAuditHistory}
+                  title="Clear audit history"
+                  style={{ width: '28px', height: '28px', borderRadius: '6px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
+
+            {auditHistory.length === 0 ? (
+              <div style={{ padding: '12px', borderRadius: '6px', background: 'rgba(255,255,255,0.03)', border: '1px dashed rgba(255,255,255,0.08)', color: '#9ca3af', fontSize: '11px', lineHeight: 1.5 }}>
+                Completed scans will appear here after a successful analysis.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {auditHistory.slice(0, 5).map(entry => (
+                  <button
+                    key={entry.id}
+                    onClick={() => loadAuditFromHistory(entry)}
+                    style={{ width: '100%', textAlign: 'left', padding: '10px', borderRadius: '6px', background: 'rgba(59,130,246,0.05)', border: '1px solid rgba(59,130,246,0.12)', color: '#e5e7eb', cursor: 'pointer' }}
+                  >
+                    <span style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#f3f4f6', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.repoName}</span>
+                    <span style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginTop: '6px', fontSize: '10px', color: '#9ca3af' }}>
+                      <span>{new Date(entry.auditedAt).toLocaleDateString()}</span>
+                      <span>{entry.totalFindings} findings · Grade {entry.overallGrade}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* GSSoC Contributor & Mentorship Portal */}
