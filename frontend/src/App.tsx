@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from 'react';
 import SettingsModal from "./components/SettingsModal";
 import {
   Github,
@@ -87,10 +87,8 @@ function MermaidViewer({ chart, repoName }: MermaidViewerProps) {
 
   useEffect(() => {
     if (!chart) return;
-
     setError(null);
     const uniqueId = `mermaid-${Math.floor(Math.random() * 100000)}`;
-
     const renderChart = async () => {
       try {
         setSvg("");
@@ -3923,6 +3921,6 @@ export default function App() {
           <span>Status: Production MVP Ready</span>
         </div>
       </footer>
-    </div>
+          </div>
   );
 }
