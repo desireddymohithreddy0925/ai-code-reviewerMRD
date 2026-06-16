@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 const DEFAULT_SETTINGS = {
   temperature: 0.7,
@@ -7,40 +7,86 @@ const DEFAULT_SETTINGS = {
 };
 
 interface SettingsModalProps {
+  theme?: "dark" | "light";
   onClose: () => void;
 }
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  const focusableSelector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+  const trapFocus = useCallback((e: KeyboardEvent) => {
+    if (e.key !== "Tab") return;
+    const modal = modalRef.current;
+    if (!modal) return;
+    const focusable = modal.querySelectorAll<HTMLElement>(focusableSelector);
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey) {
+      if (document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      if (document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, []);
 
   useEffect(() => {
+    previousFocusRef.current = document.activeElement as HTMLElement;
     const saved = localStorage.getItem("reposage_ai_settings");
-
     if (saved) {
       setSettings(JSON.parse(saved));
     }
-  }, []);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      trapFocus(e);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previousFocusRef.current?.focus();
+    };
+  }, [onClose, trapFocus]);
 
   const handleSave = () => {
     localStorage.setItem(
       "reposage_ai_settings",
       JSON.stringify(settings)
     );
-
     onClose();
   };
 
   const handleReset = () => {
     setSettings(DEFAULT_SETTINGS);
-
     localStorage.setItem(
       "reposage_ai_settings",
       JSON.stringify(DEFAULT_SETTINGS)
     );
   };
 
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  };
+
   return (
     <div
+      onClick={handleBackdropClick}
+      role="dialog"
+      aria-modal="true"
+      aria-label="AI Settings"
       style={{
         position: "fixed",
         inset: 0,
@@ -52,25 +98,50 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       }}
     >
       <div
+        ref={modalRef}
         className="glass-panel"
         style={{
           width: "550px",
           maxWidth: "90%",
           padding: "24px",
           borderRadius: "12px",
-          background: "var(--bg-secondary)",
-          color: "var(--text-primary)",
+          background: "var(--panel-bg)",
+          color: "var(--text-color)",
           border: "1px solid var(--border-color)",
         }}
       >
-        <h2
+        <div
           style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
             marginBottom: "24px",
-            color: "var(--text-primary)",
           }}
         >
-          ⚙️ AI Settings
-        </h2>
+          <h2 style={{ margin: 0, color: "var(--text-color)" }}>
+            ⚙️ AI Settings
+          </h2>
+          <button
+            onClick={onClose}
+            aria-label="Close settings"
+            title="Close"
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-color)",
+              cursor: "pointer",
+              fontSize: "20px",
+              padding: "4px 8px",
+              borderRadius: "6px",
+              lineHeight: 1,
+              opacity: 0.7,
+            }}
+            onMouseOver={(e) => (e.currentTarget.style.opacity = "1")}
+            onMouseOut={(e) => (e.currentTarget.style.opacity = "0.7")}
+          >
+            ✕
+          </button>
+        </div>
 
         {/* Temperature */}
         <div style={{ marginBottom: "24px" }}>
@@ -78,7 +149,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             style={{
               display: "block",
               marginBottom: "8px",
-              color: "var(--text-primary)",
+              color: "var(--text-color)",
               fontWeight: 600,
             }}
           >
@@ -110,7 +181,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             style={{
               display: "block",
               marginBottom: "8px",
-              color: "var(--text-primary)",
+              color: "var(--text-color)",
               fontWeight: 600,
             }}
           >
@@ -130,8 +201,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               width: "100%",
               padding: "10px",
               borderRadius: "8px",
-              background: "var(--bg-primary)",
-              color: "var(--text-primary)",
+              background: "rgba(15, 23, 42, 0.6)",
+              color: "var(--text-color)",
               border: "1px solid var(--border-color)",
               outline: "none",
             }}
@@ -144,7 +215,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             style={{
               display: "block",
               marginBottom: "8px",
-              color: "var(--text-primary)",
+              color: "var(--text-color)",
               fontWeight: 600,
             }}
           >
@@ -153,6 +224,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
           <textarea
             rows={6}
+            maxLength={2000}
             value={settings.systemPrompt}
             onChange={(e) =>
               setSettings({
@@ -166,12 +238,24 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               padding: "12px",
               borderRadius: "8px",
               resize: "vertical",
-              background: "var(--bg-primary)",
-              color: "var(--text-primary)",
+              background: "rgba(15, 23, 42, 0.6)",
+              color: "var(--text-color)",
               border: "1px solid var(--border-color)",
               outline: "none",
             }}
           />
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginTop: "4px",
+              fontSize: "11px",
+              color: "#9ca3af",
+            }}
+          >
+            <span>⚠️ Malicious prompts may override AI behavior. Use only trusted instructions.</span>
+            <span>{settings.systemPrompt.length}/2000</span>
+          </div>
         </div>
 
         {/* Buttons */}
@@ -185,8 +269,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           <button
             onClick={handleReset}
             style={{
-              background: "var(--bg-primary)",
-              color: "var(--text-primary)",
+              background: "rgba(15, 23, 42, 0.6)",
+              color: "var(--text-color)",
               border: "1px solid var(--border-color)",
               padding: "10px 16px",
               borderRadius: "8px",
@@ -206,8 +290,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             <button
               onClick={onClose}
               style={{
-                background: "var(--bg-primary)",
-                color: "var(--text-primary)",
+                background: "rgba(15, 23, 42, 0.6)",
+                color: "var(--text-color)",
                 border: "1px solid var(--border-color)",
                 padding: "10px 16px",
                 borderRadius: "8px",
