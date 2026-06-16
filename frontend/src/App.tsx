@@ -895,6 +895,7 @@ export default function App() {
           temperature: aiSettings.temperature ?? 0.7,
           maxTokens: aiSettings.maxTokens ?? 2048,
           systemPrompt: aiSettings.systemPrompt ?? "",
+          batchSize: aiSettings.batchSize ?? 5,
         }),
       });
 
@@ -975,6 +976,7 @@ export default function App() {
             temperature: aiSettings.temperature ?? 0.7,
             maxTokens: aiSettings.maxTokens ?? 2048,
             systemPrompt: aiSettings.systemPrompt ?? "",
+            batchSize: aiSettings.batchSize ?? 5,
           }),
         });
 

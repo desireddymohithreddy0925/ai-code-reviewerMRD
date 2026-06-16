@@ -116,7 +116,7 @@ process.on('SIGINT', () => {
 // 🟢 Route: GitHub Import & AI Review
 app.post('/api/analyze', requireApiKey, analyzeLimiter, async (req, res) => {
   const { repoUrl, company = 'General', language = 'English', model = 'llama-3.3-70b-versatile',temperature = 0.7,
-     maxTokens = 2048, systemPrompt = ''
+     maxTokens = 2048, systemPrompt = '', batchSize = 5
    } = req.body;
 
   if (!repoUrl) {
@@ -193,7 +193,7 @@ app.post('/api/analyze', requireApiKey, analyzeLimiter, async (req, res) => {
         const aiResponse = await fetch(`${aiEngineUrl}/analyze`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ files, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt })
+          body: JSON.stringify({ files, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt, batchSize })
         });
         
         if (aiResponse.ok) {
