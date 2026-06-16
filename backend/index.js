@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { Octokit } from '@octokit/rest';
 import PDFDocument from 'pdfkit';
 import { scanSecrets, scanSecretsInChanges } from './utils/secretsScanner.js';
+import { requireApiKey } from './utils/authMiddleware.js';
 
 dotenv.config();
 
@@ -297,7 +298,7 @@ function deleteFolderRecursive(directoryPath) {
 }
 
 // 🟢 Route: GitHub Import & AI Review
-app.post('/api/analyze', async (req, res) => {
+app.post('/api/analyze', requireApiKey, async (req, res) => {
   const { repoUrl, company = 'General', language = 'English', model = 'llama-3.3-70b-versatile',temperature = 0.7,
      maxTokens = 2048,systemPrompt = ''
    } = req.body;
@@ -411,7 +412,7 @@ app.post('/api/analyze', async (req, res) => {
 });
 
 // 🟢 Route: AI Chat with Repository
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', requireApiKey, async (req, res) => {
   const { message, history = [], model = 'llama-3.3-70b-versatile' } = req.body;
 
   if (!message) {
@@ -501,7 +502,7 @@ app.post('/api/webhook', async (req, res) => {
 });
 
 // 🟢 Route: Create GitHub Issue automatically for Code Reviews
-app.post('/api/issues/create', async (req, res) => {
+app.post('/api/issues/create', requireApiKey, async (req, res) => {
   const { repoUrl, title, body, labels = [] } = req.body;
   const token = process.env.GITHUB_PAT;
 
@@ -728,7 +729,7 @@ Generated automatically by **RepoSage AI Generator**.`;
 }
 
 // 🟢 Route: Export Review Report to HTML
-app.post('/api/reports/html', (req, res) => {
+app.post('/api/reports/html', requireApiKey, (req, res) => {
   const { repoName, analysis } = req.body;
   if (!repoName || !analysis) {
     return res.status(400).json({ error: 'Repository name and analysis result are required.' });
@@ -879,7 +880,7 @@ app.post('/api/reports/html', (req, res) => {
 });
 
 // 🟢 Route: Export Review Report to PDF
-app.post('/api/reports/pdf', (req, res) => {
+app.post('/api/reports/pdf', requireApiKey, (req, res) => {
   const { repoName, analysis } = req.body;
   if (!repoName || !analysis) {
     return res.status(400).json({ error: 'Repository name and analysis result are required.' });
