@@ -327,6 +327,33 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState("");
 
+  // Toast Notification State
+  const [toasts, setToasts] = useState<Array<{ id: number; message: string; type: "error" | "warning" | "info" }>>([]);
+  let toastIdCounter = useRef(0);
+  const addToast = (message: string, type: "error" | "warning" | "info" = "error") => {
+    const id = ++toastIdCounter.current;
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 5000);
+  };
+  const removeToast = (id: number) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  };
+
+  // Offline detection
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  useEffect(() => {
+    const handleOnline = () => { setIsOffline(false); addToast("Backend connection restored.", "info"); };
+    const handleOffline = () => { setIsOffline(true); addToast("Network connection lost. Please check your internet.", "error"); };
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
   // Response & View State
   const [analysisResult, setAnalysisResult] = useState<BackendResponse | null>(
     null,
@@ -622,7 +649,7 @@ export default function App() {
 
     // Disable issue creation for mock/placeholder findings
     if (analysisResult._mock) {
-      alert('Cannot create GitHub issues for placeholder findings. Please connect the AI Engine for real analysis.');
+      addToast('Cannot create GitHub issues for placeholder findings. Please connect the AI Engine for real analysis.', 'warning');
       return;
     }
 
@@ -676,7 +703,7 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      alert(`Error creating issue: ${err.message}`);
+      addToast(`Error creating issue: ${err.message}`);
     } finally {
       setCreatingIssues((prev) => ({ ...prev, [itemKey]: false }));
     }
@@ -728,6 +755,7 @@ export default function App() {
       ]);
     } catch (err: any) {
       console.error(err);
+      addToast(err.message || "Chat service unavailable. Check backend connection.", "error");
       setChatHistory((prev) => [
         ...prev,
         {
@@ -956,10 +984,9 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      setApiError(
-        err.message ||
-          "Could not connect to the backend server. Make sure node backend is running on port 5000.",
-      );
+      const errorMsg = err.message || "Could not connect to the backend server. Make sure node backend is running on port 5000.";
+      setApiError(errorMsg);
+      addToast(errorMsg, "error");
     } finally {
       clearInterval(stepInterval);
       setIsLoading(false);
@@ -1304,6 +1331,61 @@ export default function App() {
         boxSizing: "border-box",
       }}
     >
+      {/* Toast notifications (like VS Code showErrorMessage) */}
+      {toasts.length > 0 && (
+        <div
+          style={{
+            position: "fixed",
+            top: "16px",
+            right: "16px",
+            zIndex: 9999,
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px",
+            maxWidth: "400px",
+          }}
+        >
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              style={{
+                background: toast.type === "error" ? "rgba(239, 68, 68, 0.95)" : toast.type === "warning" ? "rgba(245, 158, 11, 0.95)" : "rgba(59, 130, 246, 0.95)",
+                color: "#fff",
+                padding: "12px 16px",
+                borderRadius: "8px",
+                fontSize: "13px",
+                fontWeight: 500,
+                boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "10px",
+                backdropFilter: "blur(8px)",
+                border: toast.type === "error" ? "1px solid rgba(239, 68, 68, 0.5)" : toast.type === "warning" ? "1px solid rgba(245, 158, 11, 0.5)" : "1px solid rgba(59, 130, 246, 0.5)",
+                animation: "toast-slide-in 0.3s ease-out",
+              }}
+            >
+              {toast.type === "error" ? <AlertOctagon size={16} style={{ flexShrink: 0, marginTop: "1px" }} /> : toast.type === "warning" ? <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: "1px" }} /> : <AlertOctagon size={16} style={{ flexShrink: 0, marginTop: "1px" }} />}
+              <span style={{ flex: 1 }}>{toast.message}</span>
+              <button
+                onClick={() => removeToast(toast.id)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "rgba(255,255,255,0.7)",
+                  cursor: "pointer",
+                  padding: "0",
+                  fontSize: "14px",
+                  lineHeight: 1,
+                  flexShrink: 0,
+                }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* 🚀 Modern Navbar */}
       <header
         className="glass-panel"

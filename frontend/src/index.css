@@ -104,3 +104,8 @@ h1, h2, h3, h4 {
 .glow-btn:active {
   transform: translateY(0);
 }
+
+@keyframes toast-slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
