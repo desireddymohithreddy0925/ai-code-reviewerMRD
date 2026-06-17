@@ -3,6 +3,7 @@ import { useDebounce } from '../hooks/useDebounce';
 import { useStore, ChatMessage } from '../store/useStore';
 import SettingsModal from "../components/SettingsModal";
 import { MetricsChart } from '../components/MetricsChart';
+import { VulnerabilitiesBarChart } from '../components/VulnerabilitiesBarChart';
 import CopyToClipboardButton from "../components/CopyToClipboardButton";
 import {
   Terminal,
@@ -2133,6 +2134,17 @@ export default function Dashboard() {
                         boxSizing: "border-box",
                       }}
                     >
+                      {analysisResult && (() => {
+                        const fileReviews = analysisResult.analysis.fileReviews || {};
+                        const breakdown: Record<string, number> = { bugs: 0, security: 0, optimization: 0, styling: 0 };
+                        Object.values(fileReviews).forEach((fr: any) => {
+                          breakdown.bugs += fr.bugs?.length || 0;
+                          breakdown.security += fr.security?.length || 0;
+                          breakdown.optimization += fr.optimization?.length || 0;
+                          breakdown.styling += fr.styling?.length || 0;
+                        });
+                        return <div style={{ marginBottom: "16px" }}><VulnerabilitiesBarChart data={breakdown} /></div>;
+                      })()}
                       <div
                         style={{
                           borderBottom: "1px solid rgba(255,255,255,0.08)",
