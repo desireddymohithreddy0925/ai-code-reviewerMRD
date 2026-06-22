@@ -46,11 +46,13 @@ def add_vector(file_path: str, content: str, embedding: list[float], chunk_index
 
 
 def delete_vectors_for_file(file_path: str) -> int:
+    global _vectors
     _load()
     before = len(_vectors)
-    _vectors = [v for v in _vectors if v["file_path"] != file_path]
-    removed = before - len(_vectors)
+    _remaining = [v for v in _vectors if v["file_path"] != file_path]
+    removed = before - len(_remaining)
     if removed > 0:
+        _vectors = _remaining
         _save()
     return removed
 
