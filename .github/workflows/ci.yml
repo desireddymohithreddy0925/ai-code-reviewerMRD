@@ -68,3 +68,8 @@ jobs:
         run: |
           cd ai-engine
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run AI Engine Tests
+        run: |
+          cd ai-engine
+          pytest tests/ -v
