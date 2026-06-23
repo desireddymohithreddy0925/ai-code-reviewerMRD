@@ -1,14 +1,25 @@
-FROM node:20-alpine
+# Stage 1: Build the React + TypeScript app
+FROM node:20-alpine AS builder
 
 WORKDIR /usr/src/app
 
+# Install dependencies first (layer cache-friendly)
 COPY package*.json ./
+RUN npm ci
 
-RUN npm install
-
+# Copy source and build
 COPY . .
+RUN npm run build
 
-EXPOSE 3000
+# Stage 2: Serve the static bundle with nginx
+FROM nginx:alpine
 
-# Run in dev mode and expose host so it is accessible outside the container
-CMD ["npm", "run", "dev", "--", "--host"]
+# Copy custom nginx config for SPA routing
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Copy the production build from the builder stage
+COPY --from=builder /usr/src/app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
