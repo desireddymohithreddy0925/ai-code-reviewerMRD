@@ -132,21 +132,36 @@ app.post('/api/analyze', requireApiKey, analyzeLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Invalid GitHub repository URL. Only https://github.com/owner/repo URLs are allowed.' });
   }
 
-  // Sanitize systemPrompt: limit length and strip dangerous directives
-  const sanitizePrompt = (prompt) => {
+  // Validate systemPrompt: reject prompts containing dangerous directives
+  function validatePrompt(prompt) {
     if (!prompt) return '';
-    const safe = String(prompt).slice(0, 2000);
-    const dangerous = ['ignore all', 'ignore previous', 'ignore above', 'forget all', 'forget previous', 'you are not', 'override all', 'disregard'];
-    let result = safe;
+    const maxLen = parseInt(process.env.MAX_SYSTEM_PROMPT_LENGTH) || 2000;
+    const normalized = String(prompt)
+      .normalize('NFKC')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .slice(0, maxLen);
+    const dangerous = [
+      'ignore all', 'ignore previous', 'ignore above',
+      'forget all', 'forget previous', 'you are not',
+      'override all', 'disregard', 'do not follow',
+    ];
+    const lower = normalized.toLowerCase();
     for (const phrase of dangerous) {
-      const idx = result.toLowerCase().indexOf(phrase);
-      if (idx !== -1) {
-        result = result.slice(0, idx) + result.slice(idx + phrase.length);
+      const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = escaped.split(/\s+/).join('\\s+');
+      const regex = new RegExp(pattern, 'i');
+      if (regex.test(lower)) {
+        throw new Error('System prompt contains prohibited directives and was rejected.');
       }
     }
-    return result;
-  };
-  const validatedPrompt = sanitizePrompt(systemPrompt);
+    return normalized;
+  }
+  let validatedPrompt;
+  try {
+    validatedPrompt = validatePrompt(systemPrompt);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
 
   // Generate unique folder name
   const parsed = parseRepoUrl(repoUrl);

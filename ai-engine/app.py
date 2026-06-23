@@ -1,5 +1,7 @@
 import os
 import json
+import re
+import unicodedata
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -95,7 +97,10 @@ def sanitize_ai_output(text: str) -> str:
 def validate_system_prompt(prompt: str, max_len: int = 2000) -> str:
     if not prompt:
         return ""
-    truncated = prompt.strip()[:max_len]
+    normalized = unicodedata.normalize("NFKC", prompt.strip())
+    for zwc in ["\u200B", "\u200C", "\u200D", "\uFEFF"]:
+        normalized = normalized.replace(zwc, "")
+    truncated = normalized[:max_len]
     dangerous = [
         "ignore all", "ignore previous", "ignore above",
         "forget all", "forget previous", "you are not",
@@ -103,9 +108,13 @@ def validate_system_prompt(prompt: str, max_len: int = 2000) -> str:
     ]
     lower = truncated.lower()
     for phrase in dangerous:
-        if phrase in lower:
-            truncated = truncated[:lower.index(phrase)] + truncated[lower.index(phrase) + len(phrase):]
-            lower = truncated.lower()
+        escaped = re.escape(phrase)
+        pattern = escaped.replace(r"\ ", r"\s+")
+        if re.search(pattern, lower):
+            raise HTTPException(
+                status_code=400,
+                detail="System prompt contains prohibited directives and was rejected."
+            )
     return truncated
 app = FastAPI(title="RepoSage AI Engine", description="FastAPI microservice for repository analysis and documentation generation")
 
