@@ -4,41 +4,7 @@ import {
 } from 'recharts';
 
 // Dummy Data to be replaced with actual API response
-const dummyData = [
-  { month: 'Jan', bugs: 12, security: 4 },
-  { month: 'Feb', bugs: 8, security: 2 },
-  { month: 'Mar', bugs: 15, security: 5 },
-  { month: 'Apr', bugs: 5, security: 0 },
-];
-
-// Theme-aware color maps for Recharts (which requires JS string props, not CSS vars)
-const THEME_COLORS = {
-  dark: {
-    grid: '#334155',
-    axis: '#94a3b8',
-    tooltipBg: '#0f172a',
-    tooltipBorder: 'rgba(255,255,255,0.08)',
-    tooltipText: '#f1f5f9',
-    tooltipItem: '#e2e8f0',
-    title: '#c084fc',
-  },
-  light: {
-    grid: '#e2e8f0',
-    axis: '#64748b',
-    tooltipBg: '#ffffff',
-    tooltipBorder: 'rgba(15,23,42,0.12)',
-    tooltipText: '#1e293b',
-    tooltipItem: '#334155',
-    title: '#8b5cf6',
-  },
-};
-
-interface MetricsChartProps {
-  theme?: 'dark' | 'light';
-}
-
-export const MetricsChart: React.FC<MetricsChartProps> = ({ theme = 'dark' }) => {
-  const colors = THEME_COLORS[theme];
+const dummyData = data || [];
 
   return (
     <div 
