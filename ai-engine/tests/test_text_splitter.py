@@ -43,6 +43,48 @@ class TestLanguageDetection:
     def test_detect_no_extension(self):
         assert _detect_language("Makefile") == "default"
 
+    def test_detect_csharp_falls_back_to_default(self):
+        # .cs files are not in _code_extensions, fall back to default
+        assert _detect_language("Program.cs") == "default"
+        assert _detect_language("src/Models/User.cs") == "default"
+        assert _detect_language("Game.cs") == "default"
+
+    def test_detect_ruby_falls_back_to_default(self):
+        # .rb files are not in _code_extensions, fall back to default
+        assert _detect_language("app.rb") == "default"
+        assert _detect_language("script.rb") == "default"
+        assert _detect_language("config/routes.rb") == "default"
+
+    def test_detect_swift_falls_back_to_default(self):
+        # .swift files are not in _code_extensions, fall back to default
+        assert _detect_language("main.swift") == "default"
+        assert _detect_language("ViewController.swift") == "default"
+        assert _detect_language("AppDelegate.swift") == "default"
+
+    def test_detect_kotlin_falls_back_to_default(self):
+        # .kt files are not in _code_extensions, fall back to default
+        assert _detect_language("Main.kt") == "default"
+        assert _detect_language("src/Utils.kt") == "default"
+        assert _detect_language("app.android.kt") == "default"
+
+    def test_detect_php_falls_back_to_default(self):
+        # .php files are not in _code_extensions, fall back to default
+        assert _detect_language("index.php") == "default"
+        assert _detect_language("api/user.php") == "default"
+        assert _detect_language("bootstrap.php") == "default"
+
+    def test_detect_scala_falls_back_to_default(self):
+        assert _detect_language("Main.scala") == "default"
+        assert _detect_language("app.scala") == "default"
+
+    def test_detect_shell_falls_back_to_default(self):
+        assert _detect_language("deploy.sh") == "default"
+        assert _detect_language("build.sh") == "default"
+
+    def test_detect_sql_falls_back_to_default(self):
+        assert _detect_language("schema.sql") == "default"
+        assert _detect_language("queries.sql") == "default"
+
 
 class TestGenerateChunkId:
 
