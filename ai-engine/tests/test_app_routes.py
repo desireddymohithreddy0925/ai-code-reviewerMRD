@@ -86,7 +86,7 @@ class TestAnalyzeRequestValidation:
 
 
 class TestRagCleanupVectors:
-    @patch('vectorstore.cleanup_stale_vectors')
+    @patch('rag.cleanup_stale_chunks')
     def test_cleanup_vectors_returns_stale_paths(self, mock_cleanup):
         mock_cleanup.return_value = {
             "stale_paths": ["deleted.py"],
@@ -101,7 +101,7 @@ class TestRagCleanupVectors:
         assert "removed_count" in data
         assert "remaining_count" in data
 
-    @patch('vectorstore.cleanup_stale_vectors')
+    @patch('rag.cleanup_stale_chunks')
     def test_cleanup_vectors_returns_empty_for_all_current(self, mock_cleanup):
         mock_cleanup.return_value = {
             "stale_paths": [],
@@ -114,7 +114,7 @@ class TestRagCleanupVectors:
         data = response.json()
         assert data["removed_count"] == 0
 
-    @patch('vectorstore.cleanup_stale_vectors')
+    @patch('rag.cleanup_stale_chunks')
     def test_cleanup_vectors_accepts_empty_list(self, mock_cleanup):
         mock_cleanup.return_value = {
             "stale_paths": ["old.py"],
@@ -127,7 +127,7 @@ class TestRagCleanupVectors:
 
 
 class TestRagDeleteVectors:
-    @patch('vectorstore.delete_vectors_for_file')
+    @patch('rag.delete_chunks_for_file')
     def test_delete_vectors_returns_removed_count(self, mock_delete):
         mock_delete.return_value = 3
         payload = {"file_path": "src/deleted.py"}
@@ -137,7 +137,7 @@ class TestRagDeleteVectors:
         assert data["removed_count"] == 3
         assert data["file_path"] == "src/deleted.py"
 
-    @patch('vectorstore.delete_vectors_for_file')
+    @patch('rag.delete_chunks_for_file')
     def test_delete_vectors_returns_zero_when_file_not_found(self, mock_delete):
         mock_delete.return_value = 0
         payload = {"file_path": "nonexistent.py"}

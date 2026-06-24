@@ -1,5 +1,6 @@
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+import embeddings
 
 class _MockSentenceTransformer:
     def __init__(self, model_name):
@@ -16,9 +17,9 @@ class _MockSentenceTransformer:
 @pytest.fixture(autouse=True)
 def mock_st():
     with patch('embeddings.SentenceTransformer', _MockSentenceTransformer):
-        import embeddings
         embeddings._model = None
         yield
+        embeddings._model = None
 
 from embeddings import get_embedding_dimension, _get_model
 
