@@ -21,6 +21,7 @@ def mock_st():
         yield
 
 from embeddings import get_embedding_dimension, _get_model
+import embeddings
 
 
 class TestGetEmbeddingDimension:
