@@ -19,8 +19,10 @@ export function loadIgnorePatterns(dir) {
 
 // 🟢 Helper to check if a path matches any ignore pattern
 export function isIgnored(filePath, patterns, baseDir) {
+  if (!patterns || !Array.isArray(patterns)) return false;
   const relative = path.relative(baseDir, filePath).replace(/\\/g, '/');
   for (const pattern of patterns) {
+    if (typeof pattern !== 'string') continue;
     if (pattern.endsWith('/')) {
       if (relative === pattern.slice(0, -1) || relative.startsWith(pattern)) {
         return true;
