@@ -122,7 +122,7 @@ def detect_anomalous_prompt(prompt: str):
     if 'cyrillic' in script_runs or 'greek' in script_runs:
         print(f"⚠️ System prompt contains non-Latin script characters: {', '.join(script_runs)}")
 def validate_system_prompt(prompt: str, max_len: int = 2000) -> str:
-    if not prompt:
+    if not prompt or not isinstance(prompt, str):
         return ""
     normalized = unicodedata.normalize("NFKC", prompt.strip())
     for zwc in ["\u200B", "\u200C", "\u200D", "\uFEFF"]:

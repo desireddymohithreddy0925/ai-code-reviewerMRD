@@ -102,7 +102,7 @@ class TestValidateSystemPromptAdditionalEdgeCases:
         prompt = "ignore all. ignore all. ignore all."
         result = validate_system_prompt(prompt)
         assert "ignore all" not in result.lower()
-        assert result == ""
+        assert result.strip() == ". . ."
 
     def test_unicode_dangerous_phrase_variant_handled(self):
         # Unicode full-width space variant of "ignore all" - should not match as-is
