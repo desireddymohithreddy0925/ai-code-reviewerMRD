@@ -1,12 +1,10 @@
-# Mock sentence_transformers before importing embeddings to avoid model download
-import sys
-from unittest.mock import MagicMock
+import pytest
+from unittest.mock import patch, MagicMock
 
 class _MockSentenceTransformer:
     def __init__(self, model_name):
-        # Store the model name to verify it was called with correct config
         self._model_name = model_name
-        self._dim = 384  # default for all-MiniLM-L6-v2
+        self._dim = 384
 
     def get_sentence_embedding_dimension(self):
         return self._dim
@@ -15,13 +13,12 @@ class _MockSentenceTransformer:
         import numpy as np
         return np.array([[0.1] * self._dim])
 
-_mock_st_module = MagicMock()
-_mock_st_module.SentenceTransformer = _MockSentenceTransformer
-sys.modules['sentence_transformers'] = _mock_st_module
-
-# Reset the cached model in embeddings.py before importing
-import embeddings
-embeddings._model = None
+@pytest.fixture(autouse=True)
+def mock_st():
+    with patch('embeddings.SentenceTransformer', _MockSentenceTransformer):
+        import embeddings
+        embeddings._model = None
+        yield
 
 from embeddings import get_embedding_dimension, _get_model
 

@@ -1,5 +1,5 @@
 import pytest
-from app import validate_system_prompt
+from app import validate_system_prompt, sanitize_ai_output
 
 
 class TestValidateSystemPromptBoundaryCases:
