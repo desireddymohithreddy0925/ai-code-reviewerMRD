@@ -719,6 +719,9 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     });
   }
 
+  // Track whether the AI engine was successfully queried
+  let aiEngineQueried = false;
+
   if (filesToReview.length > 0) {
     console.log(`🧠 Querying AI engine for ${filesToReview.length} files...`);
     const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
@@ -742,6 +745,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
             }
           });
         }
+        aiEngineQueried = true;
       }
     } catch (err) {
       console.warn("⚠️ FastAPI AI Engine error, posting local scans only:", err.message);
@@ -763,6 +767,20 @@ I have audited the code changes in this Pull Request and generated **${commentsT
 
 Please review my feedback and suggestions below. Happy coding! 🚀`,
       comments: commentsToPost
+    });
+  } else if (!aiEngineQueried) {
+    console.error('❌ AI Engine was unreachable — posting COMMENT review instead of auto-approving.');
+    await octokit.rest.pulls.createReview({
+      owner,
+      repo,
+      pull_number: pullNumber,
+      commit_id: headSha,
+      event: 'COMMENT',
+      body: `## ⚠️ RepoSage AI Code Review — AI Engine Unavailable
+
+The AI engine could not be reached during this review. The secrets scanner found **0 issues**, but the PR was **not** fully reviewed by the AI.
+
+Please ensure the AI Engine service is running and re-trigger the review for a complete analysis.`
     });
   } else {
     console.log('🎉 No code issues or recommendations found. Posting approval review...');
