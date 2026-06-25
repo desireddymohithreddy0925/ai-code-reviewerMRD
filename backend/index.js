@@ -446,8 +446,10 @@ app.post('/api/chat', requireApiKey, chatLimiter, async (req, res) => {
     try {
       context = await Session.findOne({ sessionId });
       if (context) {
-        // Refresh TTL by resetting createdAt so the 30-minute window restarts
-        await Session.updateOne({ sessionId }, { $set: { createdAt: new Date() } });
+        // Update lastAccessedAt for activity tracking. createdAt remains
+        // unchanged so the original TTL (30 minutes from creation) is
+        // preserved, preventing indefinite session extension (see issue #672).
+        await Session.updateOne({ sessionId }, { $set: { lastAccessedAt: new Date() } });
       }
     } catch (sessionErr) {
       console.warn('⚠️ Failed to retrieve session from MongoDB:', sessionErr.message);

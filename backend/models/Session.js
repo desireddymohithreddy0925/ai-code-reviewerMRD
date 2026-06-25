@@ -16,6 +16,11 @@ export function estimateSessionSize(files) {
 // MongoDB automatically removes expired documents via the TTL index on createdAt
 // (expireAfterSeconds: 1800 = 30 minutes), which replaces the previous in-process
 // setInterval cleanup that ran on the repoContexts Map.
+//
+// IMPORTANT: createdAt is set once on document creation and is NEVER updated.
+// Session activity tracking uses the separate lastAccessedAt field. This
+// prevents an attacker from keeping a session alive indefinitely by sending
+// periodic chat requests (see issue #672).
 const sessionSchema = new mongoose.Schema({
   sessionId: {
     type: String,
@@ -47,10 +52,29 @@ const sessionSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  // Tracks the last time this session was accessed via chat. This is the
+  // field that gets updated on each chat request, NOT createdAt.
+  lastAccessedAt: {
+    type: Date,
+    default: Date.now,
+  },
+  // Hard upper bound on session lifetime (24 hours after creation).
+  // A separate TTL index on this field ensures documents are cleaned up
+  // even if the session is actively used.
+  absoluteExpiry: {
+    type: Date,
+    default: () => new Date(Date.now() + 24 * 60 * 60 * 1000),
+  },
 });
 
 // TTL index: MongoDB removes the document 30 minutes after createdAt.
-// Accessing a session refreshes it by updating createdAt (see index.js).
+// createdAt is set once at creation and never updated, so a session
+// automatically expires 30 minutes after the analysis, regardless of
+// chat activity.
 sessionSchema.index({ createdAt: 1 }, { expireAfterSeconds: 1800 });
+
+// Secondary TTL index on absoluteExpiry enforces a maximum 24-hour
+// session lifetime even if the session is actively used.
+sessionSchema.index({ absoluteExpiry: 1 }, { expireAfterSeconds: 0 });
 
 export default mongoose.model('Session', sessionSchema);
