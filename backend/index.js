@@ -130,22 +130,21 @@ process.on('SIGTERM', onShutdown);
 
 // Webhook deduplication and queuing state (module scope to persist across requests)
 const reviewQueue = new ReviewQueue();
-const processedDeliveries = new Set();
+const processedDeliveries = new Map();
 const reviewedShas = new Map();
 const DELIVERY_TTL = 60 * 60 * 1000;
 const MAX_DELIVERY_ENTRIES = 5000;
 
-function evictLRU(set, maxSize) {
-  if (set.size <= maxSize) return;
-  const oldest = set.values().next().value;
-  if (oldest !== undefined) set.delete(oldest);
+function evictLRU(map, maxSize) {
+  if (map.size <= maxSize) return;
+  const oldest = map.keys().next().value;
+  if (oldest !== undefined) map.delete(oldest);
 }
 
 const dedupCleanupTimer = setInterval(() => {
   const now = Date.now();
-  for (const deliveryId of processedDeliveries) {
-    const parts = deliveryId.split('|');
-    if (parts.length === 2 && now - Number(parts[1]) > DELIVERY_TTL) {
+  for (const [deliveryId, receivedAt] of processedDeliveries) {
+    if (now - receivedAt > DELIVERY_TTL) {
       processedDeliveries.delete(deliveryId);
     }
   }
@@ -551,12 +550,11 @@ app.post('/api/webhook', async (req, res) => {
   if (event === 'pull_request') {
     const deliveryId = req.headers['x-github-delivery'];
     if (deliveryId) {
-      const deliveryKey = `${deliveryId}|${Date.now()}`;
-      if (processedDeliveries.has(deliveryKey)) {
+      if (processedDeliveries.has(deliveryId)) {
         console.log(`⏭️ Skipping duplicate webhook delivery: ${deliveryId}`);
         return res.json({ success: true, message: 'Webhook received (duplicate skipped).' });
       }
-      processedDeliveries.add(deliveryKey);
+      processedDeliveries.set(deliveryId, Date.now());
     }
 
     const action = payload.action;
