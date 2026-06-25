@@ -20,6 +20,7 @@ import { parseDiff } from './utils/diffParser.js';
 import { analyzeComplexity } from './utils/complexityAnalyzer.js';
 import { deleteFolderRecursive, getFolderSize } from './utils/fileHelper.js';
 import { verifyWebhookSignature } from './utils/signatureVerifier.js';
+import ReviewQueue from './utils/reviewQueue.js';
 import { verifyPort } from './utils/envVerifier.js';
 import { mockAIReview } from './utils/mockAIReview.js';
 import Analytics from './models/Analytics.js';
@@ -128,23 +129,23 @@ process.on('SIGTERM', onShutdown);
 // handles expiry automatically — no in-process Map or setInterval needed.
 
 // Webhook deduplication and queuing state (module scope to persist across requests)
-const reviewQueues = new Map(); // reviewKey -> [{ owner, repo, pullNumber, headSha }, ...]
-const processedDeliveries = new Map();
-const DELIVERY_TTL = 60 * 60 * 1000; // 1 hour
+const reviewQueue = new ReviewQueue();
+const processedDeliveries = new Set();
+const reviewedShas = new Map();
+const DELIVERY_TTL = 60 * 60 * 1000;
 const MAX_DELIVERY_ENTRIES = 5000;
 
-// Evict oldest entry from a Map when over max size
-function evictLRU(map, maxSize) {
-  if (map.size <= maxSize) return;
-  const oldest = map.keys().next().value;
-  if (oldest !== undefined) map.delete(oldest);
+function evictLRU(set, maxSize) {
+  if (set.size <= maxSize) return;
+  const oldest = set.values().next().value;
+  if (oldest !== undefined) set.delete(oldest);
 }
 
-// Periodic cleanup of expired delivery entries with size cap
 const dedupCleanupTimer = setInterval(() => {
   const now = Date.now();
-  for (const [deliveryId, timestamp] of processedDeliveries) {
-    if (now - timestamp > DELIVERY_TTL) {
+  for (const deliveryId of processedDeliveries) {
+    const parts = deliveryId.split('|');
+    if (parts.length === 2 && now - Number(parts[1]) > DELIVERY_TTL) {
       processedDeliveries.delete(deliveryId);
     }
   }
@@ -153,13 +154,10 @@ const dedupCleanupTimer = setInterval(() => {
   }
 }, 60 * 1000);
 
-// Log cache metrics periodically
 const cacheMetricsTimer = setInterval(() => {
-  const deliveryMemEstimate = processedDeliveries.size * 50;
-  console.log(`[cache] processedDeliveries=${processedDeliveries.size}/${MAX_DELIVERY_ENTRIES} ~${(deliveryMemEstimate / 1024 / 1024).toFixed(2)}MB`);
+  console.log(`[cache] processedDeliveries=${processedDeliveries.size}/${MAX_DELIVERY_ENTRIES}`);
 }, 5 * 60 * 1000);
 
-// Clean up timers on server shutdown
 function cleanupTimers() {
   clearInterval(dedupCleanupTimer);
   clearInterval(cacheMetricsTimer);
@@ -529,14 +527,14 @@ app.post('/api/webhook', async (req, res) => {
   const payload = req.body;
 
   if (event === 'pull_request') {
-    // Deduplicate by X-GitHub-Delivery header
     const deliveryId = req.headers['x-github-delivery'];
     if (deliveryId) {
-      if (processedDeliveries.has(deliveryId)) {
+      const deliveryKey = `${deliveryId}|${Date.now()}`;
+      if (processedDeliveries.has(deliveryKey)) {
         console.log(`⏭️ Skipping duplicate webhook delivery: ${deliveryId}`);
         return res.json({ success: true, message: 'Webhook received (duplicate skipped).' });
       }
-      processedDeliveries.set(deliveryId, Date.now());
+      processedDeliveries.add(deliveryKey);
     }
 
     const action = payload.action;
@@ -546,10 +544,26 @@ app.post('/api/webhook', async (req, res) => {
       const owner = payload.repository.owner.login;
       const repo = payload.repository.name;
       const reviewKey = `${owner}/${repo}/#${pullNumber}`;
+
+      const shaKey = `${owner}/${repo}/#${pullNumber}`;
+      if (!reviewedShas.has(shaKey)) {
+        reviewedShas.set(shaKey, new Set());
+      }
+      if (reviewedShas.get(shaKey).has(headSha)) {
+        console.log(`⏭️ Already reviewed commit ${headSha.substring(0,7)} for PR #${pullNumber}`);
+        return res.json({ success: true, message: 'Webhook received (duplicate SHA skipped).' });
+      }
+      reviewedShas.get(shaKey).add(headSha);
+      setTimeout(() => {
+        const set = reviewedShas.get(shaKey);
+        if (set) set.delete(headSha);
+      }, 3600000);
       
       console.log(`📡 GitHub Webhook received: PR #${pullNumber} ${action} (${headSha.substring(0,7)}) in ${owner}/${repo}`);
       
-      enqueueWebhookReview(owner, repo, pullNumber, headSha, reviewKey);
+      reviewQueue.enqueue(reviewKey, { owner, repo, pullNumber, headSha }, async (item) => {
+        await runWebhookReview(item.owner, item.repo, item.pullNumber, item.headSha);
+      });
     }
   }
 
@@ -623,32 +637,7 @@ app.post('/api/issues/create', requireApiKey, async (req, res) => {
   }
 });
 
-// 🟢 Webhook review queuing — prevents race conditions from rapid webhook events
-function enqueueWebhookReview(owner, repo, pullNumber, headSha, reviewKey) {
-  if (!reviewQueues.has(reviewKey)) {
-    reviewQueues.set(reviewKey, []);
-    dispatchReview(owner, repo, pullNumber, headSha, reviewKey);
-  } else {
-    reviewQueues.get(reviewKey).push({ owner, repo, pullNumber, headSha });
-    console.log(`📥 Queued review for ${reviewKey}@${headSha.substring(0,7)} (${reviewQueues.get(reviewKey).length} waiting)`);
-  }
-}
-
-async function dispatchReview(owner, repo, pullNumber, headSha, reviewKey) {
-  try {
-    await runWebhookReview(owner, repo, pullNumber, headSha);
-  } catch (err) {
-    console.error(`❌ Async PR Review Error:`, err);
-  } finally {
-    const queue = reviewQueues.get(reviewKey);
-    if (queue && queue.length > 0) {
-      const next = queue.shift();
-      dispatchReview(next.owner, next.repo, next.pullNumber, next.headSha, reviewKey);
-    } else {
-      reviewQueues.delete(reviewKey);
-    }
-  }
-}
+// Webhook review queueing uses ReviewQueue from reviewQueue.js (per-key mutex)
 
 // 🟢 Helper to execute Webhook PR review logic
 async function runWebhookReview(owner, repo, pullNumber, headSha) {
