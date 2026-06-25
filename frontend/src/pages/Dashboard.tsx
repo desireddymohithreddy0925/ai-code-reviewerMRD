@@ -25,13 +25,14 @@ import {
   X,
 } from "lucide-react";
 import mermaid from "mermaid";
+import DOMPurify from "dompurify";
 
 // Initialize Mermaid outside the component to avoid multiple initializations
 try {
   mermaid.initialize({
     startOnLoad: false,
     theme: "dark",
-    securityLevel: "loose",
+    securityLevel: "strict",
     themeVariables: {
       background: "#0f172a",
       primaryColor: "#3b82f6",
@@ -171,7 +172,11 @@ function MermaidViewer({ chart, repoName }: MermaidViewerProps) {
         }
 
         const { svg: renderedSvg } = await mermaid.render(uniqueId, cleanChart);
-        setSvg(renderedSvg);
+        const sanitized = DOMPurify.sanitize(renderedSvg, {
+          USE_PROFILES: { svg: true, svgFilters: true },
+          ALLOW_UNKNOWN_PROTOCOLS: false,
+        });
+        setSvg(sanitized);
       } catch (err: any) {
         console.error("Mermaid Render Error:", err);
         setError(

@@ -43,7 +43,7 @@ ALLOWED_TAGS = [
 ]
 
 ALLOWED_ATTRS = {
-    '*': ['class', 'id', 'style'],
+    '*': ['class', 'id'],
     'svg': ['viewBox', 'xmlns', 'width', 'height', 'role', 'aria-label'],
     'path': ['d', 'fill', 'stroke', 'stroke-width', 'opacity', 'transform'],
     'circle': ['cx', 'cy', 'r', 'fill', 'stroke', 'stroke-width', 'opacity'],
