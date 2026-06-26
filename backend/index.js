@@ -125,6 +125,18 @@ process.on('SIGTERM', onShutdown);
 // The Session collection uses a TTL index (expireAfterSeconds: 1800) so MongoDB
 // handles expiry automatically — no in-process Map or setInterval needed.
 
+// Utility: fetch with configurable timeout using AbortController
+async function fetchWithTimeout(url, options = {}, timeoutMs = 120000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // Webhook deduplication and queuing state (module scope to persist across requests)
 const reviewQueue = new ReviewQueue();
 const processedDeliveries = new Set();
@@ -297,11 +309,11 @@ app.post('/api/analyze', requireApiKey, analyzeLimiter, async (req, res) => {
       let reviewResult;
       const baseUrl = aiEngineUrl.replace(/\/+$/, '');
       try {
-        const aiResponse = await fetch(`${baseUrl}/analyze`, {
+        const aiResponse = await fetchWithTimeout(`${baseUrl}/analyze`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ files, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt, batchSize })
-        });
+        }, 120000);
         
         if (aiResponse.ok) {
           reviewResult = await aiResponse.json();
@@ -464,7 +476,7 @@ app.post('/api/chat', requireApiKey, chatLimiter, async (req, res) => {
 
   try {
     const baseUrl = aiEngineUrl.replace(/\/+$/, '');
-    const aiResponse = await fetch(`${baseUrl}/chat`, {
+    const aiResponse = await fetchWithTimeout(`${baseUrl}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -478,7 +490,7 @@ app.post('/api/chat', requireApiKey, chatLimiter, async (req, res) => {
         useRag,
         repo_url: context.repoUrl
       })
-    });
+    }, 30000);
 
     if (aiResponse.ok) {
       const data = await aiResponse.json();
@@ -507,11 +519,11 @@ app.post('/api/rag/query', requireApiKey, async (req, res) => {
 
   try {
     const baseUrl = aiEngineUrl.replace(/\/+$/, '');
-    const aiResponse = await fetch(`${baseUrl}/api/rag/query`, {
+    const aiResponse = await fetchWithTimeout(`${baseUrl}/api/rag/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question, repo_url: repoUrl })
-    });
+    }, 30000);
 
     if (aiResponse.ok) {
       const data = await aiResponse.json();
