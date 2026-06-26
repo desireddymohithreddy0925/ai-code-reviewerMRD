@@ -62,10 +62,11 @@ class TestValidateSystemPromptAdditionalEdgeCases:
         result = validate_system_prompt(["hello", "world"])
         assert isinstance(result, str)
 
-    def test_unicode_dangerous_phrase_variant_handled(self):
+    def test_unicode_dangerous_phrase_variant_rejected(self):
         prompt = "i\u200bgnore all normal content"
-        result = validate_system_prompt(prompt)
-        assert "ignore all" not in result.lower()
+        with pytest.raises(HTTPException) as exc:
+            validate_system_prompt(prompt)
+        assert exc.value.status_code == 422
 
     def test_prompt_exactly_max_len_is_unchanged(self):
         prompt = "a" * 2000
