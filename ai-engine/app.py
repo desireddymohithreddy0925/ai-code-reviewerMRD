@@ -214,6 +214,8 @@ class ChatRequest(BaseModel):
     message: str
     history: Optional[List[dict]] = Field(default_factory=list)
     model: Optional[str] = "llama-3.3-70b-versatile"
+    temperature: Optional[float] = Field(default=0.4, ge=0, le=2)
+    maxTokens: Optional[int] = Field(default=2048, ge=1, le=8192)
     useRag: Optional[bool] = False
     repo_url: Optional[str] = None
 
@@ -518,7 +520,8 @@ Guidelines:
         completion = groq_client.chat.completions.create(
             model=groq_model,
             messages=messages,
-            temperature=0.4
+            temperature=request.temperature or 0.4,
+            max_tokens=request.maxTokens or 2048,
         )
         response_content = completion.choices[0].message.content
         return {"response": sanitize_ai_output(response_content), "truncatedFiles": truncated_files_info}

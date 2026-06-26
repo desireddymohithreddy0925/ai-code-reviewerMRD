@@ -701,12 +701,17 @@ export default function Dashboard() {
     setIsChatLoading(true);
 
     try {
+      const chatAiSettings = JSON.parse(
+        localStorage.getItem("reposage_ai_settings") || "{}"
+      );
       const response = await apiFetch("/api/chat", {
         method: "POST",
         body: JSON.stringify({
           message: userMessage,
           history: truncateChatHistory(chatHistory),
           model: selectedModel,
+          temperature: chatAiSettings.temperature ?? 0.4,
+          maxTokens: chatAiSettings.maxTokens ?? 2048,
           sessionId,
           useRag,
         }),
