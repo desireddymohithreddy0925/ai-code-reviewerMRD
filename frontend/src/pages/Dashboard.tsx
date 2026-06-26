@@ -664,9 +664,17 @@ export default function Dashboard() {
     "audit" | "chat" | "diagram"
   >("audit");
   const [chatInput, setChatInput] = useState("");
+  const CHAT_HISTORY_KEY = 'reposage_chat_history';
   const [chatHistory, setChatHistory] = useState<
     Array<{ role: "user" | "assistant"; content: string }>
-  >([]);
+  >(() => {
+    try {
+      const saved = localStorage.getItem(CHAT_HISTORY_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const MAX_CHAT_HISTORY_LENGTH = 40;
   const truncateChatHistory = (history: Array<{ role: "user" | "assistant"; content: string }>) => {
     if (history.length > MAX_CHAT_HISTORY_LENGTH) {
@@ -684,7 +692,11 @@ export default function Dashboard() {
 
     const userMessage = chatInput;
     setChatInput("");
-    setChatHistory((prev) => [...prev, { role: "user", content: userMessage }]);
+    setChatHistory((prev) => {
+      const updated = [...prev, { role: "user", content: userMessage }];
+      try { localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(updated)); } catch {}
+      return updated;
+    });
     setIsChatLoading(true);
 
     try {
@@ -704,12 +716,14 @@ export default function Dashboard() {
       }
 
       const data = await response.json();
-      setChatHistory((prev) =>
-        truncateChatHistory([
+      setChatHistory((prev) => {
+        const updated = truncateChatHistory([
           ...prev,
           { role: "assistant", content: data.response },
-        ])
-      );
+        ]);
+        try { localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(updated)); } catch {}
+        return updated;
+      });
     } catch (err: any) {
       console.error(err);
       let errMsg = err.message || "Chat service unavailable.";
@@ -864,6 +878,8 @@ export default function Dashboard() {
     setApiError(null);
     setAnalysisResult(null);
     setSelectedFile(null);
+    setChatHistory([]);
+    try { localStorage.removeItem('reposage_chat_history'); } catch {};
 
     // Simulate structured loading steps for GSSoC wow factor
     const steps = [
