@@ -131,6 +131,7 @@ interface BackendResponse {
   analysis: AnalysisData;
   sessionId?: string;
   sessionPersisted?: boolean;
+  _mock?: boolean;
 }
 
 interface AuditHistoryEntry {
@@ -1867,6 +1868,28 @@ export default function Dashboard() {
                 boxSizing: "border-box",
               }}
             >
+              {analysisResult._mock && (
+                <div
+                  style={{
+                    background: "rgba(251,191,36,0.12)",
+                    border: "1px solid rgba(251,191,36,0.35)",
+                    borderRadius: "8px",
+                    padding: "12px 16px",
+                    color: "#fbbf24",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <span style={{ fontSize: "16px" }}>⚠️</span>
+                  <span>
+                    AI Engine offline — showing simulated review results.
+                    Start the backend AI service for real analysis.
+                  </span>
+                </div>
+              )}
               {/* Dashboard View Selection Tabs */}
               <div style={{ display: "flex", gap: "10px" }}>
                 <button
@@ -3119,7 +3142,7 @@ export default function Dashboard() {
                                     {item.suggestion}
                                   </code>
                                 </div>
-                                <div
+                                {!analysisResult?._mock && <div
                                   style={{
                                     marginTop: "10px",
                                     display: "flex",
@@ -3200,7 +3223,7 @@ export default function Dashboard() {
                                       )}
                                     </button>
                                   )}
-                                </div>
+                                </div>}
                               </div>
                             );
                           })

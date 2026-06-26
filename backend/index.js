@@ -314,8 +314,8 @@ app.post('/api/analyze', requireApiKey, analyzeLimiter, async (req, res) => {
         }
       } catch (err) {
         console.warn('⚠️ FastAPI engine not running, falling back to local Express review handler');
-        // Let's generate a smart mockup review based on files so it works as an autonomous MVP
         reviewResult = mockAIReview(files, model);
+        reviewResult._mock = true;
       }
 
       // 3. Inject Regex-based Secret Detections & Complexity Metrics into the analysis result
@@ -393,24 +393,26 @@ app.post('/api/analyze', requireApiKey, analyzeLimiter, async (req, res) => {
       const totalFindings = totalBugs + totalSecurityIssues + totalOptimizations + totalStylingIssues;
       const healthScore = Math.max(0, Math.round(100 - totalBugs * 5 - totalSecurityIssues * 3 - totalOptimizations * 1 - totalStylingIssues * 0.5));
 
-      try {
-        await ensureConnection();
-        await Analytics.create({
-          repoUrl,
-          repoName,
-          filesReviewedCount: files.length,
-          totalBugs,
-          totalSecurityIssues,
-          totalOptimizations,
-          totalStylingIssues,
-          totalFindings,
-          healthScore,
-          language: language || 'General',
-          model: model || 'llama-3.3-70b-versatile',
-          analyzedAt: new Date(),
-        });
-      } catch (dbErr) {
-        console.warn('⚠️ Failed to persist analytics:', dbErr.message);
+      if (!reviewResult?._mock) {
+        try {
+          await ensureConnection();
+          await Analytics.create({
+            repoUrl,
+            repoName,
+            filesReviewedCount: files.length,
+            totalBugs,
+            totalSecurityIssues,
+            totalOptimizations,
+            totalStylingIssues,
+            totalFindings,
+            healthScore,
+            language: language || 'General',
+            model: model || 'llama-3.3-70b-versatile',
+            analyzedAt: new Date(),
+          });
+        } catch (dbErr) {
+          console.warn('⚠️ Failed to persist analytics:', dbErr.message);
+        }
       }
 
       // 5. Clean up folder
