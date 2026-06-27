@@ -97,7 +97,7 @@ test('AnalysisCache: tracks cache hits and misses', () => {
   assert.equal(cache.stats.misses, 1);
 });
 
-test('AnalysisCache: expires entries after TTL', (t) => {
+test('AnalysisCache: expires entries after TTL', async () => {
   const shortTtl = 100; // 100ms for testing
   const cache = new AnalysisCache(shortTtl);
   const key = 'test-key';
@@ -108,14 +108,10 @@ test('AnalysisCache: expires entries after TTL', (t) => {
   assert.equal(retrieved1, result, 'Should retrieve result immediately after storage');
 
   // Wait for expiration (longer than TTL)
-  const timeToWait = shortTtl + 50;
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      const retrieved2 = cache.get(key);
-      assert.equal(retrieved2, null, 'Should return null for expired entries');
-      resolve();
-    }, timeToWait);
-  });
+  await new Promise((resolve) => setTimeout(resolve, shortTtl + 50));
+
+  const retrieved2 = cache.get(key);
+  assert.equal(retrieved2, null, 'Should return null for expired entries');
 });
 
 test('AnalysisCache: clear() removes all entries', () => {
