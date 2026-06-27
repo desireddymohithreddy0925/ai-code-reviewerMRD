@@ -903,17 +903,18 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
   // 3. Post consolidated review comment back to GitHub PR
   if (commentsToPost.length > 0) {
     console.log(`✍️ Posting PR Review with ${commentsToPost.length} inline comments...`);
+    let body = `## 🛡️ RepoSage AI Code Review Audit Completed!\n\n`;
+    if (!aiEngineQueried && filesToReview.length > 0) {
+      body += `⚠️ **Limited Review:** The AI engine was unreachable during this review. Only regex-based secret scanning was performed. AI-powered bug/performance/style analysis was skipped. Please ensure the AI Engine service is running and re-trigger the review for a complete audit.\n\n`;
+    }
+    body += `I have audited the code changes in this Pull Request and generated **${commentsToPost.length} actionable inline suggestions**.\n\nPlease review my feedback and suggestions below. Happy coding! 🚀`;
     await octokit.rest.pulls.createReview({
       owner,
       repo,
       pull_number: pullNumber,
       commit_id: headSha,
       event: 'COMMENT',
-      body: `## 🛡️ RepoSage AI Code Review Audit Completed!
-
-I have audited the code changes in this Pull Request and generated **${commentsToPost.length} actionable inline suggestions**. 
-
-Please review my feedback and suggestions below. Happy coding! 🚀`,
+      body,
       comments: commentsToPost
     });
   } else if (!aiEngineQueried) {
