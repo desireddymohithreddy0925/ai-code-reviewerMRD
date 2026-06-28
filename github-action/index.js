@@ -182,6 +182,7 @@ If no issues are found, reply with: { "reviews": [] }`;
           messages: [{ role: 'user', content: reviewPrompt }],
           temperature: 0.2,
           max_tokens: maxTokens,
+          response_format: { type: 'json_object' },
         });
 
         const content = completion.choices[0].message.content;
