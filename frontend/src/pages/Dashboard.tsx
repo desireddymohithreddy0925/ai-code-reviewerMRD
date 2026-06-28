@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useDebounce } from '../hooks/useDebounce';
+import { useStore, ChatMessage } from '../store/useStore';
 import SettingsModal from "../components/SettingsModal";
 import { MetricsChart } from '../components/MetricsChart';
+import CopyToClipboardButton from "../components/CopyToClipboardButton";
 import {
-  Github,
   Terminal,
   ShieldAlert,
   Zap,
@@ -13,28 +15,27 @@ import {
   AlertOctagon,
   AlertTriangle,
   Download,
+  FileDown,
   Layers,
   Code2,
   MessageSquare,
   Send,
-  Copy,
-  Check,
-  Sun,
-  Moon,
   Settings,
   Clock,
   Trash2,
   Search,
   X,
 } from "lucide-react";
+import { handleMarkdownExport, handleHtmlExport } from "../utils/exportUtils";
 import mermaid from "mermaid";
+import { sanitizeMermaidOutput } from "../utils/sanitize";
 
 // Initialize Mermaid outside the component to avoid multiple initializations
 try {
   mermaid.initialize({
     startOnLoad: false,
-    theme: "dark",
-    securityLevel: "loose",
+    theme: window.matchMedia("(prefers-color-scheme: light)").matches ? "base" : "dark",
+    securityLevel: "strict",
     themeVariables: {
       background: "#0f172a",
       primaryColor: "#3b82f6",
@@ -48,18 +49,17 @@ try {
   console.error("Failed to initialize Mermaid:", e);
 }
 
-// API Endpoint Configuration
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+import { apiFetch } from '../utils/api';
 
 // Define Types
-interface ReviewItem {
+export interface ReviewItem {
   type: string;
   line: number;
   description: string;
   suggestion: string;
 }
 
-interface FileReview {
+export interface FileReview {
   bugs: ReviewItem[];
   security: ReviewItem[];
   optimization: ReviewItem[];
@@ -73,12 +73,14 @@ interface AnalysisData {
   metrics?: Record<string, any>;
 }
 
-interface BackendResponse {
+export interface BackendResponse {
   success: boolean;
   repoName: string;
   filesReviewedCount: number;
   analysis: AnalysisData;
   sessionId?: string;
+  sessionPersisted?: boolean;
+  _mock?: boolean;
 }
 
 interface AuditHistoryEntry {
@@ -121,7 +123,8 @@ function MermaidViewer({ chart, repoName }: MermaidViewerProps) {
         }
 
         const { svg: renderedSvg } = await mermaid.render(uniqueId, cleanChart);
-        setSvg(renderedSvg);
+        const sanitized = sanitizeMermaidOutput(renderedSvg);
+        setSvg(sanitized);
       } catch (err: any) {
         console.error("Mermaid Render Error:", err);
         setError(
@@ -132,6 +135,10 @@ function MermaidViewer({ chart, repoName }: MermaidViewerProps) {
 
     renderChart();
   }, [chart]);
+
+  const svgDataUrl = svg
+    ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+    : null;
 
   const downloadSVG = () => {
     if (!svg) return;
@@ -229,80 +236,26 @@ function MermaidViewer({ chart, repoName }: MermaidViewerProps) {
           boxSizing: "border-box",
           width: "100%",
         }}
-        dangerouslySetInnerHTML={{
-          __html:
-            svg ||
-            '<span style="color:#9ca3af;font-size:12px;">Generating visual flowchart...</span>',
-        }}
-      />
+      >
+        {svgDataUrl ? (
+          <img
+            src={svgDataUrl}
+            alt={`Architecture diagram for ${repoName}`}
+            style={{ maxWidth: "100%", height: "auto" }}
+          />
+        ) : (
+          <span style={{ color: "#9ca3af", fontSize: "12px" }}>
+            Generating visual flowchart...
+          </span>
+        )}
+      </div>
     </div>
   );
 }
 
-interface CopyButtonProps {
-  text: string;
-  style?: React.CSSProperties;
-  showText?: boolean;
-}
-
-function CopyButton({ text, style, showText = false }: CopyButtonProps) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error("Failed to copy text: ", err);
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      style={{
-        background: "transparent",
-        border: "none",
-        borderRadius: "4px",
-        padding: "4px 8px",
-        cursor: "pointer",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "6px",
-        justifyContent: "center",
-        color: copied ? "#22c55e" : "#9ca3af",
-        transition: "all 0.2s ease",
-        ...style,
-      }}
-      title={copied ? "Copied!" : "Copy Code"}
-    >
-      {copied ? <Check size={14} /> : <Copy size={14} />}
-      {showText && (
-        <span style={{ fontSize: "11px", fontWeight: 600 }}>
-          {copied ? "Copied!" : "Copy"}
-        </span>
-      )}
-    </button>
-  );
-}
 
 export default function Dashboard() {
-  // Theme State
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    const savedTheme = localStorage.getItem("reposage_theme");
-    return savedTheme === "light" || savedTheme === "dark"
-      ? savedTheme
-      : "dark";
-  });
-
   const [showSettings, setShowSettings] = useState(false);
-
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("reposage_theme", theme);
-  }, [theme]);
 
   // Input State
   const [repoUrl, setRepoUrl] = useState("");
@@ -315,11 +268,9 @@ export default function Dashboard() {
   const [loadingStep, setLoadingStep] = useState("");
 
   // Response & View State
-  const [analysisResult, setAnalysisResult] = useState<BackendResponse | null>(
-    null,
-  );
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const { analysisResult, setAnalysisResult, selectedFile, setSelectedFile, chatHistory, setChatHistory } = useStore();
   const [fileFilterQuery, setFileFilterQuery] = useState('');
+  const debouncedFileFilterQuery = useDebounce(fileFilterQuery, 300);
   const [isClearHovered, setIsClearHovered] = useState(false);
   const [activeExtFilter, setActiveExtFilter] = useState('All');
   const [activeTab, setActiveTab] = useState<'bugs' | 'security' | 'optimization' | 'styling' | 'metrics'>('bugs');
@@ -383,8 +334,8 @@ export default function Dashboard() {
                   {codeContent}
                 </code>
               </pre>
-              <CopyButton
-                text={codeContent}
+              <CopyToClipboardButton
+                textToCopy={codeContent}
                 style={{
                   position: "absolute",
                   top: "8px",
@@ -470,12 +421,12 @@ export default function Dashboard() {
               <code
                 key={cIdx}
                 style={{
-                  background: "rgba(255,255,255,0.06)",
+                  background: "#1e1e1e",
                   padding: "2px 4px",
                   borderRadius: "4px",
                   fontFamily: "monospace",
                   fontSize: "11px",
-                  color: "#a855f7",
+                  color: "#d8b4fe",
                 }}
               >
                 {codePart}
@@ -582,17 +533,14 @@ export default function Dashboard() {
       <Settings size={15} />
     </button>;
 
+    const gssoLabel = localStorage.getItem("reposage_gssoc_label") || "gssoc26";
     const labels = isGssocLabelingEnabled
-      ? ["gssoc26", "good-first-issue", category]
+      ? [gssoLabel, "good-first-issue", category]
       : [category];
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/issues/create`, {
+      const response = await apiFetch("/api/issues/create", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": import.meta.env.VITE_REPOSAGE_API_KEY,
-        },
         body: JSON.stringify({
           repoUrl,
           title,
@@ -625,11 +573,9 @@ export default function Dashboard() {
     "audit" | "chat" | "diagram"
   >("audit");
   const [chatInput, setChatInput] = useState("");
-  const [chatHistory, setChatHistory] = useState<
-    Array<{ role: "user" | "assistant"; content: string }>
-  >([]);
+  const CHAT_HISTORY_KEY = 'reposage_chat_history';
   const MAX_CHAT_HISTORY_LENGTH = 40;
-  const truncateChatHistory = (history: Array<{ role: "user" | "assistant"; content: string }>) => {
+  const truncateChatHistory = (history: ChatMessage[]) => {
     if (history.length > MAX_CHAT_HISTORY_LENGTH) {
       return history.slice(history.length - MAX_CHAT_HISTORY_LENGTH);
     }
@@ -639,26 +585,37 @@ export default function Dashboard() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [useRag, setUseRag] = useState(false);
 
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatHistory, isChatLoading]);
+
   const handleSendChatMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim() || isChatLoading) return;
 
     const userMessage = chatInput;
     setChatInput("");
-    setChatHistory((prev) => [...prev, { role: "user", content: userMessage }]);
+    setChatHistory((prev) => {
+      const updated = [...prev, { role: "user" as const, content: userMessage }];
+      try { localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(updated)); } catch {}
+      return updated;
+    });
     setIsChatLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/chat`, {
+      const chatAiSettings = JSON.parse(
+        localStorage.getItem("reposage_ai_settings") || "{}"
+      );
+      const response = await apiFetch("/api/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": import.meta.env.VITE_REPOSAGE_API_KEY,
-        },
         body: JSON.stringify({
           message: userMessage,
           history: truncateChatHistory(chatHistory),
           model: selectedModel,
+          temperature: chatAiSettings.temperature ?? 0.4,
+          maxTokens: chatAiSettings.maxTokens ?? 2048,
           sessionId,
           useRag,
         }),
@@ -669,15 +626,23 @@ export default function Dashboard() {
       }
 
       const data = await response.json();
-      setChatHistory((prev) =>
-        truncateChatHistory([
+      setChatHistory((prev) => {
+        const updated = truncateChatHistory([
           ...prev,
-          { role: "assistant", content: data.response },
-        ])
-      );
+          { role: "assistant" as const, content: data.response },
+        ]);
+        try { localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(updated)); } catch {}
+        return updated;
+      });
     } catch (err: any) {
       console.error(err);
-      const errMsg = err.message || "Chat service unavailable.";
+      let errMsg = err.message || "Chat service unavailable.";
+      if (errMsg.includes("Failed to fetch") || errMsg.toLowerCase().includes("offline")) {
+        errMsg = "Backend AI Engine offline. Please ensure the server is running.";
+      } else if (errMsg.toLowerCase().includes("api key") || errMsg.toLowerCase().includes("unauthorized")) {
+        errMsg = "Missing or invalid API Key. Please configure it in settings.";
+        setShowSettings(true);
+      }
       setApiError(errMsg);
     } finally {
       setIsChatLoading(false);
@@ -781,8 +746,17 @@ export default function Dashboard() {
       const updatedHistory = [
         entry,
         ...prev.filter(item => item.repoUrl !== repoUrl)
-      ].slice(0, 10);
-      localStorage.setItem('reposage_audit_history', JSON.stringify(updatedHistory));
+      ].slice(0, 5); // reduced to 5 to save space
+
+      try {
+        localStorage.setItem('reposage_audit_history', JSON.stringify(updatedHistory));
+      } catch (e: any) {
+        if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+          console.warn('localStorage quota exceeded — audit history not saved.');
+        } else {
+          console.warn('Failed to save to localStorage:', e);
+        }
+      }
       return updatedHistory;
     });
   };
@@ -814,6 +788,8 @@ export default function Dashboard() {
     setApiError(null);
     setAnalysisResult(null);
     setSelectedFile(null);
+    setChatHistory([]);
+    try { localStorage.removeItem('reposage_chat_history'); } catch {};
 
     // Simulate structured loading steps for GSSoC wow factor
     const steps = [
@@ -833,17 +809,18 @@ export default function Dashboard() {
         setLoadingStep(steps[currentStep]);
       }
     }, 1200);
-    const aiSettings = JSON.parse(
-      localStorage.getItem("reposage_ai_settings") || "{}"
-    );
+    let aiSettings: { temperature?: number; maxTokens?: number; systemPrompt?: string } = {};
+    try {
+      aiSettings = JSON.parse(
+        localStorage.getItem("reposage_ai_settings") || "{}"
+      );
+    } catch {
+      aiSettings = {};
+    }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/analyze`, {
+      const response = await apiFetch("/api/analyze", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": import.meta.env.VITE_REPOSAGE_API_KEY,
-        },
         body: JSON.stringify({
           repoUrl,
           company,
@@ -866,8 +843,10 @@ export default function Dashboard() {
 
       const data: BackendResponse = await response.json();
       setAnalysisResult(data);
-      if (data.sessionId) {
+      if (data.sessionId && data.sessionPersisted !== false) {
         setSessionId(data.sessionId);
+      } else if (data.sessionId && data.sessionPersisted === false) {
+        setSessionId(null);
       }
       persistAuditHistory(data);
       setChatHistory([]);
@@ -879,10 +858,14 @@ export default function Dashboard() {
       }
     } catch (err: any) {
       console.error(err);
-      setApiError(
-        err.message ||
-        "Could not connect to the backend server. Make sure node backend is running on port 5000.",
-      );
+      let errMsg = err.message || "Could not connect to the backend server. Make sure node backend is running on port 5000.";
+      if (errMsg.includes("Failed to fetch") || errMsg.toLowerCase().includes("offline")) {
+        errMsg = "Backend AI Engine offline. Please ensure the server is running.";
+      } else if (errMsg.toLowerCase().includes("api key") || errMsg.toLowerCase().includes("unauthorized") || errMsg.includes("not configured")) {
+        errMsg = "Missing or invalid API Key. Please configure it in settings.";
+        setShowSettings(true);
+      }
+      setApiError(errMsg);
     } finally {
       clearInterval(stepInterval);
       setIsLoading(false);
@@ -903,163 +886,6 @@ export default function Dashboard() {
     document.body.removeChild(element);
   };
 
-  // Helper to compile and download complete Code Audit Report in Markdown format
-  const downloadAuditReport = () => {
-    if (!analysisResult) return;
-
-    let md = `# 🛡️ RepoSage AI Code Review & Audit Report\n\n`;
-    md += `* **Repository**: ${analysisResult.repoName}\n`;
-    md += `* **Date**: ${new Date().toLocaleDateString()}\n`;
-    md += `* **Total Modules Scanned**: ${analysisResult.filesReviewedCount} files\n\n`;
-
-    md += `## 📊 Overall Code Health Summary\n\n`;
-    let totalBugs = 0;
-    let totalSecurity = 0;
-    let totalPerf = 0;
-    let totalStyle = 0;
-
-    Object.keys(analysisResult.analysis.fileReviews).forEach((file) => {
-      const review = analysisResult.analysis.fileReviews[file];
-      totalBugs += review.bugs?.length || 0;
-      totalSecurity += review.security?.length || 0;
-      totalPerf += review.optimization?.length || 0;
-      totalStyle += review.styling?.length || 0;
-    });
-
-    md += `| Category | Findings Count | Severity Level |\n`;
-    md += `| :--- | :---: | :--- |\n`;
-    md += `| 🐞 Logical Bugs | ${totalBugs} | High |\n`;
-    md += `| 🛡️ Security Breaches | ${totalSecurity} | Critical |\n`;
-    md += `| ⚡ Performance Issues | ${totalPerf} | Medium |\n`;
-    md += `| 🎨 Styling & Conventions | ${totalStyle} | Low |\n\n`;
-
-    md += `---\n\n`;
-    md += `## 🔍 File-by-File Audit Details\n\n`;
-
-    Object.keys(analysisResult.analysis.fileReviews).forEach((file) => {
-      const review = analysisResult.analysis.fileReviews[file];
-      const hasIssues =
-        (review.bugs?.length || 0) +
-        (review.security?.length || 0) +
-        (review.optimization?.length || 0) +
-        (review.styling?.length || 0) >
-        0;
-
-      if (hasIssues) {
-        md += `### 📄 File: \`${file}\`\n\n`;
-
-        if (review.security && review.security.length > 0) {
-          md += `#### 🛡️ Security Vulnerabilities\n`;
-          review.security.forEach((item) => {
-            md += `* **Line ${item.line}** [${item.type}]: ${item.description}\n`;
-            md += `  * *AI Suggestion*: \`${item.suggestion}\`\n`;
-          });
-          md += `\n`;
-        }
-
-        if (review.bugs && review.bugs.length > 0) {
-          md += `#### 🐞 Logical Bugs\n`;
-          review.bugs.forEach((item) => {
-            md += `* **Line ${item.line}** [${item.type}]: ${item.description}\n`;
-            md += `  * *AI Suggestion*: \`${item.suggestion}\`\n`;
-          });
-          md += `\n`;
-        }
-
-        if (review.optimization && review.optimization.length > 0) {
-          md += `#### ⚡ Performance Bottlenecks\n`;
-          review.optimization.forEach((item) => {
-            md += `* **Line ${item.line}** [${item.type}]: ${item.description}\n`;
-            md += `  * *AI Suggestion*: \`${item.suggestion}\`\n`;
-          });
-          md += `\n`;
-        }
-
-        if (review.styling && review.styling.length > 0) {
-          md += `#### 🎨 Style & Conventions\n`;
-          review.styling.forEach((item) => {
-            md += `* **Line ${item.line}** [${item.type}]: ${item.description}\n`;
-            md += `  * *AI Suggestion*: \`${item.suggestion}\`\n`;
-          });
-          md += `\n`;
-        }
-
-        md += `---\n\n`;
-      }
-    });
-
-    md += `## 📄 Generated README.md\n\n`;
-    md += analysisResult.analysis.generatedReadme;
-
-    const element = document.createElement("a");
-    const fileBlob = new Blob([md], { type: "text/plain" });
-    element.href = URL.createObjectURL(fileBlob);
-    element.download = `${analysisResult.repoName}_AUDIT_REPORT.md`;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-  };
-
-  const downloadHTMLReport = async () => {
-    if (!analysisResult) return;
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/reports/html`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": import.meta.env.VITE_REPOSAGE_API_KEY,
-        },
-        body: JSON.stringify({
-          repoName: analysisResult.repoName,
-          analysis: analysisResult.analysis,
-        }),
-      });
-      if (response.ok) {
-        const htmlBlob = await response.blob();
-        const element = document.createElement("a");
-        element.href = URL.createObjectURL(htmlBlob);
-        element.download = `${analysisResult.repoName}_AUDIT_REPORT.html`;
-        document.body.appendChild(element);
-        element.click();
-        document.body.removeChild(element);
-      } else {
-        console.error("Failed to generate HTML report");
-      }
-    } catch (err) {
-      console.error("Error exporting HTML report:", err);
-    }
-  };
-
-  const downloadPDFReport = async () => {
-    if (!analysisResult) return;
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/reports/pdf`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': import.meta.env.VITE_REPOSAGE_API_KEY
-        },
-        body: JSON.stringify({
-          repoName: analysisResult.repoName,
-          analysis: analysisResult.analysis
-        })
-      });
-      if (response.ok) {
-        const pdfBlob = await response.blob();
-        const element = document.createElement("a");
-        element.href = URL.createObjectURL(pdfBlob);
-        element.download = `${analysisResult.repoName}_AUDIT_REPORT.pdf`;
-        document.body.appendChild(element);
-        element.click();
-        document.body.removeChild(element);
-      } else {
-        console.error("Failed to generate PDF report");
-      }
-    } catch (err) {
-      console.error("Error exporting PDF report:", err);
-    }
-  };
-
   return (
     <div
       style={{
@@ -1069,190 +895,6 @@ export default function Dashboard() {
         boxSizing: "border-box",
       }}
     >
-      {/* 🚀 Modern Navbar */}
-      <header
-        className="glass-panel"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          padding: "16px 24px",
-          margin: "16px 24px 8px 24px",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div
-            style={{
-              background: "linear-gradient(135deg, #a855f7 0%, #3b82f6 100%)",
-              padding: "10px",
-              borderRadius: "8px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Sparkles size={24} style={{ color: "white" }} />
-          </div>
-          <div>
-            <h1
-              style={{
-                margin: 0,
-                fontSize: "22px",
-                fontWeight: 800,
-                background:
-                  "linear-gradient(135deg, var(--text-color) 0%, var(--subtext-color) 100%)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-              }}
-            >
-              RepoSage{" "}
-              <span
-                style={{
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  color: "var(--highlight-color)",
-                  border: "1px solid rgba(168,85,247,0.3)",
-                  padding: "2px 8px",
-                  borderRadius: "20px",
-                  marginLeft: "6px",
-                  background: "rgba(168,85,247,0.1)",
-                }}
-              >
-                GSSoC '26 MVP
-              </span>
-            </h1>
-            <p
-              style={{
-                margin: 0,
-                fontSize: "11px",
-                color: "var(--subtext-color)",
-              }}
-            >
-              Open Source AI Developer Copilot
-            </p>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          {analysisResult && (
-            <>
-              <button
-                onClick={downloadAuditReport}
-                style={{
-                  background:
-                    "linear-gradient(135deg, #a855f7 0%, #3b82f6 100%)",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "6px",
-                  padding: "6px 14px",
-                  fontSize: "12px",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  boxShadow: "0 4px 12px rgba(168,85,247,0.2)",
-                }}
-              >
-                <Download size={14} /> Export MD
-              </button>
-              <button
-                onClick={downloadHTMLReport}
-                style={{
-                  background: "rgba(34, 197, 94, 0.1)",
-                  border: "1px solid rgba(34, 197, 94, 0.3)",
-                  color: "#22c55e",
-                  borderRadius: "6px",
-                  padding: "6px 14px",
-                  fontSize: "12px",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  transition: "all 0.15s",
-                }}
-              >
-                <FileCode size={14} /> Export HTML
-              </button>
-              <button
-                onClick={downloadPDFReport}
-                style={{ background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', color: '#f59e0b', borderRadius: '6px', padding: '6px 14px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.15s' }}
-              >
-                <Download size={14} /> Export PDF
-              </button>
-            </>
-          )}
-          <button
-            onClick={() => setShowSettings(true)}
-            style={{
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid var(--border-color)",
-              borderRadius: "6px",
-              padding: "6px 10px",
-              cursor: "pointer",
-              color: "var(--text-color)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Settings size={15} />
-          </button>
-          <button
-            onClick={() =>
-              setTheme((prev) => (prev === "dark" ? "light" : "dark"))
-            }
-            style={{
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid var(--border-color)",
-              borderRadius: "6px",
-              padding: "6px 10px",
-              cursor: "pointer",
-              color: "var(--text-color)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              transition: "all 0.2s",
-            }}
-            title={
-              theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"
-            }
-          >
-            {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-          </button>
-          <a
-            href="https://github.com"
-            target="_blank"
-            rel="noreferrer"
-            style={{
-              color: "#9ca3af",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              textDecoration: "none",
-              fontSize: "13px",
-              fontWeight: 500,
-            }}
-            className="hover:text-white"
-          >
-            <Github size={18} /> Codebase
-          </a>
-          <span
-            style={{
-              fontSize: "12px",
-              background: "#22c55e",
-              color: "#052e16",
-              fontWeight: 700,
-              padding: "3px 10px",
-              borderRadius: "20px",
-            }}
-          >
-            Admin Console
-          </span>
-        </div>
-      </header>
-
       {/* 🚀 Main Layout Split */}
       <main
         style={{
@@ -1305,6 +947,7 @@ export default function Dashboard() {
                 <input
                   type="url"
                   required
+                  pattern="https://github\.com/.*"
                   placeholder="https://github.com/username/repo"
                   value={repoUrl}
                   onChange={(e) => setRepoUrl(e.target.value)}
@@ -1983,48 +1626,31 @@ export default function Dashboard() {
           {/* 2. Loading State */}
           {isLoading && (
             <div
-              className="glass-panel"
               style={{
                 flexGrow: 1,
                 display: "flex",
                 flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: "40px",
-                gap: "20px",
+                gap: "16px",
+                boxSizing: "border-box",
               }}
             >
-              <div
-                className="spin-slow"
-                style={{
-                  width: "48px",
-                  height: "48px",
-                  border: "4px solid rgba(168,85,247,0.1)",
-                  borderTopColor: "#a855f7",
-                  borderRadius: "50%",
-                }}
-              ></div>
-              <div style={{ textAlign: "center" }}>
-                <h3
-                  style={{
-                    fontSize: "16px",
-                    fontWeight: 600,
-                    margin: "0 0 6px 0",
-                    color: "#f3f4f6",
-                  }}
-                >
-                  AI Analyst is Reviewing Repository
-                </h3>
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: "13px",
-                    color: "#9ca3af",
-                    fontStyle: "italic",
-                  }}
-                >
-                  {loadingStep}
-                </p>
+              <div style={{ display: "flex", gap: "10px", marginBottom: "4px" }}>
+                 <div className="skeleton" style={{ width: "140px", height: "32px" }}></div>
+                 <div className="skeleton" style={{ width: "140px", height: "32px" }}></div>
+                 <div className="skeleton" style={{ width: "140px", height: "32px" }}></div>
+              </div>
+              <div style={{ display: "flex", gap: "16px", height: "120px" }}>
+                 <div className="skeleton" style={{ flex: 1, height: "100%" }}></div>
+                 <div className="skeleton" style={{ flex: 1, height: "100%" }}></div>
+                 <div className="skeleton" style={{ flex: 1, height: "100%" }}></div>
+              </div>
+              <div style={{ display: "flex", gap: "16px", flexGrow: 1 }}>
+                 <div className="skeleton" style={{ width: "260px", height: "400px" }}></div>
+                 <div className="skeleton" style={{ flexGrow: 1, height: "400px" }}></div>
+              </div>
+              <div style={{ textAlign: "center", marginTop: "10px" }}>
+                 <div className="spin-slow" style={{ width: "24px", height: "24px", border: "2px solid rgba(168,85,247,0.1)", borderTopColor: "#a855f7", borderRadius: "50%", margin: "0 auto 8px auto" }}></div>
+                 <p style={{ margin: 0, fontSize: "13px", color: "#9ca3af", fontStyle: "italic" }}>{loadingStep}</p>
               </div>
             </div>
           )}
@@ -2140,89 +1766,159 @@ export default function Dashboard() {
                 boxSizing: "border-box",
               }}
             >
-              {/* Dashboard View Selection Tabs */}
-              <div style={{ display: "flex", gap: "10px" }}>
-                <button
-                  onClick={() => setActiveDashboardView("audit")}
+              {analysisResult._mock && (
+                <div
                   style={{
-                    background:
-                      activeDashboardView === "audit"
-                        ? "rgba(59,130,246,0.1)"
-                        : "rgba(255,255,255,0.03)",
-                    border: "1px solid",
-                    borderColor:
-                      activeDashboardView === "audit"
-                        ? "rgba(59,130,246,0.4)"
-                        : "rgba(255,255,255,0.08)",
-                    color:
-                      activeDashboardView === "audit" ? "#60a5fa" : "#9ca3af",
-                    borderRadius: "6px",
-                    padding: "8px 16px",
-                    fontSize: "12px",
-                    fontWeight: 700,
-                    cursor: "pointer",
+                    background: "rgba(251,191,36,0.12)",
+                    border: "1px solid rgba(251,191,36,0.35)",
+                    borderRadius: "8px",
+                    padding: "12px 16px",
+                    color: "#fbbf24",
+                    fontSize: "13px",
+                    fontWeight: 600,
                     display: "flex",
                     alignItems: "center",
-                    gap: "6px",
-                    transition: "all 0.2s ease-in-out",
+                    gap: "8px",
                   }}
                 >
-                  <Layers size={14} /> Code Audit Report
-                </button>
-                <button
-                  onClick={() => setActiveDashboardView("chat")}
-                  style={{
-                    background:
-                      activeDashboardView === "chat"
-                        ? "rgba(168,85,247,0.1)"
-                        : "rgba(255,255,255,0.03)",
-                    border: "1px solid",
-                    borderColor:
-                      activeDashboardView === "chat"
-                        ? "rgba(168,85,247,0.4)"
-                        : "rgba(255,255,255,0.08)",
-                    color:
-                      activeDashboardView === "chat" ? "#c084fc" : "#9ca3af",
-                    borderRadius: "6px",
-                    padding: "8px 16px",
-                    fontSize: "12px",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    transition: "all 0.2s ease-in-out",
-                  }}
-                >
-                  <MessageSquare size={14} /> AI Code Chatbot
-                </button>
-                <button
-                  onClick={() => setActiveDashboardView("diagram")}
-                  style={{
-                    background:
-                      activeDashboardView === "diagram"
-                        ? "rgba(34,197,94,0.1)"
-                        : "rgba(255,255,255,0.03)",
-                    border: "1px solid",
-                    borderColor:
-                      activeDashboardView === "diagram"
-                        ? "rgba(34,197,94,0.4)"
-                        : "rgba(255,255,255,0.08)",
-                    color:
-                      activeDashboardView === "diagram" ? "#4ade80" : "#9ca3af",
-                    borderRadius: "6px",
-                    padding: "8px 16px",
-                    fontSize: "12px",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    transition: "all 0.2s ease-in-out",
-                  }}
-                >
-                  <Sparkles size={14} /> Architecture Diagram
-                </button>
+                  <span style={{ fontSize: "16px" }}>⚠️</span>
+                  <span>
+                    AI Engine offline — showing simulated review results.
+                    Start the backend AI service for real analysis.
+                  </span>
+                </div>
+              )}
+              {/* Dashboard View Selection Tabs & Export Controls */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", width: "100%" }}>
+                <div style={{ display: "flex", gap: "10px" }}>
+                  <button
+                    onClick={() => setActiveDashboardView("audit")}
+                    style={{
+                      background:
+                        activeDashboardView === "audit"
+                          ? "rgba(59,130,246,0.1)"
+                          : "rgba(255,255,255,0.03)",
+                      border: "1px solid",
+                      borderColor:
+                        activeDashboardView === "audit"
+                          ? "rgba(59,130,246,0.4)"
+                          : "rgba(255,255,255,0.08)",
+                      color:
+                        activeDashboardView === "audit" ? "#60a5fa" : "#9ca3af",
+                      borderRadius: "6px",
+                      padding: "8px 16px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      transition: "all 0.2s ease-in-out",
+                    }}
+                  >
+                    <Layers size={14} /> Code Audit Report
+                  </button>
+                  <button
+                    onClick={() => setActiveDashboardView("chat")}
+                    style={{
+                      background:
+                        activeDashboardView === "chat"
+                          ? "rgba(168,85,247,0.1)"
+                          : "rgba(255,255,255,0.03)",
+                      border: "1px solid",
+                      borderColor:
+                        activeDashboardView === "chat"
+                          ? "rgba(168,85,247,0.4)"
+                          : "rgba(255,255,255,0.08)",
+                      color:
+                        activeDashboardView === "chat" ? "#c084fc" : "#9ca3af",
+                      borderRadius: "6px",
+                      padding: "8px 16px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      transition: "all 0.2s ease-in-out",
+                    }}
+                  >
+                    <MessageSquare size={14} /> AI Code Chatbot
+                  </button>
+                  <button
+                    onClick={() => setActiveDashboardView("diagram")}
+                    style={{
+                      background:
+                        activeDashboardView === "diagram"
+                          ? "rgba(34,197,94,0.1)"
+                          : "rgba(255,255,255,0.03)",
+                      border: "1px solid",
+                      borderColor:
+                        activeDashboardView === "diagram"
+                          ? "rgba(34,197,94,0.4)"
+                          : "rgba(255,255,255,0.08)",
+                      color:
+                        activeDashboardView === "diagram" ? "#4ade80" : "#9ca3af",
+                      borderRadius: "6px",
+                      padding: "8px 16px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      transition: "all 0.2s ease-in-out",
+                    }}
+                  >
+                    <Sparkles size={14} /> Architecture Diagram
+                  </button>
+                </div>
+
+                {/* Export Controls */}
+                <div style={{ display: "flex", gap: "10px" }}>
+                  <button
+                    onClick={() => analysisResult && handleHtmlExport(analysisResult.repoName, analysisResult.analysis, apiFetch)}
+                    style={{
+                      background: "rgba(59, 130, 246, 0.1)",
+                      border: "1px solid rgba(59, 130, 246, 0.3)",
+                      color: "#60a5fa",
+                      borderRadius: "6px",
+                      padding: "8px 16px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      transition: "all 0.2s ease-in-out",
+                    }}
+                    className="hover:bg-blue-500/20"
+                    title="Export the complete audit report as HTML"
+                  >
+                    <Download size={14} /> Export HTML
+                  </button>
+                  <button
+                    onClick={() => analysisResult && handleMarkdownExport(analysisResult.repoName, analysisResult.analysis)}
+                    style={{
+                      background: "rgba(168, 85, 247, 0.1)",
+                      border: "1px solid rgba(168, 85, 247, 0.3)",
+                      color: "#c084fc",
+                      borderRadius: "6px",
+                      padding: "8px 16px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      transition: "all 0.2s ease-in-out",
+                    }}
+                    className="hover:bg-purple-500/20"
+                    title="Export the complete audit report as Markdown"
+                  >
+                    <FileDown size={14} /> Export Markdown
+                  </button>
+                </div>
               </div>
 
               <div
@@ -2340,7 +2036,7 @@ export default function Dashboard() {
                     ).filter((filePath) => {
                       const matchesSearch = filePath
                         .toLowerCase()
-                        .includes(fileFilterQuery.toLowerCase());
+                        .includes(debouncedFileFilterQuery.toLowerCase());
                       if (!matchesSearch) return false;
 
                       const ext = filePath.split(".").pop()?.toLowerCase();
@@ -3277,7 +2973,7 @@ export default function Dashboard() {
                                     </div>
                                   </div>
                                 </div>
-                                <MetricsChart />
+                                <MetricsChart sessionId={sessionId} />
                               </div>
                             );
                           })()
@@ -3291,10 +2987,10 @@ export default function Dashboard() {
                             activeTab
                             ] as any[]
                           ).map((item: any, index: number) => {
-                            const itemKey = `${selectedFile}-${activeTab}-${index}`;
+                            const itemKey = `${selectedFile}-${activeTab}-${index}-${item.line || 'global'}`;
                             return (
                               <div
-                                key={index}
+                                key={itemKey}
                                 style={{
                                   padding: "12px 14px",
                                   borderRadius: "8px",
@@ -3377,22 +3073,22 @@ export default function Dashboard() {
                                     >
                                       💡 AI Recommendation
                                     </span>
-                                    <CopyButton
-                                      text={item.suggestion}
+                                    <CopyToClipboardButton
+                                      textToCopy={item.suggestion}
                                       style={{ padding: "2px" }}
                                     />
                                   </div>
                                   <code
                                     style={{
                                       fontSize: "11px",
-                                      color: "#a855f7",
+                                      color: "#d8b4fe",
                                       wordBreak: "break-all",
                                     }}
                                   >
                                     {item.suggestion}
                                   </code>
                                 </div>
-                                <div
+                                {!analysisResult?._mock && <div
                                   style={{
                                     marginTop: "10px",
                                     display: "flex",
@@ -3473,7 +3169,7 @@ export default function Dashboard() {
                                       )}
                                     </button>
                                   )}
-                                </div>
+                                </div>}
                               </div>
                             );
                           })
@@ -3618,8 +3314,8 @@ export default function Dashboard() {
                               Raw
                             </button>
                           </div>
-                          <CopyButton
-                            text={analysisResult.analysis.generatedReadme}
+                          <CopyToClipboardButton
+                            textToCopy={analysisResult.analysis.generatedReadme}
                             showText={true}
                             style={{
                               background: "rgba(168,85,247,0.1)",
@@ -3859,7 +3555,7 @@ export default function Dashboard() {
                       ) : (
                         chatHistory.map((msg, index) => (
                           <div
-                            key={index}
+                            key={`chat-msg-${index}`}
                             style={{
                               display: "flex",
                               flexDirection: "column",
@@ -3883,20 +3579,25 @@ export default function Dashboard() {
                               boxSizing: "border-box",
                             }}
                           >
-                            <span
-                              style={{
-                                fontSize: "9px",
-                                fontWeight: 700,
-                                color:
-                                  msg.role === "user" ? "#60a5fa" : "#c084fc",
-                                textTransform: "uppercase",
-                                marginBottom: "4px",
-                              }}
-                            >
-                              {msg.role === "user"
-                                ? "You"
-                                : "RepoSage Assistant"}
-                            </span>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
+                              <span
+                                style={{
+                                  fontSize: "9px",
+                                  fontWeight: 700,
+                                  color:
+                                    msg.role === "user" ? "#60a5fa" : "#c084fc",
+                                  textTransform: "uppercase",
+                                }}
+                              >
+                                {msg.role === "user"
+                                  ? "You"
+                                  : "RepoSage Assistant"}
+                              </span>
+                              <CopyToClipboardButton
+                                textToCopy={msg.content}
+                                style={{ padding: "2px" }}
+                              />
+                            </div>
                             <div
                               style={{
                                 fontSize: "12px",
@@ -3981,6 +3682,7 @@ export default function Dashboard() {
                           </div>
                         </div>
                       )}
+                      <div ref={chatEndRef} />
                     </div>
 
                     {/* Chat Input form */}

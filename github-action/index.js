@@ -4,18 +4,55 @@ import Groq from 'groq-sdk';
 import { parseDiff } from './utils/diffParser.js';
 import { scanSecretsInChanges } from './utils/secretsScanner.js';
 
-// 🟢 Helper to clean JSON response from LLM
+function globToRegex(pattern) {
+  let regexStr = '^';
+  let i = 0;
+  while (i < pattern.length) {
+    const ch = pattern[i];
+    if (ch === '*') {
+      if (i + 1 < pattern.length && pattern[i + 1] === '*') {
+        regexStr += '.*';
+        i += 2;
+        if (i < pattern.length && pattern[i] === '/') {
+          i++;
+        }
+      } else {
+        regexStr += '[^/]*';
+        i++;
+      }
+    } else if (ch === '?') {
+      regexStr += '[^/]';
+      i++;
+    } else if (ch === '.') {
+      regexStr += '\\.';
+      i++;
+    } else if (ch === '/') {
+      regexStr += '/';
+      i++;
+    } else {
+      regexStr += ch;
+      i++;
+    }
+  }
+  regexStr += '$';
+  return new RegExp(regexStr);
+}
+
 function cleanAndParseJSON(responseText) {
-  let cleaned = responseText.trim();
-  if (cleaned.startsWith('```json')) {
-    cleaned = cleaned.substring(7);
-  } else if (cleaned.startsWith('```')) {
-    cleaned = cleaned.substring(3);
+  try {
+    let cleaned = responseText.trim();
+    if (cleaned.startsWith('```json')) {
+      cleaned = cleaned.substring(7);
+    } else if (cleaned.startsWith('```')) {
+      cleaned = cleaned.substring(3);
+    }
+    if (cleaned.endsWith('```')) {
+      cleaned = cleaned.substring(0, cleaned.length - 3);
+    }
+    return JSON.parse(cleaned.trim());
+  } catch {
+    return { reviews: [] };
   }
-  if (cleaned.endsWith('```')) {
-    cleaned = cleaned.substring(0, cleaned.length - 3);
-  }
-  return JSON.parse(cleaned.trim());
 }
 
 async function run() {
@@ -24,11 +61,23 @@ async function run() {
     const githubToken = core.getInput('github-token', { required: true });
     const groqApiKey = core.getInput('groq-api-key', { required: true });
     const excludePathsInput = core.getInput('exclude-paths') || '';
+    const includeExtensionsInput = core.getInput('include-extensions') || '';
+    const maxTokens = parseInt(core.getInput('max-tokens') || '4096', 10);
+    const autoApprove = core.getInput('auto-approve')?.toLowerCase() === 'true';
 
     const excludePatterns = excludePathsInput
       .split(',')
       .map(p => p.trim())
-      .filter(p => p.length > 0);
+      .filter(p => p.length > 0)
+      .map(p => globToRegex(p));
+
+    const includeExtensions = includeExtensionsInput
+      .split(',')
+      .map(e => e.trim().toLowerCase().replace(/^\./, ''))
+      .filter(e => e.length > 0);
+
+    const defaultExtensions = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'cpp', 'h', 'cs', 'css', 'html', 'php', 'rb', 'sql'];
+    const validExtensions = includeExtensions.length > 0 ? includeExtensions : defaultExtensions;
 
     // 2. Initialize Clients
     const octokit = github.getOctokit(githubToken);
@@ -66,24 +115,14 @@ async function run() {
     let reviewedFilesCount = 0;
 
     for (const file of parsedFiles) {
-      // Skip files that match exclude-paths
-      const isExcluded = excludePatterns.some(pattern => {
-        // Simple glob match simulation
-        if (pattern.endsWith('/**')) {
-          const dir = pattern.replace('/**', '');
-          return file.path.startsWith(dir);
-        }
-        return file.path.includes(pattern) || file.path.endsWith(pattern);
-      });
+      const isExcluded = excludePatterns.some(regex => regex.test(file.path));
 
       if (isExcluded) {
         console.log(`⏭️ Skipping excluded file: ${file.path}`);
         continue;
       }
 
-      // Check if file contains supported code extensions
       const ext = file.path.split('.').pop()?.toLowerCase();
-      const validExtensions = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'cpp', 'h', 'cs', 'css', 'html', 'php', 'rb', 'sql'];
       if (!ext || !validExtensions.includes(ext)) {
         console.log(`skip non-code file: ${file.path}`);
         continue;
@@ -97,13 +136,16 @@ async function run() {
       reviewedFilesCount++;
 
       // 1. Run local secrets scanner
-      const localSecretIssues = scanSecretsInChanges(file.changes);
+      const { findings: localSecretIssues, truncated: scanTruncated, totalChanges: scanTotal, skippedReason: scanReason } = scanSecretsInChanges(file.changes);
       for (const issue of localSecretIssues) {
         commentsToPost.push({
           path: file.path,
           line: issue.line,
           body: `<!-- RepoSage Review Comment -->\n${issue.comment}`
         });
+      }
+      if (scanTruncated) {
+        console.warn(`⚠️ Secrets scan truncated for ${file.path}: ${scanReason} (total ${scanTotal} changes)`);
       }
 
       const changesText = file.changes
@@ -139,7 +181,7 @@ If no issues are found, reply with: { "reviews": [] }`;
           model: 'llama-3.3-70b-versatile',
           messages: [{ role: 'user', content: reviewPrompt }],
           temperature: 0.2,
-          response_format: { type: 'json_object' }
+          max_tokens: maxTokens,
         });
 
         const content = completion.choices[0].message.content;
@@ -157,13 +199,11 @@ If no issues are found, reply with: { "reviews": [] }`;
           }
         }
 
-        if (Array.isArray(issues)) {
+        if (issues.length > 0) {
           console.log(`✅ AI review returned ${issues.length} comments for ${file.path}`);
           for (const issue of issues) {
-            // Validate that the line number exists in our change list to prevent posting out of bounds
             const changeExists = file.changes.some(c => c.line === issue.line);
             if (changeExists) {
-              // Avoid duplicate comment on the same line if local secrets scanner already flagged it
               const alreadyFlagged = commentsToPost.some(c => c.path === file.path && c.line === issue.line);
               if (!alreadyFlagged) {
                 commentsToPost.push({
@@ -173,7 +213,7 @@ If no issues are found, reply with: { "reviews": [] }`;
                 });
               }
             } else {
-              console.warn(`⚠️ Warning: AI suggested line number ${issue.line} which is outside the PR changes for ${file.path}. Skipping.`);
+              console.warn(`⚠️ AI suggested line ${issue.line} which is outside the PR changes for ${file.path}. Skipping.`);
             }
           }
         } else {
@@ -207,11 +247,13 @@ Please review my feedback and suggestions below. Happy coding! 🚀
       });
     } else {
       console.log('🎉 No code issues or recommendations found. Posting positive review status...');
+
+      const reviewEvent = autoApprove ? 'APPROVE' : 'COMMENT';
       await octokit.rest.pulls.createReview({
         owner,
         repo,
         pull_number: pullNumber,
-        event: 'APPROVE',
+        event: reviewEvent,
         body: `## 🛡️ RepoSage AI Code Review Audit Completed!
 
 🧐 **I have professionally reviewed and checked all your changes** to ensure they meet our project's high quality standards.

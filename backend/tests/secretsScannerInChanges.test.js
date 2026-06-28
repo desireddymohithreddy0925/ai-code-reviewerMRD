@@ -7,9 +7,9 @@ test('scanSecretsInChanges detects GitHub Personal Access Token', () => {
     { line: 1, content: 'const pat = "ghp_abc123xyz456789012345678901234567890"' }
   ];
   const results = scanSecretsInChanges(changes);
-  assert.equal(results.length, 1);
-  assert.equal(results[0].type, 'security');
-  assert.ok(results[0].comment.includes('GitHub Personal Access Token'));
+  assert.equal(results.findings.length, 1);
+  assert.equal(results.findings[0].type, 'security');
+  assert.ok(results.findings[0].comment.includes('GitHub Personal Access Token'));
 });
 
 test('scanSecretsInChanges detects AWS Access Key', () => {
@@ -17,8 +17,8 @@ test('scanSecretsInChanges detects AWS Access Key', () => {
     { line: 5, content: 'aws_key = "AKIA1234567890ABCDEF"' }
   ];
   const results = scanSecretsInChanges(changes);
-  assert.equal(results.length, 1);
-  assert.ok(results[0].comment.includes('AWS Access Key'));
+  assert.equal(results.findings.length, 1);
+  assert.ok(results.findings[0].comment.includes('AWS Access Key'));
 });
 
 test('scanSecretsInChanges detects Common Environment Credential', () => {
@@ -26,18 +26,17 @@ test('scanSecretsInChanges detects Common Environment Credential', () => {
     { line: 3, content: 'const DB_PASSWORD = "super_secret_pass_123456"' }
   ];
   const results = scanSecretsInChanges(changes);
-  assert.ok(results.length >= 1, 'should detect at least one secret');
+  assert.ok(results.findings.length >= 1, 'should detect at least one secret');
 });
 
 test('scanSecretsInChanges detects Google Cloud API Key', () => {
-  // Google Cloud key regex: /AIzaSy[a-zA-Z0-9-_]{33}/g
   const gcpKey = 'AIzaSy' + 'A1b2c3D4e5F6g7H8i9J0k1L2m3N4o5P6qA';
   const changes = [
     { line: 7, content: `gcp_key = "${gcpKey}"` }
   ];
   const results = scanSecretsInChanges(changes);
-  assert.equal(results.length, 1);
-  assert.ok(results[0].comment.includes('Google Cloud'));
+  assert.equal(results.findings.length, 1);
+  assert.ok(results.findings[0].comment.includes('Google Cloud'));
 });
 
 test('scanSecretsInChanges detects JWT Token', () => {
@@ -45,8 +44,8 @@ test('scanSecretsInChanges detects JWT Token', () => {
     { line: 10, content: '"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SignaturePart"' }
   ];
   const results = scanSecretsInChanges(changes);
-  assert.ok(results.length >= 1, 'should detect at least one secret including JWT');
-  const jwtResult = results.find(r => r.comment.includes('JWT'));
+  assert.ok(results.findings.length >= 1, 'should detect at least one secret including JWT');
+  const jwtResult = results.findings.find(r => r.comment.includes('JWT'));
   assert.ok(jwtResult, 'JWT should be detected');
 });
 
@@ -55,8 +54,8 @@ test('scanSecretsInChanges detects Generic API Key', () => {
     { line: 2, content: 'api_key: "abcdefgh1234567890"' }
   ];
   const results = scanSecretsInChanges(changes);
-  assert.equal(results.length, 1);
-  assert.ok(results[0].comment.includes('Generic API Key'));
+  assert.equal(results.findings.length, 1);
+  assert.ok(results.findings[0].comment.includes('Generic API Key'));
 });
 
 test('scanSecretsInChanges detects Private Key', () => {
@@ -64,8 +63,8 @@ test('scanSecretsInChanges detects Private Key', () => {
     { line: 1, content: '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----' }
   ];
   const results = scanSecretsInChanges(changes);
-  assert.equal(results.length, 1);
-  assert.ok(results[0].comment.includes('Private Key'));
+  assert.equal(results.findings.length, 1);
+  assert.ok(results.findings[0].comment.includes('Private Key'));
 });
 
 test('scanSecretsInChanges detects multiple secrets in same change', () => {
@@ -73,8 +72,8 @@ test('scanSecretsInChanges detects multiple secrets in same change', () => {
     { line: 1, content: 'const aws = "AKIA1234567890ABCDEF"; const pat = "ghp_abc123xyz456789012345678901234567890"' }
   ];
   const results = scanSecretsInChanges(changes);
-  assert.equal(results.length, 2);
-  const lines = results.map(r => r.line);
+  assert.equal(results.findings.length, 2);
+  const lines = results.findings.map(r => r.line);
   assert.deepEqual(lines, [1, 1]);
 });
 
@@ -85,16 +84,15 @@ test('scanSecretsInChanges returns empty for clean changes', () => {
     { line: 3, content: 'export default App;' }
   ];
   const results = scanSecretsInChanges(changes);
-  assert.equal(results.length, 0);
+  assert.equal(results.findings.length, 0);
 });
 
 test('scanSecretsInChanges returns at least one finding for any secret pattern', () => {
-  // Uses Database connection credential pattern which contains mongodb:// prefix
   const changes = [
     { line: 77, content: 'const db = "mongodb://user:pass123@host:27017/db"' }
   ];
   const results = scanSecretsInChanges(changes);
-  assert.ok(results.length >= 1, 'should detect database credential');
+  assert.ok(results.findings.length >= 1, 'should detect database credential');
 });
 
 test('scanSecretsInChanges handles missing content key gracefully', () => {
@@ -102,7 +100,7 @@ test('scanSecretsInChanges handles missing content key gracefully', () => {
     { content: 'some content without line key' }
   ];
   const results = scanSecretsInChanges(changes);
-  assert.equal(results.length, 0);
+  assert.equal(results.findings.length, 0);
 });
 
 test('scanSecretsInChanges result type is always security', () => {
@@ -110,5 +108,5 @@ test('scanSecretsInChanges result type is always security', () => {
     { line: 1, content: 'github_pat = "ghp_abc123xyz456789012345678901234567890"' }
   ];
   const results = scanSecretsInChanges(changes);
-  assert.equal(results[0].type, 'security');
+  assert.equal(results.findings[0].type, 'security');
 });

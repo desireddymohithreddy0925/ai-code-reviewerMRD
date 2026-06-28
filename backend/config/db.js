@@ -73,7 +73,8 @@ export async function closeDatabase() {
 
 mongoose.connection.on('disconnected', () => {
   isConnected = false;
-  console.warn('⚠️ MongoDB disconnected. Analytics will not be persisted.');
+  connectionPromise = null;
+  console.warn('⚠️ MongoDB disconnected. Will re-attempt connection on next request.');
 });
 
 mongoose.connection.on('error', (err) => {

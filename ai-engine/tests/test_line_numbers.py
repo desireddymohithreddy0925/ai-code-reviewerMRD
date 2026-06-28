@@ -14,9 +14,9 @@ class TestCalculateLineNumbers:
         chunks = ["line1\nline2\nline3", "line4\nline5"]
         result = _calculate_line_numbers(content, chunks)
         assert len(result) == 2
-        # First chunk lines 0-2, second chunk follows with line range (1, 2)
+        # First chunk lines 0-2, second chunk follows with line range (3, 4)
         assert result[0] == (0, 2)
-        assert result[1] == (1, 2)
+        assert result[1] == (3, 4)
 
     def test_chunk_not_found_returns_zero_zero(self):
         content = "original content here"
@@ -38,4 +38,4 @@ class TestCalculateLineNumbers:
         assert len(result) == 3
         assert result[0] == (0, 0)
         assert result[1] == (1, 1)
-        assert result[2] == (1, 1)
+        assert result[2] == (2, 2)

@@ -174,3 +174,65 @@ class TestClearAllVectors:
         with open(fresh_vectorstore) as f:
             data = json.load(f)
         assert len(data) == 0
+
+
+class TestComputeContentHash:
+    """Unit tests for _compute_content_hash function in vectorstore.py."""
+
+    def test_empty_string_returns_valid_sha256(self):
+        import vectorstore as vs
+        result = vs._compute_content_hash('')
+        assert isinstance(result, str)
+        assert len(result) == 64  # SHA-256 hex digest is 64 chars
+        assert all(c in '0123456789abcdef' for c in result)
+
+    def test_same_content_produces_same_hash(self):
+        import vectorstore as vs
+        h1 = vs._compute_content_hash('hello world')
+        h2 = vs._compute_content_hash('hello world')
+        assert h1 == h2
+
+    def test_different_content_produces_different_hash(self):
+        import vectorstore as vs
+        h1 = vs._compute_content_hash('hello')
+        h2 = vs._compute_content_hash('world')
+        assert h1 != h2
+
+    def test_unicode_content_produces_valid_hash(self):
+        import vectorstore as vs
+        result = vs._compute_content_hash('\u4e2d\u6587\u4e16\u754c')  # Chinese "world"
+        assert isinstance(result, str)
+        assert len(result) == 64
+        assert all(c in '0123456789abcdef' for c in result)
+
+    def test_emoji_content_produces_valid_hash(self):
+        import vectorstore as vs
+        result = vs._compute_content_hash('\U0001F600\U0001F4BB\U0001F40D')  # emoji
+        assert isinstance(result, str)
+        assert len(result) == 64
+
+    def test_whitespace_only_produces_valid_hash(self):
+        import vectorstore as vs
+        result = vs._compute_content_hash('   \n\t\n  ')
+        assert isinstance(result, str)
+        assert len(result) == 64
+
+    def test_large_content_produces_valid_hash(self):
+        import vectorstore as vs
+        large = 'x' * 100_000
+        result = vs._compute_content_hash(large)
+        assert isinstance(result, str)
+        assert len(result) == 64
+
+    def test_deterministic_across_multiple_calls(self):
+        import vectorstore as vs
+        hashes = [vs._compute_content_hash('test content') for _ in range(5)]
+        assert len(set(hashes)) == 1  # All identical
+
+    def test_special_characters_preserved_in_hash(self):
+        import vectorstore as vs
+        content = 'line1\nline2\ttab\0null'
+        result = vs._compute_content_hash(content)
+        assert len(result) == 64
+        # Hash of 'hello' should always be the same
+        assert vs._compute_content_hash('hello') == '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824'

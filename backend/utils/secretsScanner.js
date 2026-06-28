@@ -36,7 +36,7 @@ export const rules = [
   },
   {
     type: "Common Environment Credential",
-    regex: /(?:password|passwd|secret|secret_key|private_key|api_key|token|auth_token)\s*=\s*['"][^'"]+['"]/gi,
+    regex: /(?:password|passwd|secret|secret_key|private_key|api_key|token|auth_token)\s*=\s*(['"])([^\n]*?)\1/gi,
     description: "Hardcoded credential (e.g. password, secret key, token) detected. Storing raw configurations in code commits is a major security risk."
   },
   {
@@ -56,25 +56,52 @@ export const rules = [
   },
   {
     type: "Generic API Key / Token",
-    regex: /(?:api_key|apikey|secret_key|auth_token|client_secret)\b\s*[:=]\s*['"]([A-Za-z0-9-_]{16,})['"]/gi,
+    regex: /(?:api_key|apikey|secret_key|auth_token|client_secret)\b\s*[:=]\s*(['"])([A-Za-z0-9-_]{16,64})\1/gi,
     description: "Potential hardcoded Generic API Key or Token detected. This can lead to unauthorized service integration access."
+  },
+  {
+    type: "Hardcoded IPv4 Address",
+    regex: /\b(?!127\.\d{1,3}\.\d{1,3}\.\d{1,3}\b)(?!0\.0\.0\.0\b)(?!255\.255\.255\.255\b)\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,
+    description: "🌐 [Network/Crypto Leak] Hardcoded IPv4 address detected. Exposing internal or public IP addresses in source code reveals network topology and can assist attackers in reconnaissance or lateral movement."
+  },
+  {
+    type: "Ethereum (ETH) Wallet Address",
+    regex: /\b0x[0-9a-fA-F]{40}\b/g,
+    description: "🪙 [Network/Crypto Leak] Hardcoded Ethereum wallet address detected. Attackers scrape repositories for wallet addresses to target phishing campaigns or trace financial activity."
+  },
+  {
+    type: "Bitcoin (BTC) Wallet Address",
+    regex: /\b(?:1[1-9A-HJ-NP-Za-km-z]{25,34}|3[1-9A-HJ-NP-Za-km-z]{25,34}|bc1[0-9a-z]{25,39})\b/g,
+    description: "🪙 [Network/Crypto Leak] Hardcoded Bitcoin wallet address detected. Committing cryptocurrency wallet addresses to public repositories exposes them to scraping bots and targeted attacks."
   }
 ];
+
+const MAX_LINE_LENGTH = parseInt(process.env.SECRETS_MAX_LINE_LENGTH, 10) || 10000;
+const SCAN_TIMEOUT_MS = parseInt(process.env.SECRETS_SCAN_TIMEOUT_MS, 10) || 100;
 
 export function scanSecrets(fileContent) {
   if (typeof fileContent !== 'string') return [];
   const findings = [];
   const lines = fileContent.split('\n');
+  const startTime = Date.now();
   lines.forEach((line, idx) => {
+    if (Date.now() - startTime > SCAN_TIMEOUT_MS) return;
+    if (line.length > MAX_LINE_LENGTH) return;
     rules.forEach(rule => {
+      if (Date.now() - startTime > SCAN_TIMEOUT_MS) return;
       rule.regex.lastIndex = 0;
-      if (rule.regex.test(line)) {
+      let match;
+      while ((match = rule.regex.exec(line)) !== null) {
         findings.push({
           type: rule.type,
           line: idx + 1,
+          column: match.index,
           description: rule.description,
           suggestion: "Move this secret immediately to a protected environment configuration file (.env) and reference it as a dynamic variable instead."
         });
+        if (rule.regex.lastIndex === match.index) {
+          rule.regex.lastIndex++;
+        }
       }
     });
   });
@@ -82,22 +109,52 @@ export function scanSecrets(fileContent) {
   return findings;
 }
 
+const MAX_CHANGES_PROCESSED = parseInt(process.env.SECRETS_MAX_CHANGES, 10) || 500;
+
 export function scanSecretsInChanges(changes) {
-  if (!Array.isArray(changes)) return [];
+  if (!Array.isArray(changes)) return { findings: [], truncated: false, totalChanges: 0, skippedReason: null };
   const findings = [];
+  const startTime = Date.now();
+  let changesProcessed = 0;
+  let stoppedEarly = false;
+  let reason = null;
+
   for (const change of changes) {
+    if (changesProcessed >= MAX_CHANGES_PROCESSED) {
+      stoppedEarly = true;
+      reason = `Reached maximum of ${MAX_CHANGES_PROCESSED} changes processed.`;
+      break;
+    }
+    if (Date.now() - startTime > SCAN_TIMEOUT_MS) {
+      stoppedEarly = true;
+      reason = `Scan timeout of ${SCAN_TIMEOUT_MS}ms exceeded.`;
+      break;
+    }
+    changesProcessed++;
     if (!change || typeof change.content !== 'string') continue;
+    if (change.content.length > MAX_LINE_LENGTH) continue;
     for (const rule of rules) {
+      if (Date.now() - startTime > SCAN_TIMEOUT_MS) {
+        stoppedEarly = true;
+        reason = `Scan timeout of ${SCAN_TIMEOUT_MS}ms exceeded.`;
+        break;
+      }
       rule.regex.lastIndex = 0;
-      if (rule.regex.test(change.content)) {
+      let match;
+      while ((match = rule.regex.exec(change.content)) !== null) {
         findings.push({
           line: change.line,
+          column: match.index,
           type: "security",
           comment: `### 🛡️ Hardcoded Secret Warning\n\nI have detected a hardcoded **${rule.type}** on line **${change.line}**.\n\n#### 💡 Actionable Suggestion\nMove this credential immediately to a protected environment variable (e.g. GitHub Secrets or \`.env\`) and load it dynamically at runtime. DO NOT commit plain secrets to public Git repositories!`
         });
+        if (rule.regex.lastIndex === match.index) {
+          rule.regex.lastIndex++;
+        }
       }
     }
+    if (stoppedEarly) break;
   }
 
-  return findings;
+  return { findings, truncated: stoppedEarly, totalChanges: changes.length, skippedReason: reason };
 }

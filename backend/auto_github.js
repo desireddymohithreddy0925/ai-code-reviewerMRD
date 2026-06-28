@@ -1,0 +1,98 @@
+import { Octokit } from '@octokit/rest';
+import dotenv from 'dotenv';
+import readline from 'readline';
+
+dotenv.config();
+
+const token = process.env.GITHUB_PAT;
+
+if (!token || token.includes('your_github_personal_access_token_here')) {
+  console.error('❌ Error: Please set a valid GITHUB_PAT in backend/.env');
+  process.exit(1);
+}
+
+const octokit = new Octokit({ auth: token });
+// Set your repository details here
+const owner = 'kalyan-1845';
+const repo = 'ai-code-reviewer';
+
+async function autoAssignAndMerge() {
+  console.log(`🤖 Starting GitHub Automator for ${owner}/${repo}...`);
+
+  try {
+    // 1. Check for 'assign me' in issues
+    console.log('\n🔍 Checking for "assign me" comments on open issues...');
+    const { data: issues } = await octokit.rest.issues.listForRepo({
+      owner,
+      repo,
+      state: 'open'
+    });
+
+    for (const issue of issues) {
+      if (issue.pull_request) continue; // Skip PRs, only process issues
+
+      const { data: comments } = await octokit.rest.issues.listComments({
+        owner,
+        repo,
+        issue_number: issue.number
+      });
+
+      for (const comment of comments) {
+        if (comment.body.toLowerCase().includes('assign me')) {
+          const userToAssign = comment.user.login;
+          const assignees = issue.assignees.map(a => a.login);
+          
+          if (!assignees.includes(userToAssign)) {
+            console.log(`👉 Assigning @${userToAssign} to Issue #${issue.number}...`);
+            await octokit.rest.issues.addAssignees({
+              owner,
+              repo,
+              issue_number: issue.number,
+              assignees: [userToAssign]
+            });
+            console.log(`✅ Assigned @${userToAssign} to Issue #${issue.number}`);
+          }
+        }
+      }
+    }
+
+    // 2. Check for Open PRs
+    console.log('\n🔍 Checking for open PRs to review and merge...');
+    const { data: prs } = await octokit.rest.pulls.list({
+      owner,
+      repo,
+      state: 'open'
+    });
+
+    if (prs.length === 0) {
+      console.log('✅ No open Pull Requests found.');
+    } else {
+      for (const pr of prs) {
+        console.log(`\n📦 PR #${pr.number}: ${pr.title}`);
+        console.log(`   Author: @${pr.user.login}`);
+        console.log(`   URL: ${pr.html_url}`);
+        
+        // Example: To automatically merge if ready
+        // Uncomment the lines below if you want script to blindly merge them (Use with caution!)
+        /*
+        console.log(`   Merging PR #${pr.number}...`);
+        await octokit.rest.pulls.merge({
+          owner,
+          repo,
+          pull_number: pr.number,
+          merge_method: 'squash'
+        });
+        console.log(`✅ Merged PR #${pr.number}`);
+        */
+      }
+      console.log('\n💡 Please review the above PRs manually on GitHub, or uncomment the merge code in this script to auto-merge them.');
+    }
+
+    console.log('\n🎉 Automator finished successfully!');
+
+  } catch (error) {
+    console.error('❌ An error occurred:', error.message);
+  }
+}
+
+autoAssignAndMerge();

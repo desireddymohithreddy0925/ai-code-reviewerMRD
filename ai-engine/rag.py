@@ -1,5 +1,7 @@
 import os
 import uuid
+import hashlib
+from typing import Optional
 import chromadb
 from chromadb.config import Settings
 from embeddings import embed_texts, get_embedding_dimension
@@ -10,7 +12,6 @@ _CHROMA_HOST = os.getenv("CHROMA_HOST", "")
 _CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
 
 _client = None
-_collection = None
 
 
 def _get_client() -> chromadb.ClientAPI:
@@ -30,26 +31,42 @@ def _get_client() -> chromadb.ClientAPI:
     return _client
 
 
-def _get_collection():
-    global _collection
-    if _collection is None:
-        client = _get_client()
-        try:
-            _collection = client.get_collection(_COLLECTION_NAME)
-        except ValueError:
-            _collection = client.create_collection(
-                _COLLECTION_NAME,
-                metadata={"hnsw:space": "cosine"},
-            )
-    return _collection
+def _collection_name(repo_url: Optional[str] = None) -> str:
+    """Return a tenant-isolated collection name.
+
+    When *repo_url* is provided, the collection is namespaced with a
+    deterministic hash so that each repository's vectors live in a separate
+    ChromaDB collection.  This prevents cross-user / cross-repo code snippet
+    leakage (tenant isolation).
+
+    When *repo_url* is ``None``, the base ``_COLLECTION_NAME`` is returned
+    for backward compatibility.
+    """
+    if repo_url:
+        suffix = hashlib.sha256(repo_url.encode()).hexdigest()[:12]
+        return f"{_COLLECTION_NAME}_{suffix}"
+    return _COLLECTION_NAME
+
+
+def _get_collection(repo_url: Optional[str] = None):
+    client = _get_client()
+    name = _collection_name(repo_url)
+    try:
+        return client.get_collection(name)
+    except ValueError:
+        return client.create_collection(
+            name,
+            metadata={"hnsw:space": "cosine"},
+        )
 
 
 def ingest_chunks(
     chunks: list[str],
     metadatas: list[dict],
     ids: list[str],
+    repo_url: Optional[str] = None,
 ) -> int:
-    collection = _get_collection()
+    collection = _get_collection(repo_url)
     embeddings = embed_texts(chunks)
     collection.add(
         embeddings=embeddings,
@@ -60,8 +77,12 @@ def ingest_chunks(
     return len(chunks)
 
 
-def query_chunks(query_text: str, n_results: int = 5) -> list[dict]:
-    collection = _get_collection()
+def query_chunks(
+    query_text: str,
+    n_results: int = 5,
+    repo_url: Optional[str] = None,
+) -> list[dict]:
+    collection = _get_collection(repo_url)
     query_embedding = embed_texts([query_text])
     results = collection.query(
         query_embeddings=query_embedding,
@@ -82,24 +103,44 @@ def query_chunks(query_text: str, n_results: int = 5) -> list[dict]:
     return chunks
 
 
-def get_collection_stats() -> dict:
-    collection = _get_collection()
+def get_collection_stats(repo_url: Optional[str] = None) -> dict:
+    collection = _get_collection(repo_url)
     count = collection.count()
     return {
-        "collection": _COLLECTION_NAME,
+        "collection": _collection_name(repo_url),
         "chunk_count": count,
         "embedding_dimension": get_embedding_dimension(),
     }
 
 
-def delete_chunks_for_file(file_path: str) -> int:
+def get_chunks_paginated(
+    limit: int = 50,
+    offset: int = 0,
+    repo_url: Optional[str] = None,
+) -> list[dict]:
+    collection = _get_collection(repo_url)
+    results = collection.get(limit=limit, offset=offset)
+    chunks = []
+    documents = results.get("documents", [])
+    metadatas = results.get("metadatas", [])
+    ids = results.get("ids", [])
+    for i in range(len(documents)):
+        chunks.append({
+            "chunk_id": ids[i] if i < len(ids) else None,
+            "content": documents[i],
+            "metadata": metadatas[i] if i < len(metadatas) else {},
+        })
+    return chunks
+
+
+def delete_chunks_for_file(file_path: str, repo_url: Optional[str] = None) -> int:
     """Remove all ChromaDB chunks whose metadata contains the given file path.
 
     Chunks are matched using the ``source_file`` metadata field that is set
     during ingestion (via /api/rag/split).  Returns the number of chunks that
     were deleted.
     """
-    collection = _get_collection()
+    collection = _get_collection(repo_url)
     results = collection.get(where={"source_file": file_path})
     ids_to_delete = results.get("ids", [])
     if ids_to_delete:
@@ -107,7 +148,7 @@ def delete_chunks_for_file(file_path: str) -> int:
     return len(ids_to_delete)
 
 
-def cleanup_stale_chunks(current_files: set) -> dict:
+def cleanup_stale_chunks(current_files: set, repo_url: Optional[str] = None) -> dict:
     """Remove ChromaDB chunks for any file path that is no longer in the
     provided *current_files* set.
 
@@ -115,7 +156,7 @@ def cleanup_stale_chunks(current_files: set) -> dict:
     ``remaining_count`` so the API response shape stays identical to the
     previous vectorstore-based implementation.
     """
-    collection = _get_collection()
+    collection = _get_collection(repo_url)
     # Fetch all stored source_file values without retrieving embeddings
     all_results = collection.get(include=["metadatas"])
     stored_paths = {
@@ -126,9 +167,20 @@ def cleanup_stale_chunks(current_files: set) -> dict:
     stale_paths = stored_paths - current_files
     removed_count = 0
     for stale_path in stale_paths:
-        removed_count += delete_chunks_for_file(stale_path)
+        removed_count += delete_chunks_for_file(stale_path, repo_url=repo_url)
     return {
         "stale_paths": list(stale_paths),
         "removed_count": removed_count,
         "remaining_count": collection.count(),
     }
+
+
+def delete_collection(repo_url: str) -> bool:
+    """Delete a per-repo collection for cleanup on repo re-analysis."""
+    client = _get_client()
+    name = _collection_name(repo_url)
+    try:
+        client.delete_collection(name)
+        return True
+    except ValueError:
+        return False

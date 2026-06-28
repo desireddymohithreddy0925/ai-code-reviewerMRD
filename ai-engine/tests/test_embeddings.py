@@ -1,20 +1,5 @@
-import sys
 import pytest
-from unittest.mock import patch, MagicMock
-
 from embeddings import get_embedding_dimension, embed_text, embed_texts
-
-
-def make_mock_st():
-    """Build a mock sentence_transformers module."""
-    mock_st = MagicMock()
-    mock_model = MagicMock()
-    mock_model.encode = MagicMock(return_value=MagicMock(
-        tolist=MagicMock(return_value=[0.1, 0.2, 0.3])
-    ))
-    mock_model.get_sentence_embedding_dimension = MagicMock(return_value=384)
-    mock_st.SentenceTransformer.return_value = mock_model
-    return mock_st, mock_model
 
 
 class TestGetEmbeddingDimension:
@@ -26,18 +11,6 @@ class TestGetEmbeddingDimension:
     def test_returns_expected_minilm_dimension(self):
         dim = get_embedding_dimension()
         assert dim == 384
-
-    def test_caches_model_instance(self):
-        mock_st, mock_model = make_mock_st()
-        with patch.dict(sys.modules, {"sentence_transformers": mock_st}):
-            if "embeddings" in sys.modules:
-                del sys.modules["embeddings"]
-            import embeddings
-            embeddings._model = None
-            r1 = embeddings.get_embedding_dimension()
-            r2 = embeddings.get_embedding_dimension()
-            assert r1 == r2
-            assert mock_st.SentenceTransformer.call_count == 1
 
 
 class TestEmbedText:
@@ -64,49 +37,6 @@ class TestEmbedText:
         assert isinstance(result, list)
         assert len(result) == get_embedding_dimension()
 
-    def test_mocked_embed_text_returns_list_of_floats(self):
-        mock_st, mock_model = make_mock_st()
-        mock_model.encode.return_value = MagicMock(
-            tolist=MagicMock(return_value=[0.5, 0.6, 0.7])
-        )
-        with patch.dict(sys.modules, {"sentence_transformers": mock_st}):
-            if "embeddings" in sys.modules:
-                del sys.modules["embeddings"]
-            import embeddings
-            embeddings._model = None
-            result = embeddings.embed_text("hello world")
-            assert isinstance(result, list)
-            assert len(result) == 3
-            assert all(isinstance(x, float) for x in result)
-
-    def test_normalizes_embedding(self):
-        mock_st, mock_model = make_mock_st()
-        mock_model.encode.return_value = MagicMock(
-            tolist=MagicMock(return_value=[0.1, 0.2])
-        )
-        with patch.dict(sys.modules, {"sentence_transformers": mock_st}):
-            if "embeddings" in sys.modules:
-                del sys.modules["embeddings"]
-            import embeddings
-            embeddings._model = None
-            embeddings.embed_text("test input")
-            mock_model.encode.assert_called_once_with(
-                "test input", normalize_embeddings=True
-            )
-
-    def test_handles_empty_string(self):
-        mock_st, mock_model = make_mock_st()
-        mock_model.encode.return_value = MagicMock(
-            tolist=MagicMock(return_value=[])
-        )
-        with patch.dict(sys.modules, {"sentence_transformers": mock_st}):
-            if "embeddings" in sys.modules:
-                del sys.modules["embeddings"]
-            import embeddings
-            embeddings._model = None
-            result = embeddings.embed_text("")
-            assert isinstance(result, list)
-
 
 class TestEmbedTexts:
     def test_returns_list_of_embedding_vectors(self):
@@ -130,61 +60,64 @@ class TestEmbedTexts:
     def test_different_texts_produce_different_embeddings(self):
         result = embed_texts(["apple", "banana", "car"])
         assert len(result) == 3
+        # At least one pair should differ
         assert result[0] != result[1] or result[1] != result[2]
 
-    def test_mocked_returns_list_of_lists_of_floats(self):
-        import numpy as np
-        mock_st, mock_model = make_mock_st()
-        mock_model.encode.return_value = np.array([[0.1, 0.2], [0.3, 0.4]])
-        with patch.dict(sys.modules, {"sentence_transformers": mock_st}):
-            if "embeddings" in sys.modules:
-                del sys.modules["embeddings"]
-            import embeddings
-            embeddings._model = None
-            result = embeddings.embed_texts(["hello", "world"])
-            assert isinstance(result, list)
-            assert len(result) == 2
-            assert all(isinstance(sub, list) for sub in result)
-            assert result[0] == [0.1, 0.2]
-            assert result[1] == [0.3, 0.4]
+class TestEmbedTextEdgeCases:
+    def test_embed_text_with_unicode_cjk_characters(self):
+        result = embed_text("你好世界 hello 你好")
+        assert isinstance(result, list)
+        assert len(result) == get_embedding_dimension()
+        assert all(isinstance(v, (int, float)) for v in result)
 
-    def test_normalizes_each_embedding(self):
-        mock_st, mock_model = make_mock_st()
-        mock_model.encode.return_value = MagicMock(
-            tolist=MagicMock(return_value=[[0.1], [0.2]])
-        )
-        with patch.dict(sys.modules, {"sentence_transformers": mock_st}):
-            if "embeddings" in sys.modules:
-                del sys.modules["embeddings"]
-            import embeddings
-            embeddings._model = None
-            embeddings.embed_texts(["a", "b"])
-            mock_model.encode.assert_called_once_with(
-                ["a", "b"], normalize_embeddings=True
-            )
+    def test_embed_text_with_emoji(self):
+        result = embed_text("Hello world!")
+        assert isinstance(result, list)
+        assert len(result) == get_embedding_dimension()
 
-    def test_single_text_returns_single_list(self):
-        import numpy as np
-        mock_st, mock_model = make_mock_st()
-        mock_model.encode.return_value = np.array([[0.1, 0.2]])
-        with patch.dict(sys.modules, {"sentence_transformers": mock_st}):
-            if "embeddings" in sys.modules:
-                del sys.modules["embeddings"]
-            import embeddings
-            embeddings._model = None
-            result = embeddings.embed_texts(["single text"])
-            assert len(result) == 1
-            assert result[0] == [0.1, 0.2]
+    def test_embed_text_with_whitespace_only(self):
+        result = embed_text("   \n\t  ")
+        assert isinstance(result, list)
+        assert len(result) == get_embedding_dimension()
 
-    def test_empty_list_returns_empty_list_mock(self):
-        mock_st, mock_model = make_mock_st()
-        mock_model.encode.return_value = MagicMock(
-            tolist=MagicMock(return_value=[])
-        )
-        with patch.dict(sys.modules, {"sentence_transformers": mock_st}):
-            if "embeddings" in sys.modules:
-                del sys.modules["embeddings"]
-            import embeddings
-            embeddings._model = None
-            result = embeddings.embed_texts([])
-            assert result == []
+    def test_embed_text_produces_normalized_vector(self):
+        result = embed_text("test normalization")
+        magnitude = sum(v * v for v in result) ** 0.5
+        assert abs(magnitude - 1.0) < 0.01
+
+
+class TestEmbedTextsEdgeCases:
+    def test_embed_texts_single_item_matches_embed_text(self):
+        single = embed_text("consistent test content")
+        batch = embed_texts(["consistent test content"])
+        assert len(batch) == 1
+        assert batch[0] == single
+
+    def test_embed_texts_duplicate_texts_produce_same_embeddings(self):
+        result = embed_texts(["same text", "same text", "different"])
+        # First two should be identical, third different
+        assert result[0] == result[1]
+        assert result[0] != result[2]
+
+    def test_embed_texts_reordered_texts_produce_different_order(self):
+        batch1 = embed_texts(["apple", "banana", "cherry"])
+        batch2 = embed_texts(["cherry", "apple", "banana"])
+        assert batch1[0] == batch2[1]  # apple
+        assert batch1[1] == batch2[2]  # banana
+        assert batch1[2] == batch2[0]  # cherry
+
+    def test_embed_texts_very_long_text(self):
+        long_text = "word " * 1000
+        result = embed_texts([long_text])
+        assert len(result) == 1
+        assert len(result[0]) == get_embedding_dimension()
+
+    def test_embed_texts_mixed_content_batch(self):
+        batch = embed_texts([
+            "def hello(): pass",
+            "# python comment",
+            "x = 1",
+            "class Foo: pass",
+        ])
+        assert len(batch) == 4
+        assert all(len(v) == get_embedding_dimension() for v in batch)

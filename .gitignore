@@ -35,5 +35,8 @@ temp_repos/
 *.sqlite
 *.sqlite3
 
+# Test coverage
+backend/coverage/
+
 # Local queries and scripts
 *.gql

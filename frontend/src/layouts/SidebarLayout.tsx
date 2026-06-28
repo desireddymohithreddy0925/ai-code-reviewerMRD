@@ -1,8 +1,18 @@
+import { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { Sparkles, LayoutDashboard, Settings as SettingsIcon } from 'lucide-react';
+import { Sparkles, LayoutDashboard, Settings as SettingsIcon, Sun, Moon } from 'lucide-react';
 
 export default function SidebarLayout() {
   const location = useLocation();
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const savedTheme = localStorage.getItem("reposage_theme");
+    return savedTheme === "light" || savedTheme === "dark" ? savedTheme : "dark";
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("reposage_theme", theme);
+  }, [theme]);
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-color)' }}>
@@ -44,6 +54,22 @@ export default function SidebarLayout() {
             <SettingsIcon size={16} /> Settings (WIP)
           </div>
         </nav>
+
+        <div style={{ marginTop: 'auto', paddingTop: '20px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+          <button
+            onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', borderRadius: '8px',
+              width: '100%', border: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer',
+              fontSize: '13px', fontWeight: 600, color: '#9ca3af',
+              background: 'rgba(255,255,255,0.03)',
+            }}
+            title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          >
+            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+            {theme === "dark" ? "Light Mode" : "Dark Mode"}
+          </button>
+        </div>
       </aside>
 
       <main style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>

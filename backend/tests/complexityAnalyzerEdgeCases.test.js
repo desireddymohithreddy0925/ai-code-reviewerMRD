@@ -267,3 +267,87 @@ test('analyzeComplexity grade thresholds', () => {
   const resultF = analyzeComplexity('def f(): pass\n'.repeat(20), 'b.py');
   assert.equal(resultF.grade, 'F');
 });
+
+// --- Ruby comment tests from PR #414 ---
+test('analyzeComplexity counts Ruby single-line comments in .rb files', () => {
+  const code = [
+    '# This is a Ruby comment',
+    'def hello',
+    '  # indented Ruby comment',
+    '  puts "world"',
+    '# another comment at bottom',
+  ].join('\n');
+  const result = analyzeComplexity(code, 'script.rb');
+  // 3 comment lines (#, # indented, # bottom), 2 code lines
+  assert.equal(result.commentLines, 3);
+  assert.equal(result.codeLines, 2);
+  assert.equal(result.totalLines, 5);
+});
+
+test('analyzeComplexity handles empty Ruby file', () => {
+  const result = analyzeComplexity('', 'empty.rb');
+  assert.equal(result.totalLines, 0);
+  assert.equal(result.emptyLines, 0);
+  assert.equal(result.codeLines, 0);
+  assert.equal(result.grade, 'A');
+});
+
+test('analyzeComplexity handles empty SQL file', () => {
+  const result = analyzeComplexity('', 'empty.sql');
+  assert.equal(result.totalLines, 0);
+  assert.equal(result.emptyLines, 0);
+  assert.equal(result.codeLines, 0);
+  assert.equal(result.grade, 'A');
+});
+
+test('analyzeComplexity counts multi-line SQL block comments spanning multiple lines', () => {
+  const code = [
+    '/*',
+    '  Multi-line SQL block comment',
+    '  spanning several lines',
+    '*/',
+    'SELECT * FROM users;',
+    'SELECT id FROM orders;',
+  ].join('\n');
+  const result = analyzeComplexity(code, 'query.sql');
+  assert.equal(result.commentLines, 4);
+  assert.equal(result.codeLines, 2);
+});
+
+test('analyzeComplexity SQL file with only block comment returns correct counts', () => {
+  const code = '/* only a block comment here */';
+  const result = analyzeComplexity(code, 'only_comments.sql');
+  assert.equal(result.commentLines, 1);
+  assert.equal(result.codeLines, 0);
+  assert.equal(result.totalLines, 1);
+});
+
+test('analyzeComplexity mixed Ruby and Python style in non-Ruby file ignores Ruby comments', () => {
+  const code = [
+    '# this looks like a Ruby comment but is Python',
+    'print("hello")',
+  ].join('\n');
+  const result = analyzeComplexity(code, 'script.py');
+  assert.equal(result.commentLines, 1);
+  assert.equal(result.codeLines, 1);
+});
+
+test('analyzeComplexity closes SQL block comment correctly mid-file', () => {
+  const code = [
+    'SELECT a FROM t1;',
+    '/* unclosed until here',
+    '   still inside */',
+    'SELECT b FROM t2;',
+  ].join('\n');
+  const result = analyzeComplexity(code, 'query.sql');
+  assert.equal(result.codeLines, 2);
+  assert.equal(result.commentLines, 2);
+});
+
+test('analyzeComplexity Ruby file with only comment returns zero code lines', () => {
+  const code = '# only a ruby comment here\n# another line of comment';
+  const result = analyzeComplexity(code, 'script.rb');
+  assert.equal(result.commentLines, 2);
+  assert.equal(result.codeLines, 0);
+  assert.equal(result.totalLines, 2);
+});

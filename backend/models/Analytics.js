@@ -1,6 +1,10 @@
 import mongoose from 'mongoose';
 
 const analyticsSchema = new mongoose.Schema({
+  sessionId: {
+    type: String,
+    index: true,
+  },
   repoUrl: {
     type: String,
     required: true,

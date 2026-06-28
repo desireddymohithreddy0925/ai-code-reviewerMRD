@@ -19,8 +19,10 @@ export function loadIgnorePatterns(dir) {
 
 // 🟢 Helper to check if a path matches any ignore pattern
 export function isIgnored(filePath, patterns, baseDir) {
+  if (!patterns || !Array.isArray(patterns)) return false;
   const relative = path.relative(baseDir, filePath).replace(/\\/g, '/');
   for (const pattern of patterns) {
+    if (typeof pattern !== 'string') continue;
     if (pattern.endsWith('/')) {
       if (relative === pattern.slice(0, -1) || relative.startsWith(pattern)) {
         return true;
@@ -52,6 +54,7 @@ export function readFilesRecursively(dir, fileList = [], baseDir = dir, ignorePa
   if (fileList.length >= MAX_FILES) return fileList;
   const files = fs.readdirSync(dir);
   for (const file of files) {
+    if (fileList.length >= MAX_FILES) return fileList;
     const filePath = path.join(dir, file);
     let stat;
     try {
@@ -82,7 +85,8 @@ export function readFilesRecursively(dir, fileList = [], baseDir = dir, ignorePa
       
       if (validExtensions.includes(ext)) {
         try {
-          const content = fs.readFileSync(filePath, 'utf-8');
+          const MAX_FILE_CONTENT_LENGTH = 1024 * 1024;
+          const content = fs.readFileSync(filePath, 'utf-8').slice(0, MAX_FILE_CONTENT_LENGTH);
           fileList.push({
             name: path.relative(baseDir, filePath).replace(/\\/g, '/'),
             content: content
