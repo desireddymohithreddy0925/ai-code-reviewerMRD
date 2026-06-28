@@ -190,6 +190,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
           <input
             type="number"
+            min="1"
             value={settings.maxTokens}
             onChange={(e) =>
               setSettings({
