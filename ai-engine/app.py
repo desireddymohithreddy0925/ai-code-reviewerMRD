@@ -178,8 +178,7 @@ def validate_system_prompt(prompt: str, max_len: int = 2000) -> str:
     ]
     
     for phrase in dangerous:
-        escaped = re.escape(phrase)
-        pattern = escaped.replace(r"\ ", r"\s+")
+        pattern = r"\s+".join(re.escape(w) for w in phrase.split())
         if re.search(pattern, lower):
             print(f"⚠️ System prompt rejected: contains prohibited directive '{phrase}'")
             raise HTTPException(
