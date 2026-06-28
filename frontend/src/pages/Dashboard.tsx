@@ -3,7 +3,9 @@ import { useDebounce } from '../hooks/useDebounce';
 import { useStore, ChatMessage } from '../store/useStore';
 import SettingsModal from "../components/SettingsModal";
 import { MetricsChart } from '../components/MetricsChart';
+import QuickFixButton from "../components/QuickFixButton";
 import CopyToClipboardButton from "../components/CopyToClipboardButton";
+import MarkdownErrorBoundary from "../components/MarkdownErrorBoundary";
 import {
   Terminal,
   ShieldAlert,
@@ -3380,9 +3382,11 @@ export default function Dashboard() {
                             flexDirection: "column",
                           }}
                         >
-                          {renderMarkdown(
-                            analysisResult.analysis.generatedReadme,
-                          )}
+                          <MarkdownErrorBoundary>
+                            {renderMarkdown(
+                              analysisResult.analysis.generatedReadme,
+                            )}
+                          </MarkdownErrorBoundary>
                         </div>
                       )}
                     </div>
