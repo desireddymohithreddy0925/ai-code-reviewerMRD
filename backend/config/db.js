@@ -10,9 +10,6 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 
 export async function connectDatabase() {
   if (isConnected) return;
-  if (connectionPromise && !isConnected) {
-    connectionPromise = null;
-  }
   if (connectionPromise) return connectionPromise;
 
   connectionPromise = mongoose.connect(MONGODB_URI, {

@@ -11,10 +11,11 @@ import crypto from 'crypto';
 
 class AnalysisCache {
   constructor(ttlMs = 3600000) {
-    // Default TTL: 1 hour (3600000 ms)
     this.ttlMs = ttlMs;
+    this.maxEntries = 1000;
     this.cache = new Map();
-    this.stats = { hits: 0, misses: 0 };
+    this.stats = { hits: 0, misses: 0, evictions: 0 };
+    this._startSweeper();
   }
 
   /**
@@ -68,9 +69,18 @@ class AnalysisCache {
    * Store an analysis result in the cache with expiration time.
    */
   set(key, result) {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= this.maxEntries) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.cache.delete(oldestKey);
+        this.stats.evictions++;
+      }
+    }
     const expiresAt = Date.now() + this.ttlMs;
     this.cache.set(key, { result, expiresAt });
-    console.log(`💾 Cached analysis result for key ${key.slice(0, 8)}... (expires in ${this.ttlMs / 1000 / 60} minutes)`);
+    console.log(`💾 Cached analysis result for key ${key.slice(0, 8)}... (${this.cache.size}/${this.maxEntries} entries, ${this.stats.evictions} evictions)`);
   }
 
   /**
@@ -85,6 +95,26 @@ class AnalysisCache {
   /**
    * Get cache statistics for monitoring and debugging.
    */
+  _startSweeper(intervalMs = 60000) {
+    if (this._sweeper) return;
+    this._sweeper = setInterval(() => {
+      const now = Date.now();
+      for (const [key, entry] of this.cache) {
+        if (now > entry.expiresAt) {
+          this.cache.delete(key);
+        }
+      }
+    }, intervalMs);
+    if (this._sweeper.unref) this._sweeper.unref();
+  }
+
+  _stopSweeper() {
+    if (this._sweeper) {
+      clearInterval(this._sweeper);
+      this._sweeper = null;
+    }
+  }
+
   getStats() {
     const hitRate = this.stats.hits + this.stats.misses > 0
       ? ((this.stats.hits / (this.stats.hits + this.stats.misses)) * 100).toFixed(1)
@@ -92,8 +122,10 @@ class AnalysisCache {
 
     return {
       size: this.cache.size,
+      maxEntries: this.maxEntries,
       hits: this.stats.hits,
       misses: this.stats.misses,
+      evictions: this.stats.evictions,
       hitRate: `${hitRate}%`,
       ttlMinutes: this.ttlMs / 1000 / 60,
     };
@@ -116,6 +148,17 @@ class AnalysisCache {
    */
   setTtl(ttlMs) {
     this.ttlMs = ttlMs;
+  }
+
+  setMaxEntries(max) {
+    this.maxEntries = max;
+    while (this.cache.size > this.maxEntries) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.cache.delete(oldestKey);
+        this.stats.evictions++;
+      }
+    }
   }
 }
 

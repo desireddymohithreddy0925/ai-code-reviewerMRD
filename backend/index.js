@@ -27,7 +27,7 @@ import { mockAIReview } from './utils/mockAIReview.js';
 import AnalysisCache from './utils/analysisCache.js';
 import Analytics from './models/Analytics.js';
 import Session, { estimateSessionSize } from './models/Session.js';
-import { connectDatabase, ensureConnection } from './config/db.js';
+import { connectDatabase, ensureConnection, closeDatabase } from './config/db.js';
 
 dotenv.config();
 
@@ -94,6 +94,15 @@ const chatLimiter = rateLimit({
   // No keyGenerator: same rationale as analyzeLimiter above.
   store: redisClient ? new RedisStore({ sendCommand: (...args) => redisClient.call(...args) }) : undefined,
   message: { error: 'Too many chat requests. Please slow down and retry after 1 minute.' }
+});
+
+const exportLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: redisClient ? new RedisStore({ sendCommand: (...args) => redisClient.call(...args) }) : undefined,
+  message: { error: 'Too many export requests. Please slow down and retry after 1 minute.' }
 });
 
 // Parse cookies for CSRF token validation
@@ -182,7 +191,7 @@ function cleanupTempRepos() {
     fs.rmSync(tempReposDir, { recursive: true, force: true });
   }
 }
-function onShutdown() { cleanupTempRepos(); cleanupTimers(); process.exit(0); }
+function onShutdown() { cleanupTempRepos(); cleanupTimers(); closeDatabase(); process.exit(0); }
 process.on('SIGINT', onShutdown);
 process.on('SIGTERM', onShutdown);
 
@@ -206,6 +215,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 120000) {
 const reviewQueue = new ReviewQueue();
 const processedDeliveries = new Map();
 const reviewedShas = new Map();
+const failedReviews = new Map();
 const DELIVERY_TTL = 60 * 60 * 1000;
 const MAX_DELIVERY_ENTRIES = 5000;
 
@@ -340,6 +350,22 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
   // Generate unique folder name (needed early for logging/caching)
   const parsed = parseRepoUrl(repoUrl);
   const repoName = parsed.repo;
+  const owner = parsed.owner;
+  const maxRepoSizeMB = parseInt(process.env.MAX_REPO_SIZE_MB) || 100;
+  const maxSizeBytes = maxRepoSizeMB * 1024 * 1024;
+
+  // Pre-clone size check via GitHub API to prevent disk exhaustion
+  try {
+    const octokit = new Octokit({ auth: process.env.GITHUB_PAT || undefined });
+    const { data: repoData } = await octokit.rest.repos.get({ owner, repo: repoName });
+    const repoSizeBytes = (repoData.size || 0) * 1024;
+    if (repoSizeBytes > maxSizeBytes) {
+      return res.status(413).json({ error: `Repository exceeds the maximum allowed size of ${maxRepoSizeMB}MB (Reported size: ~${Math.round(repoSizeBytes/1024/1024)}MB).` });
+    }
+  } catch (err) {
+    console.warn(`Could not verify repository size via GitHub API for ${owner}/${repoName}. Proceeding to clone with filters...`);
+  }
+
   const uniqueId = crypto.randomUUID();
   const clonePath = path.join(tempReposDir, `${repoName}_${uniqueId}`);
 
@@ -349,7 +375,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
   try {
     const cloneTimeout = parseInt(process.env.GIT_CLONE_TIMEOUT) || 120000;
     const git = simpleGit({ timeout: { block: cloneTimeout } });
-    await git.clone(repoUrl, clonePath, ['--depth', '1']);
+    await git.clone(repoUrl, clonePath, ['--depth', '1', '--single-branch', `--filter=blob:limit=${maxRepoSizeMB}m`]);
 
     // Check repository size
     const maxRepoSizeMB = parseInt(process.env.MAX_REPO_SIZE_MB) || 100;
@@ -526,6 +552,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
         filesReviewedCount: files.length,
         analysis: reviewResult,
         sessionId,
+        chatAvailable: sessionPersisted,
         sessionPersisted
       });
 
@@ -729,11 +756,10 @@ app.post('/api/webhook', async (req, res) => {
         try {
           await runWebhookReview(item.owner, item.repo, item.pullNumber, item.headSha);
         } catch (error) {
-          const set = reviewedShas.get(shaKey);
-          if (set) {
-            set.delete(headSha);
-            if (set.size === 0) reviewedShas.delete(shaKey);
-          }
+          console.error(`❌ Webhook review failed for ${headSha}:`, error.message);
+          const failedSet = failedReviews.get(shaKey) || new Set();
+          failedSet.add(headSha);
+          failedReviews.set(shaKey, failedSet);
           throw error;
         }
       });
@@ -977,7 +1003,7 @@ function sanitizeFilename(repoName) {
 }
 
 // 🟢 Route: Export Review Report to HTML
-app.post('/api/reports/html', requireApiKey, (req, res) => {
+app.post('/api/reports/html', requireApiKey, exportLimiter, (req, res) => {
   const { repoName, analysis } = req.body;
   if (!repoName || !analysis) {
     return res.status(400).json({ error: 'Repository name and analysis result are required.' });
@@ -1132,7 +1158,7 @@ app.post('/api/reports/html', requireApiKey, (req, res) => {
 });
 
 // 🟢 Route: Export Review Report to PDF
-app.post('/api/reports/pdf', requireApiKey, (req, res) => {
+app.post('/api/reports/pdf', requireApiKey, exportLimiter, (req, res) => {
   const { repoName, analysis } = req.body;
   if (!repoName || !analysis) {
     return res.status(400).json({ error: 'Repository name and analysis result are required.' });

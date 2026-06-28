@@ -4,6 +4,7 @@ import re
 import time
 import asyncio
 import unicodedata
+from collections import OrderedDict
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -39,7 +40,14 @@ LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
 def _redact_key(text: str, key: str) -> str:
     if not text or not key:
         return text
-    return text.replace(key, "***").replace(key[:8] if len(key) > 8 else key, "***")
+    escaped = re.escape(key)
+    text = re.sub(escaped, "***", text)
+    for trunc_suffix in ["...", "…", " (truncated)"]:
+        truncated = re.escape(key[:len(key) // 2] + trunc_suffix)
+        text = re.sub(truncated, "***", text)
+    if len(key) > 16:
+        text = re.sub(re.escape(key[:16]), "***", text)
+    return text
 
 ALLOWED_TAGS = [
     'svg', 'g', 'path', 'circle', 'rect', 'line', 'polyline', 'polygon',
@@ -224,21 +232,42 @@ API_KEY = os.getenv("REPOSAGE_API_KEY") or os.getenv("GROQ_API_KEY") or ""
 
 RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_MAX_REQUESTS = 30
-_rate_limit_store: dict[str, list[float]] = {}
+MAX_RATE_LIMIT_ENTRIES = 10000
+_rate_limit_store: OrderedDict[str, list[float]] = OrderedDict()
 
 async def rate_limit_middleware(request: Request, call_next):
     client_ip = request.client.host if request.client else "unknown"
     now = time.time()
-    window = _rate_limit_store.get(client_ip, [])
-    window = [t for t in window if now - t < RATE_LIMIT_WINDOW_SECONDS]
+
+    if client_ip in _rate_limit_store:
+        _rate_limit_store.move_to_end(client_ip)
+        window = _rate_limit_store[client_ip]
+    else:
+        if len(_rate_limit_store) >= MAX_RATE_LIMIT_ENTRIES:
+            _rate_limit_store.popitem(last=False)
+        window = []
+        _rate_limit_store[client_ip] = window
+
+    window[:] = [t for t in window if now - t < RATE_LIMIT_WINDOW_SECONDS]
     if len(window) >= RATE_LIMIT_MAX_REQUESTS:
         return JSONResponse(status_code=429, content={"error": "Rate limit exceeded. Try again later."})
     window.append(now)
-    _rate_limit_store[client_ip] = window
     response = await call_next(request)
     return response
 
 app.middleware("http")(rate_limit_middleware)
+
+@app.on_event("startup")
+async def start_rate_limit_cleanup():
+    async def cleanup():
+        while True:
+            await asyncio.sleep(60)
+            now = time.time()
+            stale_ips = [ip for ip, times in list(_rate_limit_store.items())
+                         if not any(now - t < RATE_LIMIT_WINDOW_SECONDS for t in times)]
+            for ip in stale_ips:
+                del _rate_limit_store[ip]
+    app.state.rate_limit_cleanup_task = asyncio.create_task(cleanup())
 
 async def require_api_key(request: Request, call_next):
     if request.url.path == "/" or request.url.path == "/docs" or request.url.path.startswith("/openapi"):

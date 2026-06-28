@@ -54,7 +54,7 @@ const getCsrfToken = (): string | null => {
   return match ? match[1] : null;
 };
 
-export const apiFetch = async (path: string, options: RequestInit = {}) => {
+export const apiFetch = async (path: string, options: RequestInit = {}, timeoutMs = 60000) => {
   await ensureApiSession();
   const headers = new Headers(options.headers);
   if (!headers.has("Content-Type")) {
@@ -68,9 +68,23 @@ export const apiFetch = async (path: string, options: RequestInit = {}) => {
     }
   }
 
-  return fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    credentials: "include",
-    headers,
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      credentials: "include",
+      headers,
+      signal: controller.signal,
+    });
+    return response;
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error(`Request timed out after ${timeoutMs / 1000} seconds. Backend might be hanging.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 };

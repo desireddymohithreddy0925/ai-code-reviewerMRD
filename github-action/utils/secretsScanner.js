@@ -56,8 +56,23 @@ export const rules = [
   },
   {
     type: "Generic API Key / Token",
-    regex: /(?:api_key|apikey|secret_key|auth_token|client_secret)\b\s*[:=]\s*['"]([A-Za-z0-9-_]{16,})['"]/gi,
+    regex: /(?:api_key|apikey|secret_key|auth_token|client_secret)\b\s*[:=]\s*['"]([A-Za-z0-9-_]{16,64})['"]/gi,
     description: "Potential hardcoded Generic API Key or Token detected. This can lead to unauthorized service integration access."
+  },
+  {
+    type: "Hardcoded IPv4 Address",
+    regex: /\b(?!127\.\d{1,3}\.\d{1,3}\.\d{1,3}\b)(?!0\.0\.0\.0\b)(?!255\.255\.255\.255\b)\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,
+    description: "🌐 [Network/Crypto Leak] Hardcoded IPv4 address detected. Exposing internal or public IP addresses in source code reveals network topology and can assist attackers in reconnaissance or lateral movement."
+  },
+  {
+    type: "Ethereum (ETH) Wallet Address",
+    regex: /\b0x[0-9a-fA-F]{40}\b/g,
+    description: "🪙 [Network/Crypto Leak] Hardcoded Ethereum wallet address detected. Attackers scrape repositories for wallet addresses to target phishing campaigns or trace financial activity."
+  },
+  {
+    type: "Bitcoin (BTC) Wallet Address",
+    regex: /\b(?:1[1-9A-HJ-NP-Za-km-z]{25,34}|3[1-9A-HJ-NP-Za-km-z]{25,34}|bc1[0-9a-z]{25,39})\b/g,
+    description: "🪙 [Network/Crypto Leak] Hardcoded Bitcoin wallet address detected. Committing cryptocurrency wallet addresses to public repositories exposes them to scraping bots and targeted attacks."
   }
 ];
 
@@ -93,12 +108,17 @@ export function scanSecretsInChanges(changes) {
         break;
       }
       rule.regex.lastIndex = 0;
-      if (rule.regex.test(change.content)) {
+      let match;
+      while ((match = rule.regex.exec(change.content)) !== null) {
         findings.push({
           line: change.line,
+          column: match.index,
           type: "security",
           comment: `### 🛡️ Hardcoded Secret Warning\n\nI have detected a hardcoded **${rule.type}** on line **${change.line}**.\n\n#### 💡 Actionable Suggestion\nMove this credential immediately to a protected environment variable (e.g. GitHub Secrets or \`.env\`) and load it dynamically at runtime. DO NOT commit plain secrets to public Git repositories!`
         });
+        if (rule.regex.lastIndex === match.index) {
+          rule.regex.lastIndex++;
+        }
       }
     }
     if (stoppedEarly) break;

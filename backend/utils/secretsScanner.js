@@ -90,13 +90,18 @@ export function scanSecrets(fileContent) {
     rules.forEach(rule => {
       if (Date.now() - startTime > SCAN_TIMEOUT_MS) return;
       rule.regex.lastIndex = 0;
-      if (rule.regex.test(line)) {
+      let match;
+      while ((match = rule.regex.exec(line)) !== null) {
         findings.push({
           type: rule.type,
           line: idx + 1,
+          column: match.index,
           description: rule.description,
           suggestion: "Move this secret immediately to a protected environment configuration file (.env) and reference it as a dynamic variable instead."
         });
+        if (rule.regex.lastIndex === match.index) {
+          rule.regex.lastIndex++;
+        }
       }
     });
   });
@@ -135,12 +140,17 @@ export function scanSecretsInChanges(changes) {
         break;
       }
       rule.regex.lastIndex = 0;
-      if (rule.regex.test(change.content)) {
+      let match;
+      while ((match = rule.regex.exec(change.content)) !== null) {
         findings.push({
           line: change.line,
+          column: match.index,
           type: "security",
           comment: `### 🛡️ Hardcoded Secret Warning\n\nI have detected a hardcoded **${rule.type}** on line **${change.line}**.\n\n#### 💡 Actionable Suggestion\nMove this credential immediately to a protected environment variable (e.g. GitHub Secrets or \`.env\`) and load it dynamically at runtime. DO NOT commit plain secrets to public Git repositories!`
         });
+        if (rule.regex.lastIndex === match.index) {
+          rule.regex.lastIndex++;
+        }
       }
     }
     if (stoppedEarly) break;
