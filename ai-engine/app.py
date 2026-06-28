@@ -1,9 +1,12 @@
 import os
 import json
 import re
+import time
+import asyncio
 import unicodedata
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Set
 from groq import Groq
@@ -30,6 +33,8 @@ if not loaded:
 
 MAX_FILE_CHARS_PER_FILE = int(os.getenv("MAX_FILE_CHARS_PER_FILE", "1500"))
 MAX_CHAT_FILES = int(os.getenv("MAX_CHAT_FILES", "20"))
+# Maximum seconds to wait for a single LLM API response before returning 504 (#786)
+LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
 
 def _redact_key(text: str, key: str) -> str:
     if not text or not key:
@@ -85,6 +90,19 @@ def get_groq_model(model_name: Optional[str]) -> str:
     if "gemma" in req_model:
         return "gemma2-9b-it"
     return default_model
+
+def sanitize_mermaid_code(mermaid_text: str) -> str:
+    """Sanitize mermaid diagram code to prevent XSS via prompt injection.
+    Strips HTML/XML tags and javascript: URIs, and validates the diagram type."""
+    if not mermaid_text:
+        return ""
+    dangerous = re.compile(r'<[^>]*>|javascript:|vbscript:|data:\s*text/html|on\w+\s*=', re.IGNORECASE)
+    if dangerous.search(mermaid_text):
+        return "graph TD\n    A[\"Diagram omitted: security concern\"]"
+    valid_start = re.compile(r'^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|gitgraph)\s', re.MULTILINE)
+    if not valid_start.search(mermaid_text):
+        return "graph TD\n    A[\"Diagram omitted: invalid format\"]"
+    return mermaid_text
 
 def sanitize_ai_output(text: str) -> str:
     if not text:
@@ -162,6 +180,24 @@ def validate_system_prompt(prompt: str, max_len: int = 2000) -> str:
                        f"Please remove it and try again."
             )
     return truncated
+async def _call_groq_with_timeout(**kwargs):
+    """Run a synchronous Groq completion in a thread-pool executor with a
+    configurable wall-clock timeout. Raises HTTP 504 if the LLM does not
+    respond within LLM_TIMEOUT_SECONDS seconds, freeing the FastAPI worker. (#786)"""
+    loop = asyncio.get_event_loop()
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: groq_client.chat.completions.create(**kwargs)),
+            timeout=LLM_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail=f"LLM request timed out after {int(LLM_TIMEOUT_SECONDS)}s. "
+                   "Please retry or reduce the number of files.",
+        )
+
+
 app = FastAPI(title="RepoSage AI Engine", description="FastAPI microservice for repository analysis and documentation generation")
 
 # Restrict CORS to configured origins so the AI engine is not accessible from
@@ -174,10 +210,43 @@ allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "x-api-key", "x-csrf-token"],
 )
+
+API_KEY = os.getenv("REPOSAGE_API_KEY") or os.getenv("GROQ_API_KEY") or ""
+
+RATE_LIMIT_WINDOW_SECONDS = 60
+RATE_LIMIT_MAX_REQUESTS = 30
+_rate_limit_store: dict[str, list[float]] = {}
+
+async def rate_limit_middleware(request: Request, call_next):
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    window = _rate_limit_store.get(client_ip, [])
+    window = [t for t in window if now - t < RATE_LIMIT_WINDOW_SECONDS]
+    if len(window) >= RATE_LIMIT_MAX_REQUESTS:
+        return JSONResponse(status_code=429, content={"error": "Rate limit exceeded. Try again later."})
+    window.append(now)
+    _rate_limit_store[client_ip] = window
+    response = await call_next(request)
+    return response
+
+app.middleware("http")(rate_limit_middleware)
+
+async def require_api_key(request: Request, call_next):
+    if request.url.path == "/" or request.url.path == "/docs" or request.url.path.startswith("/openapi"):
+        return await call_next(request)
+    if not API_KEY:
+        return await call_next(request)
+    provided = request.headers.get("x-api-key", "")
+    if not provided or provided != API_KEY:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized: Invalid or missing API Key."})
+    response = await call_next(request)
+    return response
+
+app.middleware("http")(require_api_key)
 
 # Initialize Groq client (supports GROQ_API_KEY and legacy VITE_GROQ_API_KEY)
 api_key = os.getenv("GROQ_API_KEY") or os.getenv("VITE_GROQ_API_KEY")
@@ -203,8 +272,8 @@ class AnalyzeRequest(BaseModel):
     company: Optional[str] = "General"
     language: Optional[str] = "English"
     model: Optional[str] = "llama-3.3-70b-versatile"
-    temperature: Optional[float] = 0.7
-    maxTokens: Optional[int] = 2048
+    temperature: Optional[float] = Field(0.7, ge=0, le=2)
+    maxTokens: Optional[int] = Field(2048, ge=1, le=32768)
     systemPrompt: Optional[str] = ""
     batchSize: Optional[int] = Field(5, ge=1, le=20)
     
@@ -233,7 +302,7 @@ async def analyze_repository(request: AnalyzeRequest):
     files = request.files
     company = request.company
     language = request.language
-    temperature = request.temperature or 0.7
+    temperature = request.temperature if request.temperature is not None else 0.7
     max_tokens = request.maxTokens or 2048
     batch_size = request.batchSize or 5
     custom_system_prompt = validate_system_prompt(request.systemPrompt or "")
@@ -367,7 +436,7 @@ You must obey the JSON output format above."""
 
         try:
             print(f"⏳ Processing batch {idx + 1}/{len(batches)} ({len(batch)} files)...")
-            completion = groq_client.chat.completions.create(
+            completion = await _call_groq_with_timeout(
                 model=groq_model,
                 messages=[
                     {"role": "system", "content": base_prompt},
@@ -384,7 +453,8 @@ You must obey the JSON output format above."""
             # Merge results
             if is_first_batch:
                 if "mermaidDiagram" in batch_result:
-                    combined_result["mermaidDiagram"] = sanitize_ai_output(batch_result["mermaidDiagram"])
+                    sanitized = sanitize_ai_output(batch_result["mermaidDiagram"])
+                    combined_result["mermaidDiagram"] = sanitize_mermaid_code(sanitized)
                 if "generatedReadme" in batch_result:
                     combined_result["generatedReadme"] = sanitize_ai_output(batch_result["generatedReadme"])
             
@@ -517,7 +587,7 @@ Guidelines:
     print(f"📡 Forwarding repo chat request to Groq using model: {groq_model}")
 
     try:
-        completion = groq_client.chat.completions.create(
+        completion = await _call_groq_with_timeout(
             model=groq_model,
             messages=messages,
             temperature=request.temperature or 0.4,
@@ -608,7 +678,7 @@ If no issues are found, reply with: {{ "reviews": [] }}"""
 
         try:
             # We specify response_format={"type": "json_object"} to enforce JSON output. 
-            completion = groq_client.chat.completions.create(
+            completion = await _call_groq_with_timeout(
                 model=groq_model,
                 messages=[{"role": "user", "content": review_prompt}],
                 temperature=0.2,
@@ -648,8 +718,8 @@ If no issues are found, reply with: {{ "reviews": [] }}"""
 
 class SplitRequest(BaseModel):
     files: List[FileItem]
-    chunk_size: Optional[int] = None
-    chunk_overlap: Optional[int] = None
+    chunk_size: Optional[int] = Field(None, ge=1, le=100000)
+    chunk_overlap: Optional[int] = Field(None, ge=0, le=99999)
     repo_url: Optional[str] = None
 
 
@@ -669,10 +739,31 @@ class RagQueryResponse(BaseModel):
     total_chunks: int
 
 
+class PaginatedChunksRequest(BaseModel):
+    limit: Optional[int] = 50
+    offset: Optional[int] = 0
+    repo_url: Optional[str] = None
+
+
+class PaginatedChunksResponse(BaseModel):
+    chunks: List[dict]
+    total_chunks: int
+
+
 # 🟢 Route: Split files into text chunks for RAG ingestion
 @app.post("/api/rag/split", response_model=SplitResponse)
 async def split_files_for_rag(request: SplitRequest):
     from text_splitter import split_files as do_split
+
+    if (
+        request.chunk_size is not None
+        and request.chunk_overlap is not None
+        and request.chunk_overlap >= request.chunk_size
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="chunk_overlap must be smaller than chunk_size.",
+        )
 
     file_dicts = [{"name": f.name, "content": f.content} for f in request.files]
     chunks = do_split(
@@ -698,6 +789,15 @@ async def query_rag_chunks(request: RagQueryRequest):
         chunks=chunks,
         total_chunks=len(chunks),
     )
+
+
+# 🟢 Route: Get paginated RAG chunks
+@app.post("/api/rag/chunks", response_model=PaginatedChunksResponse)
+async def get_paginated_chunks(request: PaginatedChunksRequest):
+    from rag import get_chunks_paginated, get_collection_stats
+    chunks = get_chunks_paginated(limit=request.limit, offset=request.offset, repo_url=request.repo_url)
+    stats = get_collection_stats(repo_url=request.repo_url)
+    return PaginatedChunksResponse(chunks=chunks, total_chunks=stats["chunk_count"])
 
 
 if __name__ == "__main__":

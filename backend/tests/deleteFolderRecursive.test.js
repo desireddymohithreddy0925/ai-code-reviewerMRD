@@ -8,14 +8,16 @@ import { deleteFolderRecursive } from '../utils/fileHelper.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-test('deleteFolderRecursive does not throw for non-existent directory', () => {
-  // Should not throw even if the directory does not exist
-  assert.doesNotThrow(() => {
-    deleteFolderRecursive(path.join(__dirname, 'non_existent_dir_12345'));
-  });
+test('deleteFolderRecursive does not throw for non-existent directory', async () => {
+  try {
+    await deleteFolderRecursive(path.join(__dirname, 'non_existent_dir_12345'));
+    assert.ok(true);
+  } catch (err) {
+    assert.fail('Should not throw for non-existent directory');
+  }
 });
 
-test('deleteFolderRecursive removes all files and subdirectories', () => {
+test('deleteFolderRecursive removes all files and subdirectories', async () => {
   const tempDir = path.join(__dirname, 'temp_delete_test');
   // Create nested structure
   fs.mkdirSync(path.join(tempDir, 'sub1', 'sub2'), { recursive: true });
@@ -31,7 +33,7 @@ test('deleteFolderRecursive removes all files and subdirectories', () => {
   assert.ok(fs.existsSync(path.join(tempDir, 'sub1', 'sub2')), 'sub2 should exist');
 
   // Delete
-  deleteFolderRecursive(tempDir);
+  await deleteFolderRecursive(tempDir);
 
   // Verify complete removal
   assert.ok(!fs.existsSync(tempDir), 'temp directory should not exist after deletion');
@@ -39,7 +41,7 @@ test('deleteFolderRecursive removes all files and subdirectories', () => {
   assert.ok(!fs.existsSync(path.join(tempDir, 'sub1', 'sub2', 'file3.txt')), 'file3 should be removed');
 });
 
-test('deleteFolderRecursive handles directory with only files', () => {
+test('deleteFolderRecursive handles directory with only files', async () => {
   const tempDir = path.join(__dirname, 'temp_delete_files_only');
   fs.mkdirSync(tempDir, { recursive: true });
   fs.writeFileSync(path.join(tempDir, 'a.txt'), 'a');
@@ -48,19 +50,19 @@ test('deleteFolderRecursive handles directory with only files', () => {
 
   assert.ok(fs.existsSync(tempDir), 'directory should exist');
 
-  deleteFolderRecursive(tempDir);
+  await deleteFolderRecursive(tempDir);
 
   assert.ok(!fs.existsSync(tempDir), 'directory should be fully removed');
 });
 
-test('deleteFolderRecursive handles directory with only empty subdirectories', () => {
+test('deleteFolderRecursive handles directory with only empty subdirectories', async () => {
   const tempDir = path.join(__dirname, 'temp_delete_empty_dirs');
   fs.mkdirSync(path.join(tempDir, 'empty1'), { recursive: true });
   fs.mkdirSync(path.join(tempDir, 'empty2'), { recursive: true });
 
   assert.ok(fs.existsSync(tempDir), 'directory should exist');
 
-  deleteFolderRecursive(tempDir);
+  await deleteFolderRecursive(tempDir);
 
   assert.ok(!fs.existsSync(tempDir), 'directory should be fully removed');
 });

@@ -118,7 +118,7 @@ function runTests() {
     console.log(`\n🧪 Running node:test suites: ${nodeTestFiles.join(', ')}`);
     const result = spawnSync(
       process.execPath,
-      ['--test', ...nodeTestFiles.map((f) => path.join(__dirname, f))],
+      ['--test', '--test-concurrency=1', ...nodeTestFiles.map((f) => path.join(__dirname, f))],
       { stdio: 'inherit' }
     );
     if (result.status !== 0) {

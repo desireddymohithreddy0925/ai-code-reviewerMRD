@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+import { apiFetch } from '../utils/api';
 
 // Theme-aware color maps for Recharts (which requires JS string props, not CSS vars)
 const THEME_COLORS = {
@@ -48,9 +47,7 @@ export const MetricsChart: React.FC<MetricsChartProps> = ({ theme = 'dark', sess
     setLoading(true);
     setError(null);
 
-    fetch(`${API_BASE_URL}/api/analytics/trends?sessionId=${encodeURIComponent(sessionId)}`, {
-      credentials: "include",
-    })
+    apiFetch(`/api/analytics/trends?sessionId=${encodeURIComponent(sessionId)}`)
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch analytics trends");
         return res.json();

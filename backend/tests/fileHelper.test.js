@@ -8,7 +8,7 @@ import { deleteFolderRecursive } from '../utils/fileHelper.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-test('deleteFolderRecursive should delete nested directories and files correctly', () => {
+test('deleteFolderRecursive should delete nested directories and files correctly', async () => {
   const tempDir = path.join(__dirname, 'temp_test_delete');
   if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir);
@@ -22,14 +22,17 @@ test('deleteFolderRecursive should delete nested directories and files correctly
 
   assert.equal(fs.existsSync(tempDir), true);
 
-  deleteFolderRecursive(tempDir);
+  await deleteFolderRecursive(tempDir);
 
   assert.equal(fs.existsSync(tempDir), false);
 });
 
-test('deleteFolderRecursive should not throw if directory does not exist', () => {
+test('deleteFolderRecursive should not throw if directory does not exist', async () => {
   const nonExistentDir = path.join(__dirname, 'does_not_exist_folder');
-  assert.doesNotThrow(() => {
-    deleteFolderRecursive(nonExistentDir);
-  });
+  try {
+    await deleteFolderRecursive(nonExistentDir);
+    assert.ok(true);
+  } catch (err) {
+    assert.fail('Should not throw for non-existent directory');
+  }
 });
