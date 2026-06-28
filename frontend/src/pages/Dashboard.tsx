@@ -636,10 +636,11 @@ export default function Dashboard() {
       }
 
       const data = await response.json();
+      const sources = data.sources || [];
       setChatHistory((prev) => {
         const updated = truncateChatHistory([
           ...prev,
-          { role: "assistant" as const, content: data.response },
+          { role: "assistant" as const, content: data.response, sources: sources.length > 0 ? sources : undefined },
         ]);
         try { localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(updated)); } catch {}
         return updated;
@@ -3614,6 +3615,16 @@ export default function Dashboard() {
                             >
                               {msg.content}
                             </div>
+                            {msg.role === "assistant" && msg.sources && msg.sources.length > 0 && (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "6px", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "6px" }}>
+                                {msg.sources.map((source, sIdx) => (
+                                  <span key={sIdx} style={{ display: "inline-flex", alignItems: "center", gap: "3px", fontSize: "10px", background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: "4px", padding: "2px 6px", color: "#60a5fa" }}>
+                                    <FileCode size={10} />
+                                    {source.file}{source.line > 0 ? `:${source.line}` : ""}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         ))
                       )}
