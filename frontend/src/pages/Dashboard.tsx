@@ -3656,7 +3656,7 @@ export default function Dashboard() {
                                     : "inherit",
                               }}
                             >
-                              {msg.content}
+                              {renderMarkdown(msg.content)}
                             </div>
                             {msg.role === "assistant" && msg.sources && msg.sources.length > 0 && (
                               <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "6px", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "6px" }}>
