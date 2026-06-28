@@ -483,6 +483,8 @@ You must obey the JSON output format above."""
             )
             
             response_content = completion.choices[0].message.content
+            if not response_content:
+                raise HTTPException(status_code=502, detail="Groq returned an empty or filtered response. The input may have been blocked by safety filters.")
             batch_result = json.loads(response_content)
             
             # Merge results
@@ -727,6 +729,8 @@ If no issues are found, reply with: {{ "reviews": [] }}"""
                 response_format={"type": "json_object"}
             )
             content = completion.choices[0].message.content
+            if not content:
+                raise HTTPException(status_code=502, detail="Groq returned an empty or filtered response. The input may have been blocked by safety filters.")
             
             # FIXED: Parse the JSON object and reliably extract the "reviews" array
             data = json.loads(content)
