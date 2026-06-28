@@ -588,7 +588,7 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
         // Verify session ownership to prevent IDOR (issue #742):
         // only the client that created the session may access it.
         if (session.ownerToken && session.ownerToken !== req.clientId) {
-          console.warn(`⚠️ IDOR attempt: client ${req.clientId} tried to access session ${sessionId} owned by ${session.ownerToken}`);
+          console.warn(`⚠️ Session ownership mismatch: session ${sessionId} ownerToken=${session.ownerToken} request clientId=${req.clientId} (possible auth-method change or cookie refresh)`);
           return res.status(403).json({ error: 'Access denied: this session does not belong to you.' });
         }
         // Update lastAccessedAt for the sliding-window TTL (see issue #743).
