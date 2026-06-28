@@ -68,6 +68,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   }, [onClose, trapFocus]);
 
   const handleSave = () => {
+    if (settings.maxTokens < 1 || settings.maxTokens > 32768) {
+      alert("Max Tokens must be between 1 and 32768.");
+      return;
+    }
     localStorage.setItem(
       "reposage_ai_settings",
       JSON.stringify(settings)
@@ -198,6 +202,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
           <input
             type="number"
+            min="1"
+            max="32768"
             value={settings.maxTokens}
             onChange={(e) =>
               setSettings({
