@@ -700,8 +700,30 @@ app.post('/api/rag/query', requireApiKey, async (req, res) => {
   }
 });
 
+// Per-repository rate limiting for webhooks
+const repoRequestCounts = new Map();
+const REPO_WINDOW_MS = 60 * 1000;
+const REPO_MAX_REQUESTS = 5;
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, { count, windowStart }] of repoRequestCounts) {
+    if (now - windowStart > REPO_WINDOW_MS) {
+      repoRequestCounts.delete(key);
+    }
+  }
+}, 60 * 1000);
+
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: redisClient ? new RedisStore({ sendCommand: (...args) => redisClient.call(...args) }) : undefined,
+  message: { error: 'Too many webhook requests.' }
+});
+
 // 🟢 Route: GitHub Webhook Receiver for automated Pull Request Reviews
-app.post('/api/webhook', async (req, res) => {
+app.post('/api/webhook', webhookLimiter, async (req, res) => {
   const webhookSecret = process.env.WEBHOOK_SECRET;
   if (!webhookSecret) {
     console.error('❌ WEBHOOK_SECRET not configured');
@@ -721,15 +743,26 @@ app.post('/api/webhook', async (req, res) => {
   const event = req.headers['x-github-event'];
   const payload = req.body;
 
-    if (event === 'pull_request') {
+  if (!event || typeof event !== 'string') {
+    return res.status(400).json({ error: 'Missing x-github-event header.' });
+  }
+  if (!payload || typeof payload !== 'object') {
+    return res.status(400).json({ error: 'Invalid webhook payload.' });
+  }
+  if (event !== 'pull_request' && event !== 'push' && event !== 'ping') {
+    return res.status(400).json({ error: `Unsupported webhook event: ${event}` });
+  }
+
+  if (event === 'pull_request') {
     const deliveryId = req.headers['x-github-delivery'];
-    if (deliveryId) {
-      if (processedDeliveries.has(deliveryId)) {
-        console.log(`⏭️ Skipping duplicate webhook delivery: ${deliveryId}`);
-        return res.json({ success: true, message: 'Webhook received (duplicate skipped).' });
-      }
-      processedDeliveries.set(deliveryId, Date.now());
+    if (!deliveryId || typeof deliveryId !== 'string') {
+      return res.status(400).json({ error: 'Missing x-github-delivery header.' });
     }
+    if (processedDeliveries.has(deliveryId)) {
+      console.log(`⏭️ Skipping duplicate webhook delivery: ${deliveryId}`);
+      return res.json({ success: true, message: 'Webhook received (duplicate skipped).' });
+    }
+    processedDeliveries.set(deliveryId, Date.now());
 
     const action = payload.action;
     if (action === 'opened' || action === 'synchronize') {
@@ -759,7 +792,26 @@ app.post('/api/webhook', async (req, res) => {
       }, 3600000);
       
       console.log(`📡 GitHub Webhook received: PR #${pullNumber} ${action} (${headSha.substring(0,7)}) in ${owner}/${repo}`);
-      
+
+      if (reviewQueue._queues.size >= reviewQueue._maxQueues) {
+        return res.status(429).json({ error: 'Too many pending reviews. Try again later.' });
+      }
+
+      // Per-repository rate limiting
+      const repoKey = `${owner}/${repo}`;
+      const now = Date.now();
+      const repoEntry = repoRequestCounts.get(repoKey) || { count: 0, windowStart: now };
+      if (now - repoEntry.windowStart > REPO_WINDOW_MS) {
+        repoEntry.count = 0;
+        repoEntry.windowStart = now;
+      }
+      repoEntry.count++;
+      repoRequestCounts.set(repoKey, repoEntry);
+      if (repoEntry.count > REPO_MAX_REQUESTS) {
+        console.warn(`⚠️ Rate limit exceeded for repository ${repoKey}`);
+        return res.status(429).json({ error: 'Too many requests for this repository. Try again later.' });
+      }
+
       reviewQueue.enqueue(reviewKey, { owner, repo, pullNumber, headSha }, async (item) => {
         try {
           await runWebhookReview(item.owner, item.repo, item.pullNumber, item.headSha);
