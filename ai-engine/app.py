@@ -722,7 +722,10 @@ If no issues are found, reply with: {{ "reviews": [] }}"""
             # We specify response_format={"type": "json_object"} to enforce JSON output. 
             completion = await _call_groq_with_timeout(
                 model=groq_model,
-                messages=[{"role": "user", "content": review_prompt}],
+                messages=[
+                    {"role": "system", "content": "You are a code reviewer. Always output valid JSON matching the requested schema."},
+                    {"role": "user", "content": review_prompt}
+                ],
                 temperature=0.2,
                 response_format={"type": "json_object"}
             )
