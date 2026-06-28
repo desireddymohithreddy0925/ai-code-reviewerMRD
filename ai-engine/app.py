@@ -322,6 +322,7 @@ class ChatRequest(BaseModel):
     useRag: Optional[bool] = False
     systemPrompt: Optional[str] = ""
     repo_url: Optional[str] = None
+    rag_sources: Optional[List[dict]] = Field(default=None, description="Source citations from RAG query")
 
 # 🟢 Route: Root Check
 @app.get("/")
@@ -638,7 +639,10 @@ Guidelines:
             max_tokens=request.maxTokens or 2048,
         )
         response_content = completion.choices[0].message.content
-        return {"response": sanitize_ai_output(response_content), "truncatedFiles": truncated_files_info}
+        result = {"response": sanitize_ai_output(response_content), "truncatedFiles": truncated_files_info}
+        if request.rag_sources:
+            result["sources"] = request.rag_sources
+        return result
         
     except Exception as e:
         print(f"❌ Groq Chat API Call Failed: {_redact_key(str(e), api_key)}")
