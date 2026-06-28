@@ -219,12 +219,28 @@ uvicorn app:app --reload  # Starts on http://localhost:8000
 
 ### 4. Frontend Setup
 
+First, navigate to the frontend directory:
 ```bash
 cd frontend
-npm install
-npm run dev              # Starts on http://localhost:3000
 ```
 
+Install the dependencies:
+```bash
+npm install
+```
+
+**Configure Environment Variables:**
+You need to provide your Groq API key for the frontend to function. Copy the example environment file and add your key:
+```bash
+cp .env.example .env
+```
+*(Open the newly created `.env` file and set `VITE_GROQ_API_KEY=your_api_key_here`)*
+
+Finally, start the development server:
+
+```bash
+npm run dev
+```
 > 💡 **Tip**: Open `http://localhost:3000` in your browser, paste any public GitHub repo URL, and click **Analyze** to see RepoSage in action!
 
 ---
