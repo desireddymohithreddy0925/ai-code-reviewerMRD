@@ -1,6 +1,7 @@
 export interface ReviewResponse {
   success: boolean;
   response?: string;
+  data?: BackendResponse;
   error?: string;
 }
 

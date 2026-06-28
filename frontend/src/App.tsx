@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import SidebarLayout from './layouts/SidebarLayout';
 import Dashboard from './pages/Dashboard';
 
+
 export default function App() {
     return (
         <BrowserRouter>

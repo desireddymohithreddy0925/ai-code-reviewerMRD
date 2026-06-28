@@ -96,6 +96,15 @@ const chatLimiter = rateLimit({
   message: { error: 'Too many chat requests. Please slow down and retry after 1 minute.' }
 });
 
+const exportLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: redisClient ? new RedisStore({ sendCommand: (...args) => redisClient.call(...args) }) : undefined,
+  message: { error: 'Too many export requests. Please slow down and retry after 1 minute.' }
+});
+
 // Parse cookies for CSRF token validation
 app.use(cookieParser());
 
@@ -341,6 +350,22 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
   // Generate unique folder name (needed early for logging/caching)
   const parsed = parseRepoUrl(repoUrl);
   const repoName = parsed.repo;
+  const owner = parsed.owner;
+  const maxRepoSizeMB = parseInt(process.env.MAX_REPO_SIZE_MB) || 100;
+  const maxSizeBytes = maxRepoSizeMB * 1024 * 1024;
+
+  // Pre-clone size check via GitHub API to prevent disk exhaustion
+  try {
+    const octokit = new Octokit({ auth: process.env.GITHUB_PAT || undefined });
+    const { data: repoData } = await octokit.rest.repos.get({ owner, repo: repoName });
+    const repoSizeBytes = (repoData.size || 0) * 1024;
+    if (repoSizeBytes > maxSizeBytes) {
+      return res.status(413).json({ error: `Repository exceeds the maximum allowed size of ${maxRepoSizeMB}MB (Reported size: ~${Math.round(repoSizeBytes/1024/1024)}MB).` });
+    }
+  } catch (err) {
+    console.warn(`Could not verify repository size via GitHub API for ${owner}/${repoName}. Proceeding to clone with filters...`);
+  }
+
   const uniqueId = crypto.randomUUID();
   const clonePath = path.join(tempReposDir, `${repoName}_${uniqueId}`);
 
@@ -350,7 +375,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
   try {
     const cloneTimeout = parseInt(process.env.GIT_CLONE_TIMEOUT) || 120000;
     const git = simpleGit({ timeout: { block: cloneTimeout } });
-    await git.clone(repoUrl, clonePath, ['--depth', '1']);
+    await git.clone(repoUrl, clonePath, ['--depth', '1', '--single-branch', `--filter=blob:limit=${maxRepoSizeMB}m`]);
 
     // Check repository size
     const maxRepoSizeMB = parseInt(process.env.MAX_REPO_SIZE_MB) || 100;
@@ -527,6 +552,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
         filesReviewedCount: files.length,
         analysis: reviewResult,
         sessionId,
+        chatAvailable: sessionPersisted,
         sessionPersisted
       });
 
@@ -977,7 +1003,7 @@ function sanitizeFilename(repoName) {
 }
 
 // 🟢 Route: Export Review Report to HTML
-app.post('/api/reports/html', requireApiKey, (req, res) => {
+app.post('/api/reports/html', requireApiKey, exportLimiter, (req, res) => {
   const { repoName, analysis } = req.body;
   if (!repoName || !analysis) {
     return res.status(400).json({ error: 'Repository name and analysis result are required.' });
@@ -1132,7 +1158,7 @@ app.post('/api/reports/html', requireApiKey, (req, res) => {
 });
 
 // 🟢 Route: Export Review Report to PDF
-app.post('/api/reports/pdf', requireApiKey, (req, res) => {
+app.post('/api/reports/pdf', requireApiKey, exportLimiter, (req, res) => {
   const { repoName, analysis } = req.body;
   if (!repoName || !analysis) {
     return res.status(400).json({ error: 'Repository name and analysis result are required.' });

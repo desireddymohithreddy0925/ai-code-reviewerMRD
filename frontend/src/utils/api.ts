@@ -54,11 +54,7 @@ const getCsrfToken = (): string | null => {
   return match ? match[1] : null;
 };
 
-export interface ApiFetchOptions extends RequestInit {
-  timeout?: number;
-}
-
-export const apiFetch = async (path: string, options: ApiFetchOptions = {}) => {
+export const apiFetch = async (path: string, options: RequestInit = {}, timeoutMs = 60000) => {
   await ensureApiSession();
   const headers = new Headers(options.headers);
   if (!headers.has("Content-Type")) {
@@ -72,26 +68,23 @@ export const apiFetch = async (path: string, options: ApiFetchOptions = {}) => {
     }
   }
 
-  const { timeout = 60000, ...fetchOptions } = options;
-  
   const controller = new AbortController();
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  
-  if (timeout > 0) {
-    timeoutId = setTimeout(() => controller.abort(), timeout);
-  }
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(`${API_BASE_URL}${path}`, {
-      ...fetchOptions,
+      ...options,
       credentials: "include",
       headers,
-      signal: fetchOptions.signal || controller.signal,
+      signal: controller.signal,
     });
     return response;
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error(`Request timed out after ${timeoutMs / 1000} seconds. Backend might be hanging.`);
     }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 };
