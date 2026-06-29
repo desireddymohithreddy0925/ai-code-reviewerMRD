@@ -491,7 +491,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
       }
 
       // 1.5. Check analysis cache to avoid redundant LLM calls for identical analyses
-      const cacheKey = analysisCache.generateKey(repoUrl, files, { model, language, company });
+      const cacheKey = analysisCache.generateKey(repoUrl, files, { model, language, company, systemPrompt: validatedPrompt, temperature, maxTokens, batchSize });
       let reviewResult = analysisCache.get(cacheKey);
       let cacheHit = false;
 
