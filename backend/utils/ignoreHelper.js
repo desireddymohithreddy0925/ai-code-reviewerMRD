@@ -49,8 +49,9 @@ export function isIgnored(filePath, patterns, baseDir) {
 // 🟢 Helper to recursively read files
 const MAX_DEPTH = 10;
 const MAX_FILES = 500;
+const MAX_FILE_SIZE_BYTES = 100 * 1024; // 100 KB
 
-export function readFilesRecursively(dir, fileList = [], baseDir = dir, ignorePatterns = [], depth = 0) {
+export function readFilesRecursively(dir, fileList = [], baseDir = dir, ignorePatterns = [], depth = 0, skippedFiles = []) {
   if (depth > MAX_DEPTH) return fileList;
   if (fileList.length >= MAX_FILES) return fileList;
   const files = fs.readdirSync(dir);
@@ -78,13 +79,21 @@ export function readFilesRecursively(dir, fileList = [], baseDir = dir, ignorePa
     }
 
     if (stat.isDirectory()) {
-      readFilesRecursively(filePath, fileList, baseDir, ignorePatterns, depth + 1);
+      readFilesRecursively(filePath, fileList, baseDir, ignorePatterns, depth + 1, skippedFiles);
     } else {
       // Analyze only source code files (Python, JS, TS, HTML, CSS, Go, Rust, Java, C++, PHP, Ruby, SQL)
       const ext = path.extname(file).toLowerCase();
       const validExtensions = ['.js', '.jsx', '.ts', '.tsx', '.py', '.java', '.go', '.rs', '.cpp', '.h', '.cs', '.php', '.rb', '.sql', '.html', '.css', '.json', '.yaml', '.yml'];
       
       if (validExtensions.includes(ext)) {
+        if (stat.size > MAX_FILE_SIZE_BYTES) {
+          skippedFiles.push({
+            name: path.relative(baseDir, filePath).replace(/\\/g, '/'),
+            reason: 'File exceeds size limit of 100KB',
+            size: stat.size
+          });
+          continue;
+        }
         try {
           const MAX_FILE_CONTENT_LENGTH = 1024 * 1024;
           const content = fs.readFileSync(filePath, 'utf-8').slice(0, MAX_FILE_CONTENT_LENGTH);

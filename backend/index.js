@@ -469,7 +469,8 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
     try {
       // 1. Load ignore patterns and read files
       const ignorePatterns = loadIgnorePatterns(clonePath);
-      const files = readFilesRecursively(clonePath, [], clonePath, ignorePatterns);
+      const skippedFiles = [];
+      const files = readFilesRecursively(clonePath, [], clonePath, ignorePatterns, 0, skippedFiles);
       
       if (files.length === 0) {
         await deleteFolderRecursive(clonePath);
@@ -656,6 +657,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
         sessionId,
         chatAvailable: sessionPersisted,
         sessionPersisted,
+        skippedFiles,
         ...(fileWarnings.length > 0 ? { warnings: fileWarnings } : {})
       });
 
