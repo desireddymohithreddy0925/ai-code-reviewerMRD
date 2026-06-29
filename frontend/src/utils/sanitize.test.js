@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeHTML, sanitizeForStorage, sanitizeAuditEntry, sanitizeJSON } from './sanitize.js';
+import { sanitizeHTML, sanitizeForStorage, sanitizeMermaidOutput, sanitizeAuditEntry, sanitizeJSON } from './sanitize.js';
 
 describe('sanitizeHTML', () => {
   it('strips all tags when ALLOWED_TAGS is empty', () => {
@@ -105,5 +105,75 @@ describe('sanitizeJSON', () => {
   it('returns empty string for null/undefined', () => {
     expect(sanitizeJSON(null)).toBe('');
     expect(sanitizeJSON(undefined)).toBe('');
+  });
+});
+
+describe('sanitizeMermaidOutput', () => {
+  it('returns empty string for null/undefined input', () => {
+    expect(sanitizeMermaidOutput(null)).toBe('');
+    expect(sanitizeMermaidOutput(undefined)).toBe('');
+    expect(sanitizeMermaidOutput('')).toBe('');
+  });
+
+  it('removes onclick event handlers from SVG elements', () => {
+    const svg = '<svg><rect onclick="alert(1)" x="10" y="10"/></svg>';
+    const result = sanitizeMermaidOutput(svg);
+    expect(result).not.toContain('onclick');
+    expect(result).toContain('<rect');
+  });
+
+  it('removes onerror event handlers', () => {
+    const svg = '<svg><img onerror="steal()" x="10" y="10"/></svg>';
+    const result = sanitizeMermaidOutput(svg);
+    expect(result).not.toContain('onerror');
+  });
+
+  it('removes onload event handlers', () => {
+    const svg = '<svg onload="bad()"><path/></svg>';
+    const result = sanitizeMermaidOutput(svg);
+    expect(result).not.toContain('onload');
+    expect(result).toContain('<svg');
+  });
+
+  it('removes javascript: hrefs from anchor elements', () => {
+    const svg = '<svg><a href="javascript:alert(1)">click</a></svg>';
+    const result = sanitizeMermaidOutput(svg);
+    expect(result).not.toContain('javascript:');
+    // href is not in ALLOWED_ATTR so the anchor tag gets stripped entirely,
+    // which is the correct secure behavior (no need to assert #disabled presence)
+  });
+
+  it('preserves allowed SVG elements (svg, g, path, circle, rect, text, tspan)', () => {
+    const svg = '<svg viewBox="0 0 100 100"><g><path d="M0 0" stroke="black"/><circle cx="10" cy="10" r="5" fill="red"/><text x="50" y="50">label</text></g></svg>';
+    const result = sanitizeMermaidOutput(svg);
+    expect(result).toContain('<svg');
+    expect(result).toContain('<g');
+    expect(result).toContain('<path');
+    expect(result).toContain('<circle');
+    expect(result).toContain('<text');
+  });
+
+  it('strips foreignObject from SVG (security risk)', () => {
+    const svg = '<svg><foreignObject><div>hello</div></foreignObject></svg>';
+    const result = sanitizeMermaidOutput(svg);
+    expect(result).not.toContain('foreignObject');
+  });
+
+  it('strips script tags from SVG', () => {
+    const svg = '<svg><script>alert(1)</script><path/></svg>';
+    const result = sanitizeMermaidOutput(svg);
+    expect(result).not.toContain('<script>');
+    expect(result).toContain('<svg');
+    expect(result).toContain('<path');
+  });
+
+  it('handles mixed malicious and benign SVG content', () => {
+    const svg = '<svg><path onclick="bad()" d="M0 0"/><rect onerror="x" x="10" y="10"/><text>safe</text></svg>';
+    const result = sanitizeMermaidOutput(svg);
+    expect(result).not.toContain('onclick');
+    expect(result).not.toContain('onerror');
+    expect(result).toContain('<path');
+    expect(result).toContain('<rect');
+    expect(result).toContain('<text');
   });
 });
