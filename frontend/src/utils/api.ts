@@ -93,36 +93,11 @@ export const apiFetch = async (path: string, options: RequestInit = {}, timeoutM
     clearTimeout(timeoutId);
   }
 };
-// Get all review history
-export const getReviewHistory = async () => {
-  const response = await apiFetch("/api/review-history");
+export const getFixSuggestions = async (findingId: string) => {
+  const response = await apiFetch(`/api/fix-suggestions/${findingId}`);
 
   if (!response.ok) {
-    throw new Error("Failed to fetch review history");
-  }
-
-  return response.json();
-};
-
-// Get review history of a specific repository
-export const getRepositoryHistory = async (repo: string) => {
-  const response = await apiFetch(`/api/review-history/${repo}`);
-
-  if (!response.ok) {
-    throw new Error("Failed to fetch repository history");
-  }
-
-  return response.json();
-};
-
-// Compare two reviews
-export const compareReviews = async (id1: string, id2: string) => {
-  const response = await apiFetch(
-    `/api/review-history/compare/${id1}/${id2}`
-  );
-
-  if (!response.ok) {
-    throw new Error("Failed to compare reviews");
+    throw new Error("Failed to fetch AI fix suggestions");
   }
 
   return response.json();

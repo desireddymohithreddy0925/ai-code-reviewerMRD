@@ -71,6 +71,20 @@ export interface ReviewItem {
   suggestion: string;
 }
 
+{item.beforeCode && (
+  <>
+    <h5>Before</h5>
+    <pre>{item.beforeCode}</pre>
+  </>
+)}
+
+{item.afterCode && (
+  <>
+    <h5>After</h5>
+    <pre>{item.afterCode}</pre>
+  </>
+)}
+
 export interface FileReview {
   bugs: ReviewItem[];
   security: ReviewItem[];
@@ -3101,38 +3115,66 @@ export default function Dashboard() {
                                   }}
                                 >
                                   <div
-                                    style={{
-                                      display: "flex",
-                                      justifyContent: "space-between",
-                                      alignItems: "center",
-                                      marginBottom: "4px",
-                                    }}
-                                  >
-                                    <span
-                                      style={{
-                                        display: "block",
-                                        fontSize: "9px",
-                                        fontWeight: 700,
-                                        color: "#9ca3af",
-                                        textTransform: "uppercase",
-                                      }}
-                                    >
-                                      💡 AI Recommendation
-                                    </span>
-                                    <CopyToClipboardButton
-                                      textToCopy={item.suggestion}
-                                      style={{ padding: "2px" }}
-                                    />
-                                  </div>
-                                  <code
-                                    style={{
-                                      fontSize: "11px",
-                                      color: "#d8b4fe",
-                                      wordBreak: "break-all",
-                                    }}
-                                  >
-                                    {item.suggestion}
-                                  </code>
+  style={{
+    marginTop: "12px",
+    padding: "12px",
+    borderRadius: "8px",
+    background: "rgba(255,255,255,0.04)",
+    border: "1px solid rgba(255,255,255,0.08)",
+  }}
+>
+  <h4
+    style={{
+      color: "#60a5fa",
+      marginBottom: "8px",
+      fontSize: "13px",
+    }}
+  >
+    AI Fix Suggestion
+  </h4>
+
+  <p
+    style={{
+      color: "#e5e7eb",
+      fontSize: "12px",
+      marginBottom: "10px",
+    }}
+  >
+    <strong>Explanation:</strong>
+    <br />
+    {item.description}
+  </p>
+
+  <div
+    style={{
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: "6px",
+    }}
+  >
+    <strong style={{ color: "#c084fc" }}>
+      Suggested Fix
+    </strong>
+
+    <CopyToClipboardButton
+      textToCopy={item.suggestion}
+      style={{ padding: "2px" }}
+    />
+  </div>
+
+  <code
+    style={{
+      display: "block",
+      whiteSpace: "pre-wrap",
+      wordBreak: "break-word",
+      fontSize: "11px",
+      color: "#d8b4fe",
+    }}
+  >
+    {item.suggestion}
+  </code>
+</div>
                                 </div>
                                 {!(analysisResult?._mock || analysisResult?.analysis?._mock) && <div
                                   style={{

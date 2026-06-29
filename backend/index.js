@@ -655,6 +655,27 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
 
       // 6. Clean up folder
       await deleteFolderRecursive(clonePath);
+
+      // Enhance findings with AI fix suggestions
+if (reviewResult?.fileReviews) {
+  Object.values(reviewResult.fileReviews).forEach((review) => {
+    ["bugs", "security", "optimization", "styling"].forEach((category) => {
+      (review[category] || []).forEach((finding) => {
+        finding.explanation =
+          finding.description || "No explanation available.";
+
+        finding.suggestedFix =
+          finding.suggestion || "No suggested fix available.";
+
+        finding.beforeCode = "";
+
+        finding.afterCode = "";
+
+        finding.patch = finding.suggestion || "";
+      });
+    });
+  });
+}
       
       // 7. Return result
       return res.json({
