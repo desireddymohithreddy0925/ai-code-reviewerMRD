@@ -31,6 +31,7 @@ import { handleMarkdownExport, handleHtmlExport } from "../utils/exportUtils";
 import mermaid from "mermaid";
 import { sanitizeMermaidOutput } from "../utils/sanitize";
 import { apiFetch, getReviewHistory } from "../utils/api";
+import MarkdownErrorBoundary from "../components/MarkdownErrorBoundary";
 
 // Initialize Mermaid outside the component to avoid multiple initializations
 try {
@@ -71,20 +72,6 @@ export interface ReviewItem {
   suggestion: string;
 }
 
-{item.beforeCode && (
-  <>
-    <h5>Before</h5>
-    <pre>{item.beforeCode}</pre>
-  </>
-)}
-
-{item.afterCode && (
-  <>
-    <h5>After</h5>
-    <pre>{item.afterCode}</pre>
-  </>
-)}
-
 export interface FileReview {
   bugs: ReviewItem[];
   security: ReviewItem[];
@@ -120,6 +107,11 @@ export interface BackendResponse {
   breakingChanges: string[];
   testingRecommendations: string[];
 };
+  repositoryHealth?: {
+    score: number;
+    grade: string;
+    recommendations: string[];
+  };
   success: boolean;
   repoName: string;
   filesReviewedCount: number;
@@ -2018,7 +2010,7 @@ export default function Dashboard() {
       </thead>
 
       <tbody>
-        {analysisResult.dependencyReport.dependencies.map(
+        {analysisResult.dependencyReport?.dependencies.map(
           (dep, index) => (
             <tr key={index}>
               <td>{dep.name}</td>
