@@ -277,6 +277,14 @@ RATE_LIMIT_MAX_REQUESTS = 30
 MAX_RATE_LIMIT_ENTRIES = 10000
 _rate_limit_store: OrderedDict[str, list[float]] = OrderedDict()
 
+# Per-repo locks for RAG ingestion to prevent TOCTOU race conditions
+_ingest_locks: dict[str, asyncio.Lock] = {}
+
+def _get_ingest_lock(repo_url: str) -> asyncio.Lock:
+    if repo_url not in _ingest_locks:
+        _ingest_locks[repo_url] = asyncio.Lock()
+    return _ingest_locks[repo_url]
+
 async def rate_limit_middleware(request: Request, call_next):
     client_ip = request.client.host if request.client else "unknown"
     now = time.time()
@@ -917,11 +925,12 @@ async def split_files_for_rag(request: SplitRequest):
 async def ingest_chunks_route(request: IngestRequest):
     from rag import ingest_chunks, delete_repo_chunks
 
-    delete_repo_chunks(request.repo_url)
-    texts = [c.content for c in request.chunks]
-    metadatas = [c.metadata for c in request.chunks]
-    ids = [c.chunk_id for c in request.chunks]
-    count = ingest_chunks(texts, metadatas, ids, repo_url=request.repo_url)
+    async with _get_ingest_lock(request.repo_url):
+        delete_repo_chunks(request.repo_url)
+        texts = [c.content for c in request.chunks]
+        metadatas = [c.metadata for c in request.chunks]
+        ids = [c.chunk_id for c in request.chunks]
+        count = ingest_chunks(texts, metadatas, ids, repo_url=request.repo_url)
     return IngestionResponse(ingested_count=count)
 
 
