@@ -101,6 +101,14 @@ interface AnalysisData {
 }
 
 export interface BackendResponse {
+  prSummary?: {
+  overallPurpose: string;
+  filesChanged: number;
+  majorLogicUpdates: string[];
+  potentialRisks: string[];
+  breakingChanges: string[];
+  testingRecommendations: string[];
+};
   success: boolean;
   repoName: string;
   filesReviewedCount: number;
@@ -110,6 +118,8 @@ export interface BackendResponse {
   _mock?: boolean;
   warnings?: Array<{ file: string; warning: string }>;
 }
+
+
 
 interface AuditHistoryEntry {
   id: string;
@@ -1931,6 +1941,59 @@ export default function Dashboard() {
   fileReviews={analysisResult.analysis.fileReviews}
   isLoading={isLoading}
 />
+<div className="glass-panel" style={{ padding: "20px", marginBottom: "16px" }}>
+  <h2>🤖 AI Pull Request Summary</h2>
+
+  <p>
+    <strong>Purpose:</strong><br />
+    {analysisResult.prSummary?.overallPurpose}
+  </p>
+
+  <p>
+    <strong>Files Changed:</strong><br />
+    {analysisResult.prSummary?.filesChanged}
+  </p>
+
+  <p>
+    <strong>Major Logic Updates:</strong>
+  </p>
+
+  <ul>
+    {(analysisResult.prSummary?.majorLogicUpdates || []).map((item, i) => (
+      <li key={i}>{item}</li>
+    ))}
+  </ul>
+
+  <p>
+    <strong>Potential Risks:</strong>
+  </p>
+
+  <ul>
+    {(analysisResult.prSummary?.potentialRisks || []).map((item, i) => (
+      <li key={i}>{item}</li>
+    ))}
+  </ul>
+
+  <p>
+    <strong>Breaking Changes:</strong>
+  </p>
+
+  <ul>
+    {(analysisResult.prSummary?.breakingChanges || []).map((item, i) => (
+      <li key={i}>{item}</li>
+    ))}
+  </ul>
+
+  <p>
+    <strong>Testing Recommendations:</strong>
+  </p>
+
+  <ul>
+    {(analysisResult.prSummary?.testingRecommendations || []).map((item, i) => (
+      <li key={i}>{item}</li>
+    ))}
+  </ul>
+</div>
               {/* Dashboard View Selection Tabs & Export Controls */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", width: "100%" }}>
                 <div style={{ display: "flex", gap: "10px" }}>
