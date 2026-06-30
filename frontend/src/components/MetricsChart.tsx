@@ -28,10 +28,10 @@ const THEME_COLORS = {
 
 interface MetricsChartProps {
   theme?: 'dark' | 'light';
-  sessionId?: string | null;
+  reviewId?: string | null;
 }
 
-export const MetricsChart: React.FC<MetricsChartProps> = ({ theme = 'dark', sessionId }) => {
+export const MetricsChart: React.FC<MetricsChartProps> = ({ theme = 'dark', reviewId }) => {
   const colors = THEME_COLORS[theme];
   const [chartData, setChartData] = useState<any[] | null>(null);
   const [loading, setLoading] = useState(false);

@@ -4,6 +4,7 @@ import { useStore, ChatMessage } from '../store/useStore';
 import SettingsModal from "../components/SettingsModal";
 import { MetricsChart } from '../components/MetricsChart';
 import { VulnerabilitiesBarChart } from '../components/VulnerabilitiesBarChart';
+import MarkdownErrorBoundary from '../components/MarkdownErrorBoundary';
 import CopyToClipboardButton from "../components/CopyToClipboardButton";
 import HealthScoreGauge from "../components/HealthScoreGauge";
 import {
@@ -30,7 +31,7 @@ import {
 import { handleMarkdownExport, handleHtmlExport } from "../utils/exportUtils";
 import mermaid from "mermaid";
 import { sanitizeMermaidOutput } from "../utils/sanitize";
-import { apiFetch, getReviewHistory } from "../utils/api";
+import { apiFetch } from "../utils/api";
 
 // Initialize Mermaid outside the component to avoid multiple initializations
 try {
@@ -71,20 +72,6 @@ export interface ReviewItem {
   suggestion: string;
 }
 
-{item.beforeCode && (
-  <>
-    <h5>Before</h5>
-    <pre>{item.beforeCode}</pre>
-  </>
-)}
-
-{item.afterCode && (
-  <>
-    <h5>After</h5>
-    <pre>{item.afterCode}</pre>
-  </>
-)}
-
 export interface FileReview {
   bugs: ReviewItem[];
   security: ReviewItem[];
@@ -97,6 +84,8 @@ interface AnalysisData {
   generatedReadme: string;
   mermaidDiagram?: string;
   metrics?: Record<string, any>;
+  repositoryHealth?: any;
+  dependencyReport?: any;
   _mock?: boolean;
 }
 
@@ -120,6 +109,7 @@ export interface BackendResponse {
   breakingChanges: string[];
   testingRecommendations: string[];
 };
+  repositoryHealth?: any;
   success: boolean;
   repoName: string;
   filesReviewedCount: number;
@@ -627,11 +617,13 @@ export default function Dashboard() {
   }, [chatHistory, isChatLoading]);
 
   useEffect(() => {
-  const loadHistory = async () => {
-    try {
-      const history = await getReviewHistory();
+    const loadHistory = async () => {
+      try {
+        const response = await apiFetch('/api/review-history');
+        if (!response.ok) throw new Error("Failed to fetch");
+        const history = await response.json();
 
-      if (history) {
+        if (history) {
         setAuditHistory(history);
       }
     } catch (err) {
@@ -2022,7 +2014,7 @@ export default function Dashboard() {
       </thead>
 
       <tbody>
-        {analysisResult.dependencyReport.dependencies.map(
+        {analysisResult.dependencyReport?.dependencies?.map(
           (dep, index) => (
             <tr key={index}>
               <td>{dep.name}</td>
@@ -3242,7 +3234,7 @@ export default function Dashboard() {
                                     </div>
                                   </div>
                                 </div>
-                                <MetricsChart sessionId={sessionId} />
+                                <MetricsChart reviewId={sessionId} />
                               </div>
                             );
                           })()
