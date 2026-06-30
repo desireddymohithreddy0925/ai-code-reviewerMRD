@@ -1631,7 +1631,7 @@ app.get('/api/analytics/trends', requireApiKey, async (req, res) => {
     };
 
     if (req.query.sessionId) {
-      matchFilter.sessionId = req.query.sessionId;
+      matchFilter.sessionId = String(req.query.sessionId);
     }
 
     const trends = await Analytics.aggregate([
