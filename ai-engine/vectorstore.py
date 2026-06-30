@@ -25,8 +25,12 @@ def _load():
 
 
 def _save():
-    with open(VECTORS_FILE, "w") as f:
+    tmp = VECTORS_FILE + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(_vectors, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, VECTORS_FILE)
 
 
 def _compute_content_hash(content: str) -> str:
