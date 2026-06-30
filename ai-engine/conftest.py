@@ -16,3 +16,4 @@ def pytest_configure(config):
     # which is called lazily when embedding functions are first used.
     import embeddings as _emb
     _emb._fallback_active = True
+
