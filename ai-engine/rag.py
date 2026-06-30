@@ -189,7 +189,7 @@ def delete_repo_chunks(repo_url: str) -> int:
     them.  Returns the number of deleted chunks.
     """
     collection = _get_collection(repo_url)
-    all_ids = collection.get()["ids"]
+    all_ids = collection.get(include=[])["ids"]
     if all_ids:
         collection.delete(ids=all_ids)
     return len(all_ids)
