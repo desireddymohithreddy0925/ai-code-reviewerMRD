@@ -273,7 +273,7 @@ app.add_middleware(
 API_KEY = os.getenv("REPOSAGE_API_KEY") or ""
 
 RATE_LIMIT_WINDOW_SECONDS = 60
-RATE_LIMIT_MAX_REQUESTS = 30
+RATE_LIMIT_MAX_REQUESTS = 500
 MAX_RATE_LIMIT_ENTRIES = 10000
 _rate_limit_store: OrderedDict[str, list[float]] = OrderedDict()
 
