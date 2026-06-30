@@ -19,7 +19,7 @@ export function sanitizeForStorage(dirty) {
 export function sanitizeMermaidOutput(svg) {
   if (!svg || typeof svg !== 'string') return '';
   let sanitized = svg.replace(/\bon\w+\s*=\s*["'][^"']*["']/gi, '');
-  sanitized = sanitized.replace(/href\s*=\s*["']\s*javascript:/gi, 'href="#disabled"');
+  sanitized = sanitized.replace(/(?:xlink:)?href\s*=\s*["']\s*javascript:/gi, 'href="#disabled"');
   sanitized = DOMPurify.sanitize(sanitized, {
     ALLOWED_TAGS: ['svg', 'g', 'path', 'circle', 'rect', 'line', 'text', 'tspan', 'defs', 'marker', 'polygon', 'polyline', 'ellipse'],
     ALLOWED_ATTR: ['d', 'fill', 'stroke', 'viewBox', 'x', 'y', 'cx', 'cy', 'r', 'rx', 'ry', 'width', 'height', 'transform', 'style', 'class'],
