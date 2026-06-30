@@ -70,6 +70,10 @@ def ingest_chunks(
     ids: list[str],
     repo_url: Optional[str] = None,
 ) -> int:
+    if not chunks:
+        return 0
+    if not (len(chunks) == len(metadatas) == len(ids)):
+        raise ValueError("chunks, metadatas, and ids must have the same length")
     collection = _get_collection(repo_url)
     embeddings = embed_texts(chunks)
     collection.add(
