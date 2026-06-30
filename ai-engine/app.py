@@ -326,7 +326,7 @@ async def cancel_rate_limit_cleanup():
             pass
 
 async def require_api_key(request: Request, call_next):
-    if request.url.path == "/" or request.url.path == "/docs" or request.url.path.startswith("/openapi"):
+    if request.url.path == "/" or request.url.path == "/docs" or request.url.path == "/health" or request.url.path.startswith("/openapi"):
         return await call_next(request)
     import sys
     if "pytest" in sys.modules:
