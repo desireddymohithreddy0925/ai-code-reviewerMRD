@@ -854,7 +854,7 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
     } catch (sessionErr) {
       console.warn('❌ Failed to retrieve session from MongoDB:', sessionErr.message);
     }
-
+  }
   // Use reviewQueue to serialize requests per session, preventing
   // lost-update race conditions when multiple messages arrive concurrently
   // for the same session (see issue #746).
