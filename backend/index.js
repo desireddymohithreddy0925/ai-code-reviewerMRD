@@ -1634,13 +1634,15 @@ app.get('/api/analytics/trends', requireApiKey, async (req, res) => {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
+    const sessionId = req.cookies?.[SESSION_COOKIE_NAME] || req.query.sessionId;
+    if (!sessionId) {
+      return res.status(401).json({ error: 'Session required.' });
+    }
+
     const matchFilter = {
       analyzedAt: { $gte: thirtyDaysAgo },
+      sessionId: String(sessionId),
     };
-
-    if (req.query.sessionId) {
-      matchFilter.sessionId = String(req.query.sessionId);
-    }
 
     const trends = await Analytics.aggregate([
       {
@@ -1684,8 +1686,10 @@ app.get('/api/analytics/trends', requireApiKey, async (req, res) => {
 app.get("/api/review-history", requireApiKey, async (req, res) => {
 
     try {
+        const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+        if (!sessionId) return res.status(401).json({ error: 'Session required.' });
 
-        const history = await Analytics.find()
+        const history = await Analytics.find({ sessionId: String(sessionId) })
             .sort({ analyzedAt: -1 })
             .limit(20);
 
@@ -1704,9 +1708,12 @@ app.get("/api/review-history", requireApiKey, async (req, res) => {
 app.get("/api/review-history/:repo", requireApiKey, async (req, res) => {
 
     try {
+        const sessionId = req.cookies?.[SESSION_COOKIE_NAME];
+        if (!sessionId) return res.status(401).json({ error: 'Session required.' });
 
         const history = await Analytics.find({
-            repoName: req.params.repo
+            repoName: req.params.repo,
+            sessionId: String(sessionId)
         }).sort({
             analyzedAt: -1
         });
