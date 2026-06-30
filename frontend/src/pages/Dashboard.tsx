@@ -642,7 +642,7 @@ export default function Dashboard() {
     setChatInput("");
     setChatHistory((prev) => {
       const updated = [...prev, { role: "user" as const, content: userMessage }];
-      try { localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(updated)); } catch {}
+      try { localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(truncateChatHistory(updated))); } catch {}
       return updated;
     });
     setIsChatLoading(true);
