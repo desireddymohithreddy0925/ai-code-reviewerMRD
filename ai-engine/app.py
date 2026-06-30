@@ -614,7 +614,7 @@ async def chat_with_repository(request: ChatRequest):
     
     # 1. Build the system prompt injecting repository context
     message_lower = message.lower()
-    keywords = set(re.findall(r'\b\w+\b', message_lower))
+    keywords = set(message_lower.split())
 
     def score_file(f):
         name_lower = f.name.lower()
