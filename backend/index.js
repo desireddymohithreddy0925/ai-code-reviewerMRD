@@ -1304,17 +1304,7 @@ The AI engine could not be reached during this review. The secrets scanner found
 Please ensure the AI Engine service is running and re-trigger the review for a complete analysis.`
     });
   } else {
-    console.log('🎉 No code issues or recommendations found. Posting approval review...');
-    await octokit.rest.pulls.createReview({
-      owner,
-      repo,
-      pull_number: pullNumber,
-      commit_id: headSha,
-      event: 'APPROVE',
-      body: `## 🛡️ RepoSage AI Code Review Audit Completed!
-
-🎉 Outstanding work! I have scanned the PR and found **0 issues**. Your changes look pristine, clean, and optimized! Approved! 🚀`
-    });
+    console.log('🎉 No code issues or recommendations found. Adding label and posting approval...');
 
     try {
       await octokit.rest.issues.addLabels({
@@ -1327,6 +1317,18 @@ Please ensure the AI Engine service is running and re-trigger the review for a c
     } catch (err) {
       console.warn('⚠️ Could not add gssoc:approved label:', err.message);
     }
+
+    console.log('🎉 No code issues or recommendations found. Posting approval review...');
+    await octokit.rest.pulls.createReview({
+      owner,
+      repo,
+      pull_number: pullNumber,
+      commit_id: headSha,
+      event: 'APPROVE',
+      body: `## 🛡️ RepoSage AI Code Review Audit Completed!
+
+🎉 Outstanding work! I have scanned the PR and found **0 issues**. Your changes look pristine, clean, and optimized! Approved! 🚀`
+    });
   }
 }
 
