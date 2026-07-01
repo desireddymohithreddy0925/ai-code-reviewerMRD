@@ -75,10 +75,8 @@ const sessionSchema = new mongoose.Schema({
   },
 });
 
-// Single TTL index on absoluteExpiry enforces the hard 7-day ceiling.
-// MongoDB allows at most one TTL index per collection, so the sliding
-// 24h inactivity window is handled in application code (update the
-// session's expiry on each access to extend it, capped at 7 days).
+// Sliding 24-hour inactivity expiry plus a hard 7-day ceiling.
+sessionSchema.index({ lastAccessedAt: 1 }, { expireAfterSeconds: 86400 });
 sessionSchema.index({ absoluteExpiry: 1 }, { expireAfterSeconds: 0 });
 
 export default mongoose.model('Session', sessionSchema);
