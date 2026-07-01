@@ -376,7 +376,7 @@ const dedupCleanupTimer = setInterval(() => {
 }, 60 * 1000);
 
 const cacheMetricsTimer = setInterval(() => {
-  console.log(`[cache] processedDeliveries=${processedDeliveries.size}/${MAX_DELIVERY_ENTRIES} reviewedShas=${reviewedShas.size} exclusiveLocks=${reviewQueue._exclusiveLocks.size}`);
+  console.log(`[cache] processedDeliveries=${processedDeliveries.size}/${MAX_DELIVERY_ENTRIES} reviewedShas=${reviewedShas.size}`);
 }, 5 * 60 * 1000);
 
 function cleanupTimers() {
