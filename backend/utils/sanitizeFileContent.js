@@ -16,9 +16,9 @@ const DANGEROUS_PATTERNS = [
 export function sanitizeFileContent(content) {
   if (typeof content !== 'string') return '';
   let sanitized = content;
-  DANGEROUS_PATTERNS.forEach((pattern, i) => {
+  DANGEROUS_PATTERNS.forEach((pattern) => {
     const regex = new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-    sanitized = sanitized.replace(regex, `[INSTRUCTION_${i}_NEUTRALIZED]`);
+    sanitized = sanitized.replace(regex, `[neutralized: ${pattern}]`);
   });
   const lines = sanitized.split('\n');
   const truncatedLines = lines.map(line => line.slice(0, 500));

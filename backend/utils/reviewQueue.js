@@ -2,6 +2,7 @@ class ReviewQueue {
   constructor(maxQueues = 100, maxItemsPerQueue = 50) {
     this._queues = new Map();
     this._queueLocks = new Map();
+    this._locks = this._queueLocks;
     this._exclusiveLocks = new Map();
     this._maxQueues = maxQueues;
     this._maxItemsPerQueue = maxItemsPerQueue;
@@ -26,10 +27,11 @@ class ReviewQueue {
 
   async _processNext(key, processor) {
     const prev = this._queueLocks.get(key) || Promise.resolve();
+    let tracked;
     const next = prev.then(async () => {
       const queue = this._queues.get(key);
       if (!queue || queue.length === 0) {
-        if (this._queueLocks.get(key) === next) {
+        if (this._queueLocks.get(key) === tracked) {
           this._queueLocks.delete(key);
         }
         return;
@@ -42,14 +44,15 @@ class ReviewQueue {
           console.error(`Review processing failed for ${key}:`, err);
         }
       }
-      if (this._queueLocks.get(key) === next) {
+      if (this._queueLocks.get(key) === tracked) {
         this._queueLocks.delete(key);
       }
       this._queues.delete(key);
     });
-    this._queueLocks.set(key, next.catch(err => {
+    tracked = next.catch(err => {
       console.error(`ReviewQueue processing error for "${key}":`, err);
-    }));
+    });
+    this._queueLocks.set(key, tracked);
     return next;
   }
 

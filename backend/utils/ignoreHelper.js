@@ -49,8 +49,9 @@ export function isIgnored(filePath, patterns, baseDir) {
 // 🟢 Helper to recursively read files
 const MAX_DEPTH = 5;
 const MAX_FILES = 200;
+const MAX_FILE_CONTENT_LENGTH = 100 * 1024;
 
-export function readFilesRecursively(dir, fileList = [], baseDir = dir, ignorePatterns = [], depth = 0) {
+export function readFilesRecursively(dir, fileList = [], baseDir = dir, ignorePatterns = [], depth = 0, skippedFiles = []) {
   if (depth > MAX_DEPTH) return fileList;
   if (fileList.length >= MAX_FILES) return fileList;
   const files = fs.readdirSync(dir);
@@ -82,7 +83,7 @@ export function readFilesRecursively(dir, fileList = [], baseDir = dir, ignorePa
         const realPath = fs.realpathSync(filePath);
         const resolvedBase = fs.realpathSync(baseDir);
         if (realPath.startsWith(resolvedBase)) {
-          readFilesRecursively(filePath, fileList, baseDir, ignorePatterns, depth + 1);
+          readFilesRecursively(filePath, fileList, baseDir, ignorePatterns, depth + 1, skippedFiles);
         }
       } catch (e) {
         // Skip on error
@@ -94,8 +95,15 @@ export function readFilesRecursively(dir, fileList = [], baseDir = dir, ignorePa
       
       if (validExtensions.includes(ext)) {
         try {
-          const MAX_FILE_CONTENT_LENGTH = 1024 * 1024;
-          const content = fs.readFileSync(filePath, 'utf-8').slice(0, MAX_FILE_CONTENT_LENGTH);
+          if (stat.size > MAX_FILE_CONTENT_LENGTH) {
+            skippedFiles.push({
+              name: path.relative(baseDir, filePath).replace(/\\/g, '/'),
+              reason: 'File exceeds size limit of 100KB',
+              size: stat.size
+            });
+            continue;
+          }
+          const content = fs.readFileSync(filePath, 'utf-8');
           fileList.push({
             name: path.relative(baseDir, filePath).replace(/\\/g, '/'),
             content: content
