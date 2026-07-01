@@ -1058,24 +1058,11 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
       const reviewKey = `${owner}/${repo}/#${pullNumber}`;
 
       const shaKey = `${owner}/${repo}/#${pullNumber}`;
-      if (!reviewedShas.has(shaKey)) {
-        reviewedShas.set(shaKey, new Set());
-      }
-      if (reviewedShas.get(shaKey).has(headSha)) {
+      const shaAlreadyReviewed = reviewedShas.get(shaKey)?.has(headSha);
+      if (shaAlreadyReviewed) {
         console.log(`⏭️ Already reviewed commit ${headSha.substring(0,7)} for PR #${pullNumber}`);
         return res.json({ success: true, message: 'Webhook received (duplicate SHA skipped).' });
       }
-      reviewedShas.get(shaKey).add(headSha);
-      const shaTimeout = setTimeout(() => {
-        const set = reviewedShas.get(shaKey);
-        if (set) {
-          set.delete(headSha);
-          if (set.size === 0) {
-            reviewedShas.delete(shaKey);
-          }
-        }
-      }, 3600000);
-      shaTimeout.unref();
       
       console.log(`📡 GitHub Webhook received: PR #${pullNumber} ${action} (${headSha.substring(0,7)}) in ${owner}/${repo}`);
 
@@ -1098,12 +1085,11 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
       repoEntry.count++;
       repoRequestCounts.set(repoKey, repoEntry);
 
-      const enqueued = reviewQueue.enqueue(reviewKey, { owner, repo, pullNumber, headSha }, async (item) => {
+      const enqueuePromise = reviewQueue.enqueue(reviewKey, { owner, repo, pullNumber, headSha }, async (item) => {
         try {
           await runWebhookReview(item.owner, item.repo, item.pullNumber, item.headSha);
         } catch (error) {
           console.error(`❌ Webhook review failed for ${headSha}:`, error.message);
-          // Remove SHA from reviewedShas so it can be retried on next delivery
           const shaSet = reviewedShas.get(shaKey);
           if (shaSet) {
             shaSet.delete(headSha);
@@ -1113,7 +1099,22 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
           }
         }
       });
-      if (enqueued === undefined) {
+      if (enqueuePromise) {
+        if (!reviewedShas.has(shaKey)) {
+          reviewedShas.set(shaKey, new Set());
+        }
+        reviewedShas.get(shaKey).add(headSha);
+        const shaTimeout = setTimeout(() => {
+          const set = reviewedShas.get(shaKey);
+          if (set) {
+            set.delete(headSha);
+            if (set.size === 0) {
+              reviewedShas.delete(shaKey);
+            }
+          }
+        }, 3600000);
+        shaTimeout.unref();
+      } else {
         return res.status(429).json({ error: 'Review queue full. Try again later.' });
       }
     }
