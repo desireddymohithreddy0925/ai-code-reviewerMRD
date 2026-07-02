@@ -515,6 +515,13 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
 
   maxTokens = Math.max(1, Math.min(128000, parseInt(maxTokens, 10) || 2048));
 
+  const normalizedModel = ALLOWED_ANALYSIS_MODELS.find(m => m.toLowerCase() === model.toLowerCase());
+  if (!normalizedModel) {
+    model = "llama-3.3-70b-versatile";
+  } else {
+    model = normalizedModel;
+  }
+
   if (!repoUrl) {
     return res.status(400).json({ error: 'GitHub Repository URL is required.' });
   }
@@ -924,8 +931,11 @@ if (reviewResult?.fileReviews) {
 app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async (req, res) => {
   let { message, history = [], model = 'llama-3.3-70b-versatile', temperature = 0.7, maxTokens = 2048, systemPrompt = 'You are a helpful code reviewer.', sessionId, useRag, ragSources } = req.body;
 
-  if (!ALLOWED_ANALYSIS_MODELS.includes(model)) {
+  const chatNormalized = ALLOWED_ANALYSIS_MODELS.find(m => m.toLowerCase() === model.toLowerCase());
+  if (!chatNormalized) {
     model = "llama-3.3-70b-versatile";
+  } else {
+    model = chatNormalized;
   }
 
   if (!message) {
