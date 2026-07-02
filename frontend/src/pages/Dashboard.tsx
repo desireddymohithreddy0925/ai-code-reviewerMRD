@@ -154,10 +154,16 @@ function MermaidViewer({ chart, repoName }: MermaidViewerProps) {
           .replace(/```mermaid/g, "")
           .replace(/```/g, "")
           .trim();
-        if (
-          !cleanChart.startsWith("graph") &&
-          !cleanChart.startsWith("flowchart")
-        ) {
+        const MERMAID_TYPES = [
+          "graph", "flowchart", "sequenceDiagram", "classDiagram",
+          "stateDiagram", "stateDiagram-v2", "erDiagram", "gantt",
+          "pie", "journey", "gitgraph", "mindmap", "timeline",
+          "zenuml", "sankey", "xychart", "block", "quadrantChart",
+          "requirementDiagram", "c4Context", "c4Container", "c4Component",
+          "c4Dynamic", "c4Deployment", "info",
+        ];
+        const firstWord = cleanChart.split(/\s+/)[0];
+        if (!MERMAID_TYPES.includes(firstWord)) {
           cleanChart = `graph TD\n${cleanChart}`;
         }
 
