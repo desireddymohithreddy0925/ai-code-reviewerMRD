@@ -1448,10 +1448,11 @@ Please ensure the AI Engine service is running and re-trigger the review for a c
 
 // Helper to sanitize repository name for report filenames
 function sanitizeFilename(repoName) {
-  let str = String(repoName).replace(/\0/g, '');
-  // Normalize path separators and collapse them
+  let str = String(repoName);
+  try { str = decodeURIComponent(str); } catch { /* keep original */ }
+  str = str.normalize('NFKC');
+  str = str.replace(/\0/g, '');
   str = str.replace(/[/\\]+/g, '/').replace(/\.\.\/|\.\\/g, '');
-  // Remove any residual path traversal patterns and non-filename characters
   str = str.replace(/\.\.+/g, '_').replace(/(?:^|\/)[.]+(?=\/|$)/g, '_');
   str = str.replace(/[^\w.-]+/g, '_');
   return str;
