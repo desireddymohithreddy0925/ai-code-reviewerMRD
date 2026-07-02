@@ -194,7 +194,9 @@ def sanitize_ai_output(text: str) -> str:
     return text
 
 # NOTE: This HOMOGLYPH_MAP and dangerous phrases list (DANGEROUS_PATTERNS)
-# should be kept in sync with backend/shared/dangerousPhrases.js.
+# is sourced from shared-safety-config.json as the single source of truth.
+# The backend/index.js list uses backend/shared/dangerousPhrases.js. Keep both
+# in sync. See issue #1390.
 HOMOGLYPH_MAP = {
     # Lowercase Cyrillic
     '\u0430': 'a', '\u0435': 'e', '\u043E': 'o', '\u0441': 'c', '\u0440': 'p',

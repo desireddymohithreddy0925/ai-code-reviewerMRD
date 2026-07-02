@@ -427,8 +427,9 @@ function cleanupTimers() {
 }
 
   // NOTE: This HOMOGLYPH_MAP, DANGEROUS_PHRASES list, and validation logic is
-  // now sourced from backend/shared/dangerousPhrases.js as the single source of
-  // truth. The ai-engine/app.py list should be kept in sync manually.
+  // sourced from backend/shared/dangerousPhrases.js as the single source of
+  // truth. The ai-engine/app.py list uses shared-safety-config.json as the
+  // single source of truth. Keep both in sync. See issue #1390.
   const HOMOGLYPH_MAP = {
     // Lowercase Cyrillic
     '\u0430': 'a', '\u0435': 'e', '\u043E': 'o', '\u0441': 'c', '\u0440': 'p',
