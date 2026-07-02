@@ -98,8 +98,6 @@ def _redact_key(text: str, key: str) -> str:
     for trunc_suffix in ["...", "…", " (truncated)"]:
         truncated = re.escape(key[:len(key) // 2] + trunc_suffix)
         text = re.sub(truncated, "***", text)
-    if len(key) > 16:
-        text = re.sub(re.escape(key[:16]), "***", text)
     return text
 
 ALLOWED_TAGS = [
