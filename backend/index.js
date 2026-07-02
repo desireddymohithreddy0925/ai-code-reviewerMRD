@@ -952,6 +952,9 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
         // Each interaction extends absoluteExpiry to 24h from now via $max.
         // The initial default (24h from creation) sets the first expiry window.
         await Session.updateOne({ sessionId }, { $set: { lastAccessedAt: new Date() }, $max: { absoluteExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000) } });
+        // Each interaction extends absoluteExpiry to 24h from now via $max.
+        // The initial default (24h from creation) sets the first expiry window.
+        await Session.updateOne({ sessionId }, { $set: { lastAccessedAt: new Date() }, $max: { absoluteExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000) } });
         // Each interaction resets the 24-hour expiry countdown. The hard
         // ceiling on absoluteExpiry (7 days) still limits total lifetime.
         await Session.updateOne({ sessionId }, { $set: { lastAccessedAt: new Date(), absoluteExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000) } });
@@ -966,6 +969,13 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
   try {
     await reviewQueue.runExclusive(sessionId, async () => {
       let context = null;
+      try {
+        context = await Session.findOne({ sessionId });
+        if (context) {
+          // Update lastAccessedAt for activity tracking. createdAt remains
+          // unchanged so the original TTL (30 minutes from creation) is
+          // preserved, preventing indefinite session extension (see issue #672).
+          await Session.updateOne({ sessionId }, { $set: { lastAccessedAt: new Date() }, $max: { absoluteExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000) } });
       try {
         context = await Session.findOne({ sessionId });
         if (context) {
