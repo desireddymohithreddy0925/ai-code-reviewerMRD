@@ -1163,7 +1163,7 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
 });
 
 // 🟢 Route: Create GitHub Issue automatically for Code Reviews
-app.post('/api/issues/create', requireApiKey, async (req, res) => {
+app.post('/api/issues/create', requireApiKey, issueLimiter, async (req, res) => {
   const { repoUrl, title, body, labels = [] } = req.body;
   const token = process.env.GITHUB_PAT;
 
