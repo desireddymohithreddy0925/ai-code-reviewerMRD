@@ -57,7 +57,7 @@ export const MetricsChart: React.FC<MetricsChartProps> = ({ theme = 'dark', revi
       })
       .then((data) => {
         if (cancelled || !data) return;
-        const formatted = (data.trends || []).map((t: unknown) => ({
+        const formatted = (data.trends || []).map((t: any) => ({
           month: t.date ? new Date(t.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "N/A",
           bugs: t.totalBugs || 0,
           security: t.totalSecurityIssues || 0,

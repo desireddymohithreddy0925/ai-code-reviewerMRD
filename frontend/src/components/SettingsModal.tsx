@@ -146,7 +146,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           <h2 style={{ margin: 0, color: "var(--text-color)" }}>
             ⚙️ AI Settings
           </h2>
-          <button aria-label="Close settings"
+          <button
             onClick={onClose}
             aria-label="Close settings"
             title="Close"

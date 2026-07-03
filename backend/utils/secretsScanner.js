@@ -21,7 +21,7 @@ export const rules = [
   },
   {
     type: "Database Connection Credentials",
-    regex: /(?:mongodb[+:]|postgres|mysql):\/\/[a-zA-Z0-9_]{1,32}:[a-zA-Z0-9_]{1,32}@/gi,
+    regex: /(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql):\/\/[a-zA-Z0-9_]{1,32}:[a-zA-Z0-9_]{1,32}@/gi,
     description: "Database connection credentials detected directly in code. Exposes the database tables to global read/write breaches."
   },
   {
