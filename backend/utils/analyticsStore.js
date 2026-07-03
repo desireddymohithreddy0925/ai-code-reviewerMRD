@@ -10,7 +10,29 @@ const BACKUP_PATH = STORE_PATH + '.backup';
 const TMP_PATH = STORE_PATH + '.tmp';
 const MAX_RECORDS = 200;
 
-let writeQueue = Promise.resolve();
+const LOCK_MAX_RETRIES = 50;
+const LOCK_BASE_DELAY_MS = 10;
+const LOCK_MAX_DELAY_MS = 1000;
+
+let storeLock = Promise.resolve();
+
+async function acquireLock() {
+  for (let attempt = 0; attempt < LOCK_MAX_RETRIES; attempt++) {
+    const prev = storeLock;
+    let release;
+    const next = new Promise(resolve => { release = resolve; });
+    if (storeLock === prev) {
+      storeLock = next;
+      return release;
+    }
+    const delay = Math.min(
+      LOCK_BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 50,
+      LOCK_MAX_DELAY_MS
+    );
+    await new Promise(resolve => setTimeout(resolve, delay));
+  }
+  throw new Error(`Could not acquire analytics store lock after ${LOCK_MAX_RETRIES} attempts`);
+}
 
 function readStore() {
     try {
@@ -57,12 +79,13 @@ function writeStoreAtomic(records) {
             console.warn('⚠️ Failed to write analytics backup:', backupErr.message);
         }
     } catch (err) {
-        console.warn('⚠️ Failed to write analytics store:', err.message);
+        console.warn('Failed to write analytics store:', err.message);
     }
 }
 
 export async function recordAnalysis(record) {
-    writeQueue = writeQueue.then(() => {
+    const release = await acquireLock();
+    try {
         const records = readStore();
         records.push({
             timestamp: new Date().toISOString(),
@@ -77,8 +100,9 @@ export async function recordAnalysis(record) {
 
         const trimmed = records.slice(-MAX_RECORDS);
         writeStoreAtomic(trimmed);
-    });
-    return writeQueue;
+    } finally {
+        release();
+    }
 }
 
 export function getTrends() {
