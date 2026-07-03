@@ -17,6 +17,7 @@ import bleach
 from bleach.css_sanitizer import CSSSanitizer
 import vectorstore
 from embeddings import is_fallback_active
+from go_analyzer import is_go_file, analyze_go_source, go_findings_to_file_review
 
 # Load environment variables: prefer local .env, fall back to backend/.env
 env_paths = [
@@ -602,6 +603,27 @@ You must obey the JSON output format above."""
                 continue
                 
     combined_result["truncatedFiles"] = truncated_files
+
+    # Go files get an additional dedicated static-analysis pass (go vet /
+    # staticcheck) on top of the generic LLM review above, since these tools
+    # catch real bugs (nil dereferences, wrong format strings, incorrect
+    # mutex usage) that a generic text-based LLM pass routinely misses.
+    go_files = [f for f in files if is_go_file(f.name, f.content)]
+    for f in go_files:
+        try:
+            go_result = await asyncio.to_thread(analyze_go_source, f.name, f.content)
+        except Exception as e:
+            print(f"⚠️ Go analysis failed for {f.name}: {e}")
+            continue
+
+        go_review = go_findings_to_file_review(go_result)
+        existing = combined_result["fileReviews"].get(f.name)
+        if existing:
+            for category in ("bugs", "security", "optimization", "styling"):
+                existing.setdefault(category, []).extend(go_review[category])
+        else:
+            combined_result["fileReviews"][f.name] = go_review
+
     return combined_result
 
 # 🟢 Route: AI Chat with Repository Context
