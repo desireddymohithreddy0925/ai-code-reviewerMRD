@@ -1501,6 +1501,7 @@ function sanitizeFilename(repoName) {
   str = str.replace(/[/\\]+/g, '/').replace(/\.\.\/|\.\\/g, '');
   str = str.replace(/\.\.+/g, '_').replace(/(?:^|\/)[.]+(?=\/|$)/g, '_');
   str = str.replace(/[^\w.-]+/g, '_');
+  if (str.length === 0) return 'untitled_repo';
   return str;
 }
 
