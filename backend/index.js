@@ -2017,6 +2017,13 @@ async function startServer() {
   await connectDatabase();
   app.listen(PORT, () => {
     console.log(`🟢 RepoSage Backend running on http://localhost:${PORT}`);
+  }).on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`❌ Port ${PORT} is already in use. Please free the port or set PORT env variable.`);
+      process.exit(1);
+    }
+    console.error(`❌ Server failed to start: ${err.message}`);
+    process.exit(1);
   });
 }
 
