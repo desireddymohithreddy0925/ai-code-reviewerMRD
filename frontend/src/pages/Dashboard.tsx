@@ -180,7 +180,7 @@ function MermaidViewer({ chart, repoName }: MermaidViewerProps) {
         if (cancelled) return;
         const sanitized = sanitizeMermaidOutput(renderedSvg);
         setSvg(sanitized);
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (cancelled) return;
         console.error("Mermaid Render Error:", err);
         setError(
@@ -740,9 +740,10 @@ export default function Dashboard() {
       } else {
         throw new Error("Response did not contain issue URL");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      alert(`Error creating issue: ${err.message}`);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      alert(`Error creating issue: ${errorMessage}`);
     } finally {
       setCreatingIssues((prev) => ({ ...prev, [itemKey]: false }));
     }
@@ -833,9 +834,9 @@ export default function Dashboard() {
         try { localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(updated)); } catch (e) { if (e instanceof DOMException && e.name === 'QuotaExceededError') setStorageWarning(true); }
         return updated;
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      let errMsg = err.message || "Chat service unavailable.";
+      let errMsg = (err instanceof Error ? err.message : String(err)) || "Chat service unavailable.";
       if (errMsg.includes("Failed to fetch") || errMsg.toLowerCase().includes("offline")) {
         errMsg = "Backend AI Engine offline. Please ensure the server is running.";
       } else if (errMsg.toLowerCase().includes("api key") || errMsg.toLowerCase().includes("unauthorized")) {
@@ -1047,9 +1048,9 @@ export default function Dashboard() {
       if (filesList.length > 0) {
         setSelectedFile(filesList[0]);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      let errMsg = err.message || "Could not connect to the backend server. Make sure node backend is running on port 5000.";
+      let errMsg = (err instanceof Error ? err.message : String(err)) || "Could not connect to the backend server. Make sure node backend is running on port 5000.";
       if (errMsg.includes("Failed to fetch") || errMsg.toLowerCase().includes("offline")) {
         errMsg = "Backend AI Engine offline. Please ensure the server is running.";
       } else if (errMsg.toLowerCase().includes("api key") || errMsg.toLowerCase().includes("unauthorized") || errMsg.includes("not configured")) {
