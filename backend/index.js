@@ -40,11 +40,7 @@ validateSessionSecret();
 
 const octokit = new Octokit({ auth: process.env.GITHUB_PAT || undefined });
 
-connectDatabase().then(() => {
-  if (!isDatabaseConnected()) {
-    console.log('Server started in degraded mode (no database). Analytics will use file-based storage.');
-  }
-});
+let serverReady = false;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2109,6 +2105,14 @@ app.get("/api/review-history/compare/:id1/:id2", requireApiKey, async (req, res)
 });
 
 app.get('/health', (req, res) => {
+  if (!serverReady) {
+    return res.status(503).json({
+      status: 'starting_up',
+      timestamp: new Date().toISOString(),
+      database: isDatabaseConnected() ? 'connected' : 'disconnected',
+      message: 'Server is still initializing. Please retry shortly.',
+    });
+  }
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -2119,6 +2123,10 @@ app.get('/health', (req, res) => {
 
 async function startServer() {
   await connectDatabase();
+  if (!isDatabaseConnected()) {
+    console.log('Server started in degraded mode (no database). Analytics will use file-based storage.');
+  }
+  serverReady = true;
   app.listen(PORT, () => {
     console.log(`🟢 RepoSage Backend running on http://localhost:${PORT}`);
   }).on('error', (err) => {
