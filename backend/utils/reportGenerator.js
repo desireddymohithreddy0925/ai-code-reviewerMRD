@@ -226,4 +226,5 @@ export {
   generateHTMLReport,
   getReportPath,
   SCHEMA_VERSION,
+  escapeHtml,
 };
