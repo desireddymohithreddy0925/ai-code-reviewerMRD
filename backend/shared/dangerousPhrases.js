@@ -1,23 +1,19 @@
-export const DANGEROUS_PHRASES = [
-  'ignore all', 'ignore all previous instructions', 'ignore all instructions',
-  'ignore previous', 'ignore above', 'ignore the above',
-  'ignore previous instructions',
-  'forget all', 'forget all previous', 'forget previous', 'forget your',
-  'you are not', 'you will now', 'you must now', 'you have been',
-  'you are programmed',
-  'from now on',
-  'override all', 'override protocol',
-  'system override',
-  'new directive',
-  'protocol change',
-  'disregard', 'disregard all', 'disregard all previous',
-  'do not follow',
-  'instead follow',
-  'roleplay mode',
-  'real instruction', 'actual instruction',
-  'replace all',
-  'disobey', 'unauthorized', 'breach', 'bypass',
-  'your true purpose',
-  'listen to me',
-  'disable all',
-];
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+let config;
+try {
+  const configPath = path.resolve(__dirname, '../../shared-safety-config.json');
+  config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+} catch (err) {
+  console.error('SECURITY: Failed to load shared-safety-config.json, prompt injection defenses may be incomplete:', err.message);
+  config = { dangerous_phrases: [], homoglyph_map: {} };
+}
+
+export const DANGEROUS_PHRASES = config.dangerous_phrases || [];
+
+export const HOMOGLYPH_MAP = config.homoglyph_map || {};

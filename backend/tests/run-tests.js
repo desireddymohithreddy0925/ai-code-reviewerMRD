@@ -4,6 +4,13 @@ import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
 import { scanSecrets } from '../utils/secretsScanner.js';
 
+// Enforce test environment to bypass long delays (e.g., Mongoose retries)
+process.env.NODE_ENV = 'test';
+// Provide mock SESSION_SECRET for tests to satisfy authMiddleware strict checks
+if (!process.env.SESSION_SECRET) {
+  process.env.SESSION_SECRET = 'test-session-secret-for-ci';
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
