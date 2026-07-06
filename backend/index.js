@@ -1529,8 +1529,13 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       }, 60000);
 
       if (aiResponse.ok) {
-        const result = await aiResponse.json();
-        if (result.comments && Array.isArray(result.comments)) {
+        let result;
+        try {
+          result = await aiResponse.json();
+        } catch (parseErr) {
+          console.warn('⚠️ AI engine returned HTTP 200 with malformed (non-JSON) body:', parseErr.message);
+        }
+        if (result && Array.isArray(result.comments)) {
           result.comments.forEach(c => {
             const validLines = validChangedLines.get(c.path);
             if (!validLines || !validLines.has(Number(c.line))) {
@@ -1547,8 +1552,10 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
           if (aiCommentsDiscarded > 0) {
             console.warn(`⚠️ ${aiCommentsDiscarded} AI comments could not be posted due to line number mismatches with the diff`);
           }
+          aiEngineQueried = true;
+        } else {
+          console.warn('⚠️ AI engine returned HTTP 200 with empty or malformed response body — not treating as a clean analysis');
         }
-        aiEngineQueried = true;
       }
     } catch (err) {
       console.warn("⚠️ FastAPI AI Engine error, posting local scans only:", err.message);
@@ -1573,7 +1580,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
         body += `**Part ${batchIdx + 1} of ${commentBatches.length}** — Showing ${batch.length} of ${commentsToPost.length} findings.\n\n`;
       }
       if (!aiEngineQueried && filesToReview.length > 0 && batchIdx === 0) {
-        body += `⚠️ **Limited Review:** The AI engine was unreachable during this review. Only regex-based secret scanning was performed. AI-powered bug/performance/style analysis was skipped. Please ensure the AI Engine service is running and re-trigger the review for a complete audit.\n\n`;
+        body += `⚠️ **Limited Review:** The AI engine was unreachable or returned an unexpected response during this review. Only regex-based secret scanning was performed. AI-powered bug/performance/style analysis was skipped. Please ensure the AI Engine service is running correctly and re-trigger the review for a complete audit.\n\n`;
       }
       body += `I have audited the code changes in this Pull Request and generated **${commentsToPost.length} actionable inline suggestion${commentsToPost.length === 1 ? '' : 's'}**.\n\nPlease review my feedback and suggestions below. Happy coding! 🚀`;
 
@@ -1602,18 +1609,18 @@ The AI engine identified **${aiCommentsDiscarded} potential issue(s)** but could
 **Action required:** Please manually review the changes for issues the AI may have detected. Re-run the review after pushing additional changes to re-evaluate.`
     });
   } else if (!aiEngineQueried) {
-    console.error('❌ AI Engine was unreachable — posting COMMENT review instead of auto-approving.');
+    console.error('❌ AI Engine was unreachable or returned an empty/malformed response — posting COMMENT review instead of auto-approving.');
     await octokit.rest.pulls.createReview({
       owner,
       repo,
       pull_number: pullNumber,
       commit_id: headSha,
       event: 'COMMENT',
-      body: `## ⚠️ RepoSage AI Code Review — AI Engine Unavailable
+      body: `## ⚠️ RepoSage AI Code Review — AI Engine Issue
 
-The AI engine could not be reached during this review. The secrets scanner found **0 issues**, but the PR was **not** fully reviewed by the AI.
+The AI engine could not be reached or returned an unexpected response during this review. The secrets scanner found **0 issues**, but the PR was **not** fully reviewed by the AI.
 
-Please ensure the AI Engine service is running and re-trigger the review for a complete analysis.`
+Please ensure the AI Engine service is running correctly and re-trigger the review for a complete analysis.`
     });
   } else {
     console.log('🎉 No code issues or recommendations found. Posting approval review...');
