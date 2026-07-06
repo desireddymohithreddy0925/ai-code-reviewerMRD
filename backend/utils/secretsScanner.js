@@ -147,24 +147,34 @@ export function scanSecretsInChanges(changes) {
     }
     changesProcessed++;
     if (!change || typeof change.content !== 'string') continue;
-    if (change.content.length > maxLineLen) continue;
-    for (const rule of rules) {
+    const lines = change.content.split('\n');
+    const baseLine = typeof change.line === 'number' ? change.line : 1;
+    for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
       if (Date.now() - startTime > timeoutMs) {
         stoppedEarly = true;
         reason = `Scan timeout of ${timeoutMs}ms exceeded.`;
         break;
       }
-      rule.regex.lastIndex = 0;
-      let match;
-      while ((match = rule.regex.exec(change.content)) !== null) {
-        findings.push({
-          line: change.line,
-          column: match.index,
-          type: "security",
-          comment: `### 🛡️ Hardcoded Secret Warning\n\nI have detected a hardcoded **${rule.type}** on line **${change.line}**.\n\n#### 💡 Actionable Suggestion\nMove this credential immediately to a protected environment variable (e.g. GitHub Secrets or \`.env\`) and load it dynamically at runtime. DO NOT commit plain secrets to public Git repositories!`
-        });
-        if (rule.regex.lastIndex === match.index) {
-          rule.regex.lastIndex++;
+      const lineContent = lines[lineIdx];
+      if (lineContent.length > maxLineLen) continue;
+      for (const rule of rules) {
+        if (Date.now() - startTime > timeoutMs) {
+          stoppedEarly = true;
+          reason = `Scan timeout of ${timeoutMs}ms exceeded.`;
+          break;
+        }
+        rule.regex.lastIndex = 0;
+        let match;
+        while ((match = rule.regex.exec(lineContent)) !== null) {
+          findings.push({
+            line: baseLine + lineIdx,
+            column: match.index,
+            type: "security",
+            comment: `### 🛡️ Hardcoded Secret Warning\n\nI have detected a hardcoded **${rule.type}** on line **${baseLine + lineIdx}**.\n\n#### 💡 Actionable Suggestion\nMove this credential immediately to a protected environment variable (e.g. GitHub Secrets or \`.env\`) and load it dynamically at runtime. DO NOT commit plain secrets to public Git repositories!`
+          });
+          if (rule.regex.lastIndex === match.index) {
+            rule.regex.lastIndex++;
+          }
         }
       }
     }
