@@ -31,14 +31,15 @@ class AsyncLock {
 }
 
 class AnalysisCache {
-  constructor(ttlMs = 3600000) {
+  constructor(ttlMs = 3600000, absoluteMaxMultiplier = 2) {
     this.ttlMs = ttlMs;
+    this.absoluteMaxMultiplier = absoluteMaxMultiplier;
     this.maxEntries = 1000;
     this.cache = new Map();
     this.pending = new Map();
     this._locks = new Map();
     this._repoUrlIndex = new Map();
-    this.stats = { hits: 0, misses: 0, dedupSaves: 0 };
+    this.stats = { hits: 0, misses: 0, dedupSaves: 0, absoluteExpiries: 0, slidingExpiries: 0 };
     this._startSweeper();
   }
 
@@ -83,11 +84,22 @@ class AnalysisCache {
     }
 
     const now = Date.now();
-    if (now > entry.expiresAt) {
-      // Entry has expired, remove it
+    // Check absolute maximum TTL first — entries that have lived too long
+    // are expired regardless of sliding TTL activity
+    if (now > entry.absoluteExpiresAt) {
       this.cache.delete(key);
+      this.stats.absoluteExpiries++;
       this.stats.misses++;
-      console.log(`⏰ Analysis cache expired for key ${key.slice(0, 8)}...`);
+      console.log(`⏰ Analysis cache entry reached absolute max lifetime for key ${key.slice(0, 8)}...`);
+      return null;
+    }
+
+    if (now > entry.expiresAt) {
+      // Entry has expired via sliding TTL, remove it
+      this.cache.delete(key);
+      this.stats.slidingExpiries++;
+      this.stats.misses++;
+      console.log(`⏰ Analysis cache sliding TTL expired for key ${key.slice(0, 8)}...`);
       return null;
     }
 
@@ -119,9 +131,11 @@ class AnalysisCache {
         this.stats.evictions++;
       }
     }
-    const expiresAt = Date.now() + this.ttlMs;
+    const now = Date.now();
+    const expiresAt = now + this.ttlMs;
+    const absoluteExpiresAt = now + this.ttlMs * this.absoluteMaxMultiplier;
     const normalizedRepoUrl = repoUrl ? repoUrl.replace(/\/+$/, '').toLowerCase() : undefined;
-    this.cache.set(key, { result, expiresAt, repoUrl: normalizedRepoUrl });
+    this.cache.set(key, { result, expiresAt, absoluteExpiresAt, repoUrl: normalizedRepoUrl });
     if (normalizedRepoUrl) {
       if (!this._repoUrlIndex.has(normalizedRepoUrl)) {
         this._repoUrlIndex.set(normalizedRepoUrl, new Set());
@@ -191,8 +205,19 @@ class AnalysisCache {
     this._sweeper = setInterval(() => {
       const now = Date.now();
       for (const [key, entry] of this.cache) {
+        // Check absolute max TTL first — entries that have lived too long
+        // are evicted regardless of access pattern
+        if (now > entry.absoluteExpiresAt) {
+          this.cache.delete(key);
+          this.stats.absoluteExpiries++;
+          if (entry.repoUrl && this._repoUrlIndex.has(entry.repoUrl)) {
+            this._repoUrlIndex.get(entry.repoUrl).delete(key);
+          }
+          continue;
+        }
         if (now > entry.expiresAt) {
           this.cache.delete(key);
+          this.stats.slidingExpiries++;
           if (entry.repoUrl && this._repoUrlIndex.has(entry.repoUrl)) {
             this._repoUrlIndex.get(entry.repoUrl).delete(key);
           }
@@ -220,8 +245,12 @@ class AnalysisCache {
       hits: this.stats.hits,
       misses: this.stats.misses,
       evictions: this.stats.evictions,
+      absoluteExpiries: this.stats.absoluteExpiries,
+      slidingExpiries: this.stats.slidingExpiries,
       hitRate: `${hitRate}%`,
       ttlMinutes: this.ttlMs / 1000 / 60,
+      absoluteMaxMultiplier: this.absoluteMaxMultiplier,
+      absoluteMaxMinutes: (this.ttlMs * this.absoluteMaxMultiplier) / 1000 / 60,
     };
   }
 
