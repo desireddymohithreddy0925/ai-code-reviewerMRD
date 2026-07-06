@@ -1004,7 +1004,7 @@ export default function Dashboard() {
       ].slice(0, 5); // reduced to 5 to save space
 
       try {
-        const sanitized = updatedHistory.map(sanitizeAuditEntry);
+        const sanitized = updatedHistory.map((entry) => sanitizeAuditEntry(entry as unknown as Record<string, unknown>));
         localStorage.setItem('reposage_audit_history', JSON.stringify(sanitized));
       } catch (e: any) {
         if (e instanceof DOMException && e.name === 'QuotaExceededError') {
