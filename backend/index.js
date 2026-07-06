@@ -447,8 +447,9 @@ const DELIVERY_REDIS_TTL = 300;
 
 // In-memory fallback for webhook dedup when Redis is unavailable
 const dedupMemorySet = new Set();
-const shaDedupMemorySet = new Set();
+const shaDedupMemoryMap = new Map();
 const DEDUP_MEMORY_TTL = DELIVERY_REDIS_TTL * 1000;
+const SHA_DEDUP_MAX_SIZE = 10000;
 
 // Atomic check-and-add for in-memory dedup (best-effort under concurrent load)
 function checkAndSetDedup(key) {
@@ -458,7 +459,6 @@ function checkAndSetDedup(key) {
   return 1;
 }
 
-
 // Periodic sweeper for stale exclusive locks to prevent unbounded memory growth
 const EXCLUSIVE_LOCK_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const EXCLUSIVE_LOCK_TTL = 30 * 60 * 1000;
@@ -467,8 +467,22 @@ const exclusiveLockCleanupTimer = setInterval(() => {
 }, EXCLUSIVE_LOCK_CLEANUP_INTERVAL);
 exclusiveLockCleanupTimer.unref();
 
+// Periodic sweeper for the SHA dedup memory map to prevent unbounded memory growth
+const SHA_DEDUP_CLEANUP_INTERVAL = 60 * 1000;
+const shaDedupCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  const ttl = DELIVERY_REDIS_TTL * 1000;
+  for (const [key, timestamp] of shaDedupMemoryMap) {
+    if (now - timestamp > ttl) {
+      shaDedupMemoryMap.delete(key);
+    }
+  }
+}, SHA_DEDUP_CLEANUP_INTERVAL);
+shaDedupCleanupTimer.unref();
+
 function cleanupTimers() {
   clearInterval(exclusiveLockCleanupTimer);
+  clearInterval(shaDedupCleanupTimer);
 }
 
   // Loaded from shared-safety-config.json via dangerousPhrases.js
@@ -1290,7 +1304,7 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
       if (redisClient) {
         shaAlreadyReviewed = await redisClient.sismember(shaDedupKey, headSha);
       } else {
-        shaAlreadyReviewed = shaDedupMemorySet.has(`${shaDedupKey}:${headSha}`) ? 1 : 0;
+        shaAlreadyReviewed = shaDedupMemoryMap.has(`${shaDedupKey}:${headSha}`) ? 1 : 0;
       }
       if (shaAlreadyReviewed) {
         console.log(`⏭️ Already reviewed commit ${headSha.substring(0,7)} for PR #${pullNumber}`);
@@ -1326,7 +1340,7 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
           if (redisClient) {
             await redisClient.srem(shaDedupKey, headSha);
           } else {
-            shaDedupMemorySet.delete(`${shaDedupKey}:${headSha}`);
+            shaDedupMemoryMap.delete(`${shaDedupKey}:${headSha}`);
           }
         }
       });
@@ -1335,8 +1349,15 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
           await redisClient.sadd(shaDedupKey, headSha);
           await redisClient.expire(shaDedupKey, DELIVERY_REDIS_TTL);
         } else {
-          shaDedupMemorySet.add(`${shaDedupKey}:${headSha}`);
-          setTimeout(() => shaDedupMemorySet.delete(`${shaDedupKey}:${headSha}`), DELIVERY_REDIS_TTL * 1000);
+          const mapKey = `${shaDedupKey}:${headSha}`;
+          // Enforce max size cap with oldest-entry eviction
+          if (shaDedupMemoryMap.size >= SHA_DEDUP_MAX_SIZE) {
+            const oldestKey = shaDedupMemoryMap.keys().next().value;
+            if (oldestKey !== undefined) {
+              shaDedupMemoryMap.delete(oldestKey);
+            }
+          }
+          shaDedupMemoryMap.set(mapKey, Date.now());
         }
       } else {
         return res.status(429).json({ error: 'Review queue full. Try again later.' });
