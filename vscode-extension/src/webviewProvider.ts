@@ -9,6 +9,18 @@ export function escapeHtml(text: string): string {
     .replace(/'/g, "&#039;");
 }
 
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/javascript\s*:/gi, "blocked:")
+    .replace(/on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "data-blocked")
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(/<iframe\b[^>]*>/gi, "")
+    .replace(/<\/iframe>/gi, "")
+    .replace(/<embed\b[^>]*>/gi, "")
+    .replace(/<\/embed>/gi, "")
+    .replace(/<object\b[^>]*>/gi, "")
+    .replace(/<\/object>/gi, "");
+
 function escapeHtmlPreserveBackticks(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -74,20 +86,20 @@ export function renderMarkdown(md: string): string {
 }
 
 function getWebviewContent(markdown: string, isLoading: boolean, error: string | null): string {
-  const bodyContent = error
+  const bodyContent = sanitizeHtml(error
     ? `<div class="error-message">${escapeHtml(error)}</div>`
     : isLoading
     ? `<div class="loading"><div class="spinner"></div><span>Reviewing your code...</span></div>`
     : markdown
     ? renderMarkdown(markdown)
-    : `<div class="empty-state"><span class="empty-icon">🔍</span><p>Open a file and run <strong>RepoSage: Review Current File</strong> to see results here.</p></div>`;
+    : `<div class="empty-state"><span class="empty-icon">🔍</span><p>Open a file and run <strong>RepoSage: Review Current File</strong> to see results here.</p></div>`);
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${vscode.webview.cspSource} 'unsafe-inline'; img-src data: https:; font-src 'none'; script-src 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${vscode.webview.cspSource}; img-src data: https:; font-src 'none'; script-src 'none';">
 <style>
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
