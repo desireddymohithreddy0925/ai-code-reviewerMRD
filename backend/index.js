@@ -16,6 +16,7 @@ import { scanSecrets, scanSecretsInChanges } from './utils/secretsScanner.js';
 import { recordAnalysis as recordFileAnalytics } from './utils/analyticsStore.js';
 import { loadIgnorePatterns, readFilesRecursively } from './utils/ignoreHelper.js';
 import { isValidRepoUrl, parseRepoUrl } from './utils/urlValidator.js';
+import { isValidGithubToken } from './utils/tokenValidator.js';
 import simpleGit from 'simple-git';
 import escapeHtml from 'lodash.escape';
 import { parseDiff } from './utils/diffParser.js';
@@ -536,7 +537,7 @@ function requireJsonContentType(req, res, next) {
 // 🟢 Route: GitHub Import & AI Review
 app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, async (req, res) => {
   let { repoUrl, company = 'General', language = 'English', model = 'llama-3.3-70b-versatile',temperature = 0.7,
-     maxTokens = 2048, systemPrompt = '', batchSize = 5
+     maxTokens = 2048, systemPrompt = '', batchSize = 5, githubToken
    } = req.body;
 
   // Enforce boundary limits for batchSize to prevent downstream parsing crashes
@@ -555,6 +556,10 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
 
   if (!repoUrl) {
     return res.status(400).json({ error: 'GitHub Repository URL is required.' });
+  }
+
+  if (githubToken && !isValidGithubToken(githubToken)) {
+    return res.status(400).json({ error: 'Invalid GitHub Token format provided' });
   }
 
   if (!isValidRepoUrl(repoUrl)) {
