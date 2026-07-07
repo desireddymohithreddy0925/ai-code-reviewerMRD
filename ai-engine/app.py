@@ -5,6 +5,8 @@ import time
 import asyncio
 import uuid
 import unicodedata
+import urllib.parse
+import ipaddress
 from collections import OrderedDict
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -280,14 +282,31 @@ API_KEY = os.getenv("REPOSAGE_API_KEY") or os.getenv("AI_ENGINE_API_KEY") or ""
 RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_MAX_REQUESTS = 500
 MAX_RATE_LIMIT_ENTRIES = 10000
+BULK_EVICT_BATCH_SIZE = 1000
 _rate_limit_store: OrderedDict[str, list[float]] = OrderedDict()
 
+def _resolve_client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for", "").strip()
+    if xff:
+        candidates = [ip.strip() for ip in xff.split(",") if ip.strip()]
+        if candidates:
+            # Use the rightmost (trusted) IP address per RFC 7239
+            raw_ip = candidates[-1]
+            try:
+                ipaddress.ip_address(raw_ip)
+                return raw_ip
+            except ValueError:
+                pass
+    if request.client and request.client.host:
+        try:
+            ipaddress.ip_address(request.client.host)
+            return request.client.host
+        except ValueError:
+            pass
+    return "unknown"
+
 async def rate_limit_middleware(request: Request, call_next):
-    client_ip = (
-        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        or (request.client.host if request.client else None)
-        or "unknown"
-    )
+    client_ip = _resolve_client_ip(request)
     now = time.time()
 
     if client_ip in _rate_limit_store:
@@ -295,7 +314,13 @@ async def rate_limit_middleware(request: Request, call_next):
         window = _rate_limit_store[client_ip]
     else:
         if len(_rate_limit_store) >= MAX_RATE_LIMIT_ENTRIES:
-            _rate_limit_store.popitem(last=False)
+            # Bulk-evict oldest entries in batches of 1000
+            evict_count = min(len(_rate_limit_store), BULK_EVICT_BATCH_SIZE)
+            for _ in range(evict_count):
+                try:
+                    _rate_limit_store.popitem(last=False)
+                except KeyError:
+                    break
         window = []
         _rate_limit_store[client_ip] = window
 
