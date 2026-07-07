@@ -198,6 +198,7 @@ export async function readCodeFilesFromRepo(repoUrl, options = {}) {
     const git = simpleGit({ timeout: { block: cloneTimeoutMs } });
     await git.clone(repoUrl, clonePath, [
       '--depth', '1',
+      '--single-branch',
       '--no-checkout'
     ]);
     await git.cwd(clonePath).checkout(['HEAD']);
