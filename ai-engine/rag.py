@@ -37,16 +37,6 @@ def _get_client() -> chromadb.ClientAPI:
 
 
 def _collection_name(repo_url: Optional[str] = None) -> str:
-    """Return a tenant-isolated collection name.
-
-    When *repo_url* is provided, the collection is namespaced with a
-    deterministic hash so that each repository's vectors live in a separate
-    ChromaDB collection.  This prevents cross-user / cross-repo code snippet
-    leakage (tenant isolation).
-
-    When *repo_url* is ``None``, the base ``_COLLECTION_NAME`` is returned
-    for backward compatibility.
-    """
     if repo_url:
         suffix = hashlib.sha256(repo_url.encode()).hexdigest()[:12]
         return f"{_COLLECTION_NAME}_{suffix}"
@@ -56,13 +46,10 @@ def _collection_name(repo_url: Optional[str] = None) -> str:
 def _get_collection(repo_url: Optional[str] = None):
     client = _get_client()
     name = _collection_name(repo_url)
-    try:
-        return client.get_collection(name)
-    except ValueError:
-        return client.create_collection(
-            name,
-            metadata={"hnsw:space": "cosine"},
-        )
+    return client.get_or_create_collection(
+        name,
+        metadata={"hnsw:space": "cosine"},
+    )
 
 
 def ingest_chunks(
@@ -148,12 +135,6 @@ def get_chunks_paginated(
 
 
 def delete_chunks_for_file(file_path: str, repo_url: Optional[str] = None) -> int:
-    """Remove all ChromaDB chunks whose metadata contains the given file path.
-
-    Chunks are matched using the ``source_file`` metadata field that is set
-    during ingestion (via /api/rag/split).  Returns the number of chunks that
-    were deleted.
-    """
     collection = _get_collection(repo_url)
     results = collection.get(where={"source_file": file_path})
     ids_to_delete = results.get("ids", [])
@@ -163,13 +144,6 @@ def delete_chunks_for_file(file_path: str, repo_url: Optional[str] = None) -> in
 
 
 def cleanup_stale_chunks(current_files: set, repo_url: Optional[str] = None) -> dict:
-    """Remove ChromaDB chunks for any file path that is no longer in the
-    provided *current_files* set.
-
-    Returns a summary dict with ``stale_paths``, ``removed_count``, and
-    ``remaining_count`` so the API response shape stays identical to the
-    previous vectorstore-based implementation.
-    """
     collection = _get_collection(repo_url)
     stored_paths = set()
     offset = 0
@@ -197,11 +171,6 @@ def upsert_chunks(
     ids: list[str],
     repo_url: Optional[str] = None,
 ) -> int:
-    """Upsert chunks into ChromaDB using chunk IDs for deduplication.
-
-    Unlike the previous delete_repo_chunks + ingest_chunks sequence, this
-    is atomic at the collection level and safe across concurrent workers.
-    """
     if not chunks:
         return 0
     if not (len(chunks) == len(metadatas) == len(ids)):
@@ -221,12 +190,6 @@ def upsert_chunks(
 
 
 def delete_repo_chunks(repo_url: str) -> int:
-    """Delete ALL chunks for a given repository.
-
-    Removes every document in the tenant-isolated collection so that
-    re-analysing the same repo replaces old chunks instead of duplicating
-    them.  Returns the number of deleted chunks.
-    """
     collection = _get_collection(repo_url)
     total = 0
     while True:
@@ -240,7 +203,6 @@ def delete_repo_chunks(repo_url: str) -> int:
 
 
 def delete_collection(repo_url: str) -> bool:
-    """Delete a per-repo collection for cleanup on repo re-analysis."""
     client = _get_client()
     name = _collection_name(repo_url)
     try:
