@@ -9,7 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { Octokit } from '@octokit/rest';
-import { createFrontendSessionCookie, requireApiKey, SESSION_COOKIE_NAME, validateSessionSecret } from './utils/authMiddleware.js';
+import { createFrontendSessionCookie, requireApiKey, SESSION_COOKIE_NAME, validateSessionSecret, isValidUuid } from './utils/authMiddleware.js';
 import rateLimit from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
 import Redis from 'ioredis';
@@ -1124,6 +1124,9 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
   if (!sessionId) {
     return res.status(400).json({ error: 'sessionId is required for chat.' });
   }
+  if (!isValidUuid(sessionId)) {
+    return res.status(400).json({ error: 'Invalid sessionId format.' });
+  }
 
   let validatedPrompt;
   try {
@@ -2005,6 +2008,9 @@ app.get('/api/analytics/trends', requireApiKey, async (req, res) => {
     };
 
     if (req.query.sessionId && typeof req.query.sessionId === 'string') {
+      if (!isValidUuid(req.query.sessionId)) {
+        return res.status(400).json({ error: 'Invalid sessionId parameter format.' });
+      }
       matchFilter.sessionId = req.query.sessionId;
     }
 

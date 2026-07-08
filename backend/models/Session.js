@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { isValidUuid } from '../utils/authMiddleware.js';
 
 const MAX_SESSION_SIZE_BYTES = 10 * 1024 * 1024;
 
@@ -78,6 +79,19 @@ const sessionSchema = new mongoose.Schema({
     type: Date,
     default: () => new Date(Date.now() + 24 * 60 * 60 * 1000),
   },
+});
+
+// Pre-findOne hook to block NoSQL injection via sessionId operator injection.
+// If the filter contains a non-string sessionId (e.g. { $ne: '' }), reject.
+sessionSchema.pre('findOne', function (next) {
+  const filter = this.getFilter();
+  if (filter && typeof filter.sessionId === 'object' && !Array.isArray(filter.sessionId)) {
+    return next(new mongoose.Error('Invalid sessionId filter: object/operator injection detected'));
+  }
+  if (filter && filter.sessionId && !isValidUuid(filter.sessionId)) {
+    return next(new mongoose.Error('Invalid sessionId format in query'));
+  }
+  next();
 });
 
 // Single TTL index on absoluteExpiry. Document is deleted the moment
