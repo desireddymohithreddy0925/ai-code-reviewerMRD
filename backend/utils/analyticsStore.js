@@ -72,7 +72,13 @@ function writeStoreAtomic(records) {
     try {
         const data = JSON.stringify(records, null, 2);
         fs.writeFileSync(TMP_PATH, data);
-        fs.renameSync(TMP_PATH, STORE_PATH);
+        try {
+            fs.renameSync(TMP_PATH, STORE_PATH);
+        } catch (renameErr) {
+            console.warn('⚠️ renameSync failed, falling back to writeFileSync:', renameErr.message);
+            fs.writeFileSync(STORE_PATH, data);
+            try { fs.unlinkSync(TMP_PATH); } catch (e) {}
+        }
         try {
             fs.writeFileSync(BACKUP_PATH, data);
         } catch (backupErr) {

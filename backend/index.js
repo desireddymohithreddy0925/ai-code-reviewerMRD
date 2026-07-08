@@ -30,6 +30,7 @@ import { DANGEROUS_PHRASES, HOMOGLYPH_MAP } from './shared/dangerousPhrases.js';
 import { verifyPort } from './utils/envVerifier.js';
 import { sanitizeRedisKey } from './utils/redisSafe.js';
 import { mockAIReview } from './utils/mockAIReview.js';
+import { loadConfigFile, applySeverityConfig } from './utils/severityConfig.js';
 import AnalysisCache from './utils/analysisCache.js';
 import mongoose from 'mongoose';
 import Analytics from './models/Analytics.js';
@@ -655,6 +656,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
     try {
       // 1. Load ignore patterns and read files
       const ignorePatterns = loadIgnorePatterns(clonePath);
+      const severityConfig = loadConfigFile(clonePath);
       const files = readFilesRecursively(clonePath, [], clonePath, ignorePatterns);
       
       if (files.length === 0) {
@@ -728,6 +730,17 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
               const duplicate = reviewResult.fileReviews[file.name].security.some(s => s.line === finding.line && s.type === finding.type);
               if (!duplicate) {
                 reviewResult.fileReviews[file.name].security.unshift(finding); // Place at top of security findings
+              }
+            });
+          }
+          
+          if (reviewResult.fileReviews[file.name]) {
+            ['bugs', 'security', 'optimization', 'styling'].forEach(cat => {
+              if (reviewResult.fileReviews[file.name][cat]) {
+                reviewResult.fileReviews[file.name][cat] = applySeverityConfig(
+                  reviewResult.fileReviews[file.name][cat],
+                  severityConfig
+                );
               }
             });
           }
@@ -1144,12 +1157,6 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
       let context = null;
       try {
         context = await Session.findOne({ sessionId });
-        if (context) {
-          // Update lastAccessedAt for activity tracking. createdAt remains
-          // unchanged so the original TTL (30 minutes from creation) is
-          // preserved, preventing indefinite session extension (see issue #672).
-          await Session.updateOne({ sessionId }, { $set: { lastAccessedAt: new Date() }, $max: { absoluteExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000) } });
-        }
       } catch (sessionErr) {
         console.warn('⚠️ Failed to retrieve session from MongoDB:', sessionErr.message);
       }
@@ -1367,18 +1374,29 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
 
       // Per-repository rate limiting
       const repoKey = `${owner}/${repo}`;
-      const now = Date.now();
-      const repoEntry = repoRequestCounts.get(repoKey) || { count: 0, windowStart: now };
-      if (now - repoEntry.windowStart > REPO_WINDOW_MS) {
-        repoEntry.count = 0;
-        repoEntry.windowStart = now;
+      let currentCount;
+      if (redisClient) {
+        const redisKey = `ratelimit:repo:${repoKey}`;
+        currentCount = await redisClient.incr(redisKey);
+        if (currentCount === 1) {
+          await redisClient.expire(redisKey, Math.ceil(REPO_WINDOW_MS / 1000));
+        }
+      } else {
+        const now = Date.now();
+        const repoEntry = repoRequestCounts.get(repoKey) || { count: 0, windowStart: now };
+        if (now - repoEntry.windowStart > REPO_WINDOW_MS) {
+          repoEntry.count = 0;
+          repoEntry.windowStart = now;
+        }
+        repoEntry.count++;
+        repoRequestCounts.set(repoKey, repoEntry);
+        currentCount = repoEntry.count;
       }
-      if (repoEntry.count >= REPO_MAX_REQUESTS) {
+
+      if (currentCount > REPO_MAX_REQUESTS) {
         console.warn(`⚠️ Rate limit exceeded for repository ${repoKey}`);
         return res.status(429).json({ error: 'Too many requests for this repository. Try again later.' });
       }
-      repoEntry.count++;
-      repoRequestCounts.set(repoKey, repoEntry);
 
       const enqueuePromise = reviewQueue.enqueue(reviewKey, { owner, repo, pullNumber, headSha }, async (item) => {
         try {
@@ -1417,7 +1435,7 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
 });
 
 // 🟢 Route: Create GitHub Issue automatically for Code Reviews
-app.post('/api/issues/create', requireApiKey, issueLimiter, async (req, res) => {
+app.post('/api/issues/create', requireApiKey, requireJsonContentType, issueLimiter, async (req, res) => {
   const { repoUrl, title, body, labels = [] } = req.body;
   const token = process.env.GITHUB_PAT;
 
