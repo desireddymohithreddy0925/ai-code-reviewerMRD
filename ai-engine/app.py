@@ -277,7 +277,8 @@ async def global_exception_handler(request, exc):
 
 def verify_api_key(x_api_key: str = Header(None)):
     expected_key = os.getenv("API_KEY")
-    if expected_key and x_api_key != expected_key:
+    import secrets
+    if expected_key and (not x_api_key or not secrets.compare_digest(x_api_key, expected_key)):
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
 # Restrict CORS to configured origins so the AI engine is not accessible from
@@ -360,7 +361,8 @@ async def require_api_key(request: Request, call_next):
         print("🚨 SEVERE: REPOSAGE_API_KEY is not set! Rejecting all requests.")
         return JSONResponse(status_code=401, content={"error": "Server misconfiguration: REPOSAGE_API_KEY not set."})
     provided = request.headers.get("x-api-key", "")
-    if not provided or provided != API_KEY:
+    import secrets
+    if not provided or not secrets.compare_digest(provided, API_KEY):
         return JSONResponse(status_code=401, content={"error": "Unauthorized: Invalid or missing API Key."})
     response = await call_next(request)
     return response
@@ -1067,7 +1069,6 @@ async def get_paginated_chunks(request: PaginatedChunksRequest):
 if __name__ == "__main__":
     import uvicorn
     reload_enabled = os.getenv("UVICORN_RELOAD", "false").lower() == "true"
-    trusted_proxies = os.getenv("TRUSTED_PROXIES", "")
-    forwarded_allow = [ip.strip() for ip in trusted_proxies.split(",") if ip.strip()] if trusted_proxies else []
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=reload_enabled, proxy_headers=True, forwarded_allow_ips=forwarded_allow or [])
+    allow_ips = os.getenv("FORWARDED_ALLOW_IPS", "127.0.0.1")
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=reload_enabled, proxy_headers=True, forwarded_allow_ips=allow_ips)
 # TODO: Issue #395 - Bug [AI Engine]: `validate_system_prompt` fails to strip multiple occurrences of dangerous phrases
