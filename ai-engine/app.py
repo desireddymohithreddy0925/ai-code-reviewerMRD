@@ -10,7 +10,7 @@ from collections import OrderedDict
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Set
 from groq import Groq
 from dotenv import load_dotenv
@@ -400,6 +400,21 @@ class AnalyzeRequest(BaseModel):
     diffOnly: Optional[bool] = False
     baseRef: Optional[str] = None
     headRef: Optional[str] = None
+
+    _REF_PATTERN = re.compile(r"^[\w./\-]+$")
+
+    @field_validator("baseRef", "headRef")
+    @classmethod
+    def _validate_ref(cls, v):
+        if v is None:
+            return v
+        if not isinstance(v, str) or len(v) > 256:
+            raise ValueError("Reference must be a string of at most 256 characters")
+        if v.startswith("-"):
+            raise ValueError("Reference must not start with a hyphen")
+        if not cls._REF_PATTERN.match(v):
+            raise ValueError("Reference contains invalid characters (allowed: alphanumeric, underscore, dot, slash, hyphen)")
+        return v
     
 
 class ChatRequest(BaseModel):
