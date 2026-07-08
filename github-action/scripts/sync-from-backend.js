@@ -8,6 +8,7 @@ const repoRoot = resolve(__dirname, '..', '..');
 const pairs = [
   { src: 'backend/utils/secretsScanner.js', dest: 'github-action/utils/secretsScanner.js' },
   { src: 'backend/utils/diffParser.js', dest: 'github-action/utils/diffParser.js' },
+  { src: 'shared-safety-config.json', dest: 'github-action/shared-safety-config.json' },
 ];
 
 let ok = true;

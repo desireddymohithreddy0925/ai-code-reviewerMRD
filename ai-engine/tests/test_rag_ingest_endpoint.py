@@ -8,10 +8,9 @@ client = TestClient(app)
 
 
 class TestRagIngestEndpoint:
-    @patch('rag.ingest_chunks')
-    @patch('rag.delete_repo_chunks')
-    def test_returns_ingested_count_from_rag_module(self, mock_delete, mock_ingest):
-        mock_ingest.return_value = 5
+    @patch('rag.upsert_chunks')
+    def test_returns_ingested_count_from_rag_module(self, mock_upsert):
+        mock_upsert.return_value = 5
         payload = {
             "repo_url": "https://github.com/test/repo",
             "chunks": [
@@ -32,10 +31,9 @@ class TestRagIngestEndpoint:
         data = response.json()
         assert data["ingested_count"] == 5
 
-    @patch('rag.ingest_chunks')
-    @patch('rag.delete_repo_chunks')
-    def test_calls_delete_repo_chunks_before_ingest(self, mock_delete, mock_ingest):
-        mock_ingest.return_value = 3
+    @patch('rag.upsert_chunks')
+    def test_calls_upsert_chunks_for_ingest(self, mock_upsert):
+        mock_upsert.return_value = 1
         payload = {
             "repo_url": "https://github.com/acme/project",
             "chunks": [
@@ -48,12 +46,11 @@ class TestRagIngestEndpoint:
         }
         response = client.post("/api/rag/ingest", json=payload)
         assert response.status_code == 200
-        mock_delete.assert_called_once_with("https://github.com/acme/project")
+        mock_upsert.assert_called_once()
 
-    @patch('rag.delete_repo_chunks')
-    @patch('rag.ingest_chunks')
-    def test_returns_correct_ingested_count_for_large_batch(self, mock_delete, mock_ingest):
-        mock_ingest.return_value = 1
+    @patch('rag.upsert_chunks')
+    def test_returns_correct_ingested_count_for_large_batch(self, mock_upsert):
+        mock_upsert.return_value = 1
         payload = {
             "repo_url": "https://github.com/org/repo",
             "chunks": [
@@ -66,13 +63,12 @@ class TestRagIngestEndpoint:
         }
         response = client.post("/api/rag/ingest", json=payload)
         assert response.status_code == 200
-        mock_ingest.assert_called_once()
+        mock_upsert.assert_called_once()
         data = response.json()
         assert data["ingested_count"] == 1
 
-    @patch('rag.ingest_chunks')
-    @patch('rag.delete_repo_chunks')
-    def test_returns_422_when_repo_url_missing(self, mock_delete, mock_ingest):
+    @patch('rag.upsert_chunks')
+    def test_returns_422_when_repo_url_missing(self, mock_upsert):
         payload = {
             "chunks": [
                 {
@@ -85,9 +81,8 @@ class TestRagIngestEndpoint:
         response = client.post("/api/rag/ingest", json=payload)
         assert response.status_code == 422
 
-    @patch('rag.ingest_chunks')
-    @patch('rag.delete_repo_chunks')
-    def test_returns_422_when_chunks_missing(self, mock_delete, mock_ingest):
+    @patch('rag.upsert_chunks')
+    def test_returns_422_when_chunks_missing(self, mock_upsert):
         payload = {
             "repo_url": "https://github.com/test/repo",
         }

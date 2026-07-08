@@ -11,13 +11,16 @@ class TestCleanupStaleChunks:
         with patch('rag._get_collection') as mock_get_col, \
              patch('rag.delete_chunks_for_file') as mock_delete:
             mock_collection = MagicMock()
-            mock_collection.get.return_value = {
-                "metadatas": [
-                    {"source_file": "a.py"},
-                    {"source_file": "b.py"},
-                    {"source_file": "c.py"},
-                ]
-            }
+            mock_collection.get.side_effect = [
+                {
+                    "metadatas": [
+                        {"source_file": "a.py"},
+                        {"source_file": "b.py"},
+                        {"source_file": "c.py"},
+                    ]
+                },
+                {"metadatas": []}
+            ]
             mock_collection.count.return_value = 5
             mock_get_col.return_value = mock_collection
             mock_delete.return_value = 1
@@ -35,13 +38,16 @@ class TestCleanupStaleChunks:
         with patch('rag._get_collection') as mock_get_col, \
              patch('rag.delete_chunks_for_file') as mock_delete:
             mock_collection = MagicMock()
-            mock_collection.get.return_value = {
-                "metadatas": [
-                    {"source_file": "x.py"},
-                    {"source_file": "y.py"},
-                    {"source_file": "z.py"},
-                ]
-            }
+            mock_collection.get.side_effect = [
+                {
+                    "metadatas": [
+                        {"source_file": "x.py"},
+                        {"source_file": "y.py"},
+                        {"source_file": "z.py"},
+                    ]
+                },
+                {"metadatas": []}
+            ]
             mock_collection.count.return_value = 3
             mock_get_col.return_value = mock_collection
             mock_delete.side_effect = [2, 3, 1]
@@ -56,12 +62,15 @@ class TestCleanupStaleChunks:
         with patch('rag._get_collection') as mock_get_col, \
              patch('rag.delete_chunks_for_file') as mock_delete:
             mock_collection = MagicMock()
-            mock_collection.get.return_value = {
-                "metadatas": [
-                    {"source_file": "a.py"},
-                    {"source_file": "b.py"},
-                ]
-            }
+            mock_collection.get.side_effect = [
+                {
+                    "metadatas": [
+                        {"source_file": "a.py"},
+                        {"source_file": "b.py"},
+                    ]
+                },
+                {"metadatas": []}
+            ]
             mock_collection.count.return_value = 2
             mock_get_col.return_value = mock_collection
 
@@ -90,13 +99,16 @@ class TestCleanupStaleChunks:
         with patch('rag._get_collection') as mock_get_col, \
              patch('rag.delete_chunks_for_file') as mock_delete:
             mock_collection = MagicMock()
-            mock_collection.get.return_value = {
-                "metadatas": [
-                    {"source_file": "a.py"},
-                    {},  # missing source_file
-                    {"other": "field"},
-                ]
-            }
+            mock_collection.get.side_effect = [
+                {
+                    "metadatas": [
+                        {"source_file": "a.py"},
+                        {},  # missing source_file
+                        {"other": "field"},
+                    ]
+                },
+                {"metadatas": []}
+            ]
             mock_collection.count.return_value = 3
             mock_get_col.return_value = mock_collection
             mock_delete.return_value = 1
@@ -111,7 +123,10 @@ class TestCleanupStaleChunks:
         with patch('rag._get_collection') as mock_get_col, \
              patch('rag.delete_chunks_for_file') as mock_delete:
             mock_collection = MagicMock()
-            mock_collection.get.return_value = {"metadatas": [{"source_file": "x.py"}]}
+            mock_collection.get.side_effect = [
+                {"metadatas": [{"source_file": "x.py"}]},
+                {"metadatas": []}
+            ]
             mock_collection.count.return_value = 1
             mock_get_col.return_value = mock_collection
             mock_delete.return_value = 1

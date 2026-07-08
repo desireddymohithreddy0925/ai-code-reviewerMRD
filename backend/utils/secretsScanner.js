@@ -21,7 +21,7 @@ export const rules = [
   },
   {
     type: "Database Connection Credentials",
-    regex: /(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql):\/\/[a-zA-Z0-9_]{1,32}:[a-zA-Z0-9_]{1,32}@/gi,
+    regex: /(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql):\/\/[a-zA-Z0-9_]+:[a-zA-Z0-9_]+@/gi,
     description: "Database connection credentials detected directly in code. Exposes the database tables to global read/write breaches."
   },
   {
@@ -51,7 +51,7 @@ export const rules = [
   },
   {
     type: "JWT Token Check",
-    regex: /\beyJ[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.[A-Za-z0-9-_.+/=]+\b/g,
+    regex: /\beyJ[A-Za-z0-9_\-=]+\.[A-Za-z0-9_\-=]+\.[A-Za-z0-9_\-=]+\b/g,
     description: "Potential hardcoded JSON Web Token (JWT) detected. Exposing JWT credentials allows authentication bypass or identity impersonation."
   },
   {
@@ -76,20 +76,28 @@ export const rules = [
   }
 ];
 
-const MAX_LINE_LENGTH = (n => Number.isFinite(n) ? n : 2000)(parseInt(process.env.SECRETS_MAX_LINE_LENGTH, 10));
-const SCAN_TIMEOUT_MS = (n => Number.isFinite(n) ? n : 100)(parseInt(process.env.SECRETS_SCAN_TIMEOUT_MS, 10));
+function getMaxLineLength() {
+  const n = parseInt(process.env.SECRETS_MAX_LINE_LENGTH, 10);
+  return Number.isFinite(n) ? n : 2000;
+}
+function getScanTimeoutMs() {
+  const n = parseInt(process.env.SECRETS_SCAN_TIMEOUT_MS, 10);
+  return Number.isFinite(n) ? n : 100;
+}
 
 export function scanSecrets(fileContent) {
   if (typeof fileContent !== 'string') return [];
   const findings = [];
   const lines = fileContent.split('\n');
   const startTime = Date.now();
+  const maxLineLength = getMaxLineLength();
+  const scanTimeoutMs = getScanTimeoutMs();
   for (let idx = 0; idx < lines.length; idx++) {
-    if (Date.now() - startTime > SCAN_TIMEOUT_MS) break;
+    if (Date.now() - startTime > scanTimeoutMs) break;
     const line = lines[idx];
-    if (line.length > MAX_LINE_LENGTH) continue;
+    if (line.length > maxLineLength) continue;
     for (const rule of rules) {
-      if (Date.now() - startTime > SCAN_TIMEOUT_MS) break;
+      if (Date.now() - startTime > scanTimeoutMs) break;
       rule.regex.lastIndex = 0;
       let match;
       while ((match = rule.regex.exec(line)) !== null) {
@@ -110,7 +118,10 @@ export function scanSecrets(fileContent) {
   return findings;
 }
 
-const MAX_CHANGES_PROCESSED = (n => Number.isFinite(n) ? n : 500)(parseInt(process.env.SECRETS_MAX_CHANGES, 10));
+function getMaxChangesProcessed() {
+  const n = parseInt(process.env.SECRETS_MAX_CHANGES, 10);
+  return Number.isFinite(n) ? n : 500;
+}
 
 export function scanSecretsInChanges(changes) {
   if (!Array.isArray(changes)) return { findings: [], truncated: false, totalChanges: 0, skippedReason: null };
@@ -119,38 +130,51 @@ export function scanSecretsInChanges(changes) {
   let changesProcessed = 0;
   let stoppedEarly = false;
   let reason = null;
+  const maxChanges = getMaxChangesProcessed();
+  const maxLineLen = getMaxLineLength();
+  const timeoutMs = getScanTimeoutMs();
 
   for (const change of changes) {
-    if (changesProcessed >= MAX_CHANGES_PROCESSED) {
+    if (changesProcessed >= maxChanges) {
       stoppedEarly = true;
-      reason = `Reached maximum of ${MAX_CHANGES_PROCESSED} changes processed.`;
+      reason = `Reached maximum of ${maxChanges} changes processed.`;
       break;
     }
-    if (Date.now() - startTime > SCAN_TIMEOUT_MS) {
+    if (Date.now() - startTime > timeoutMs) {
       stoppedEarly = true;
-      reason = `Scan timeout of ${SCAN_TIMEOUT_MS}ms exceeded.`;
+      reason = `Scan timeout of ${timeoutMs}ms exceeded.`;
       break;
     }
     changesProcessed++;
     if (!change || typeof change.content !== 'string') continue;
-    if (change.content.length > MAX_LINE_LENGTH) continue;
-    for (const rule of rules) {
-      if (Date.now() - startTime > SCAN_TIMEOUT_MS) {
+    const lines = change.content.split('\n');
+    const baseLine = typeof change.line === 'number' ? change.line : 1;
+    for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+      if (Date.now() - startTime > timeoutMs) {
         stoppedEarly = true;
-        reason = `Scan timeout of ${SCAN_TIMEOUT_MS}ms exceeded.`;
+        reason = `Scan timeout of ${timeoutMs}ms exceeded.`;
         break;
       }
-      rule.regex.lastIndex = 0;
-      let match;
-      while ((match = rule.regex.exec(change.content)) !== null) {
-        findings.push({
-          line: change.line,
-          column: match.index,
-          type: "security",
-          comment: `### 🛡️ Hardcoded Secret Warning\n\nI have detected a hardcoded **${rule.type}** on line **${change.line}**.\n\n#### 💡 Actionable Suggestion\nMove this credential immediately to a protected environment variable (e.g. GitHub Secrets or \`.env\`) and load it dynamically at runtime. DO NOT commit plain secrets to public Git repositories!`
-        });
-        if (rule.regex.lastIndex === match.index) {
-          rule.regex.lastIndex++;
+      const lineContent = lines[lineIdx];
+      if (lineContent.length > maxLineLen) continue;
+      for (const rule of rules) {
+        if (Date.now() - startTime > timeoutMs) {
+          stoppedEarly = true;
+          reason = `Scan timeout of ${timeoutMs}ms exceeded.`;
+          break;
+        }
+        rule.regex.lastIndex = 0;
+        let match;
+        while ((match = rule.regex.exec(lineContent)) !== null) {
+          findings.push({
+            line: baseLine + lineIdx,
+            column: match.index,
+            type: "security",
+            comment: `### 🛡️ Hardcoded Secret Warning\n\nI have detected a hardcoded **${rule.type}** on line **${baseLine + lineIdx}**.\n\n#### 💡 Actionable Suggestion\nMove this credential immediately to a protected environment variable (e.g. GitHub Secrets or \`.env\`) and load it dynamically at runtime. DO NOT commit plain secrets to public Git repositories!`
+          });
+          if (rule.regex.lastIndex === match.index) {
+            rule.regex.lastIndex++;
+          }
         }
       }
     }

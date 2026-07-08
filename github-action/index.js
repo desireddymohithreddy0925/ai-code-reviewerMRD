@@ -21,30 +21,15 @@ function cleanAndParseJSON(responseText) {
   }
 }
 
-// Keep in sync with shared-safety-config.json (single source of truth)
-const DANGEROUS_PHRASES = [
-  'ignore all', 'ignore all previous instructions', 'ignore all instructions',
-  'ignore previous', 'ignore above', 'ignore the above',
-  'ignore previous instructions',
-  'forget all', 'forget all previous', 'forget previous', 'forget your',
-  'you are not', 'you will now', 'you must now', 'you have been',
-  'you are programmed',
-  'from now on',
-  'override all', 'override protocol',
-  'system override',
-  'new directive',
-  'protocol change',
-  'disregard', 'disregard all', 'disregard all previous',
-  'do not follow',
-  'instead follow',
-  'roleplay mode',
-  'real instruction', 'actual instruction',
-  'replace all',
-  'disobey', 'unauthorized', 'breach', 'bypass',
-  'your true purpose',
-  'listen to me',
-  'disable all',
-];
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const safetyConfigPath = resolve(__dirname, 'shared-safety-config.json');
+const safetyConfig = JSON.parse(readFileSync(safetyConfigPath, 'utf8'));
+const DANGEROUS_PHRASES = safetyConfig.dangerous_phrases;
 
 function sanitizeDiffContent(content) {
   let sanitized = content;
@@ -62,6 +47,15 @@ async function run() {
     const groqApiKey = core.getInput('groq-api-key', { required: true });
     const excludePathsInput = core.getInput('exclude-paths') || '';
     const includeExtensionsInput = core.getInput('include-extensions') || '';
+    if (includeExtensionsInput) {
+      const rawExtensions = includeExtensionsInput.split(',').map(e => e.trim()).filter(Boolean);
+      for (const ext of rawExtensions) {
+        if (!/^\.[a-zA-Z0-9]+$/.test(ext)) {
+          core.setFailed(`Invalid file extension: "${ext}". Extensions must start with a dot and contain only alphanumeric characters (e.g., .js, .tsx).`);
+          return;
+        }
+      }
+    }
     const maxTokens = parseInt(core.getInput('max-tokens') || '4096', 10);
     const autoApprove = core.getInput('auto-approve')?.toLowerCase() === 'true';
 
@@ -211,12 +205,13 @@ If no issues are found, reply with: { "reviews": [] }`;
           for (const issue of issues) {
             const changeExists = file.changes.some(c => c.line === issue.line);
             if (changeExists) {
-              const alreadyFlagged = commentsToPost.some(c => c.path === file.path && c.line === issue.line);
+              const bodyText = `<!-- RepoSage Review Comment -->\n${issue.comment}`;
+              const alreadyFlagged = commentsToPost.some(c => c.path === file.path && c.line === issue.line && c.body === bodyText);
               if (!alreadyFlagged) {
                 commentsToPost.push({
                   path: file.path,
                   line: issue.line,
-                  body: `<!-- RepoSage Review Comment -->\n${issue.comment}`
+                  body: bodyText
                 });
               }
             } else {
@@ -253,10 +248,14 @@ Please review my feedback and suggestions below. Happy coding! 🚀
 ⭐ **Support RepoSage!** If you find this AI helpful, please consider giving us a **Star** 🌟 on GitHub! Your support helps us win GSSoC '26 and grow professionally!`,
         comments: commentsToPost
       });
-    } else if (reviewedFilesCount > 0 && successfulReviewsCount > 0 && failedReviewsCount === 0) {
-      console.log('🎉 No code issues or recommendations found. Posting positive review status...');
+    } else if (reviewedFilesCount > 0 && successfulReviewsCount > 0) {
+      console.log('🎉 No code issues or recommendations found in successful reviews. Posting review status...');
 
-      const reviewEvent = autoApprove ? 'APPROVE' : 'COMMENT';
+      const reviewEvent = (autoApprove && failedReviewsCount === 0) ? 'APPROVE' : 'COMMENT';
+      const issuesText = failedReviewsCount === 0 
+        ? `🎉 Outstanding work! I have scanned the PR and found **0 issues**. Your changes look pristine, clean, and optimized! Approved! 🚀`
+        : `⚠️ I have scanned **${successfulReviewsCount}** files and found **0 issues** in them. However, **${failedReviewsCount}** files could not be reviewed due to errors.`;
+        
       await octokit.rest.pulls.createReview({
         owner,
         repo,
@@ -266,24 +265,28 @@ Please review my feedback and suggestions below. Happy coding! 🚀
 
 🧐 **I have professionally reviewed and checked all your changes** to ensure they meet our project's high quality standards.
 
-🎉 Outstanding work! I have scanned the PR and found **0 issues**. Your changes look pristine, clean, and optimized! Approved! 🚀
+${issuesText}
 
 ---
 ⭐ **Support RepoSage!** If you find this AI helpful, please consider giving us a **Star** 🌟 on GitHub! Your support helps us win GSSoC '26 and grow professionally!`
       });
 
-      try {
-        await octokit.rest.issues.addLabels({
-          owner,
-          repo,
-          issue_number: pullNumber,
-          labels: ['gssoc:approved']
-        });
-        console.log('✅ Added gssoc:approved label to PR');
-      } catch (err) {
-        console.warn('⚠️ Could not add gssoc:approved label:', err.message);
+      if (autoApprove && failedReviewsCount === 0) {
+        try {
+          await octokit.rest.issues.addLabels({
+            owner,
+            repo,
+            issue_number: pullNumber,
+            labels: ['gssoc:approved']
+          });
+          console.log('✅ Added gssoc:approved label to PR');
+        } catch (err) {
+          console.warn('⚠️ Could not add gssoc:approved label:', err.message);
+        }
       }
-    } else {
+    }
+
+    if (failedReviewsCount > 0) {
       core.setFailed(
         `Review incomplete: ${successfulReviewsCount} file review(s) succeeded and ${failedReviewsCount} failed.`
       );

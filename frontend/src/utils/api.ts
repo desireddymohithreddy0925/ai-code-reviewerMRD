@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const API_BASE_URL = (window as any).__RUNTIME_API_URL__ || import.meta.env.VITE_API_URL || "http://localhost:5000";
 let sessionRequest: Promise<void> | null = null;
 let csrfToken: string | null = null;
 
@@ -143,12 +143,3 @@ export const getReviewHistory = async () => {
   return response.json();
 };
 
-export const getFixSuggestions = async (findingId: string) => {
-  const response = await apiFetch(`/api/fix-suggestions/${findingId}`);
-
-  if (!response.ok) {
-    throw new Error("Failed to fetch AI fix suggestions");
-  }
-
-  return response.json();
-};

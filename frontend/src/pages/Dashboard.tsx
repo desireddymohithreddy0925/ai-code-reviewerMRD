@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useDebounce } from '../hooks/useDebounce';
 import { useStore, ChatMessage } from '../store/useStore';
 import SettingsModal from "../components/SettingsModal";
-import { MetricsChart } from '../components/MetricsChart';
+import DashboardFooter from "../components/DashboardFooter";
+import KeyboardShortcutsHelp from "../components/KeyboardShortcutsHelp";
 import { VulnerabilitiesBarChart } from '../components/VulnerabilitiesBarChart';
 import MarkdownErrorBoundary from '../components/MarkdownErrorBoundary';
 import CopyToClipboardButton from "../components/CopyToClipboardButton";
@@ -33,30 +34,18 @@ import {
   ChevronDown,
   Folder,
   FolderOpen,
+  FileText,
 } from "lucide-react";
-import { handleMarkdownExport, handleHtmlExport } from "../utils/exportUtils";
-import mermaid from "mermaid";
-import { sanitizeMermaidOutput } from "../utils/sanitize";
+import { handleMarkdownExport, handleHtmlExport, handlePdfExport } from "../utils/exportUtils";
+import { sanitizeMermaidOutput, sanitizeAuditEntry, sanitizeForStorage } from "../utils/sanitize";
+// Path resolves correctly: pages/ -> ../utils/api -> frontend/src/utils/api
 import { apiFetch } from "../utils/api";
 
-// Initialize Mermaid outside the component to avoid multiple initializations
-try {
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: window.matchMedia("(prefers-color-scheme: light)").matches ? "base" : "dark",
-    securityLevel: "strict",
-    themeVariables: {
-      background: "#0f172a",
-      primaryColor: "#3b82f6",
-      primaryTextColor: "#e5e7eb",
-      lineColor: "#c084fc",
-      nodeBorder: "#3b82f6",
-      mainBkg: "#1e293b",
-    },
-  });
-} catch (e) {
-  console.error("Failed to initialize Mermaid:", e);
-}
+const LazyMetricsChart = React.lazy(() =>
+  import('../components/MetricsChart').then((module) => ({ default: module.MetricsChart }))
+);
+
+
 
 const getSavedAiSettings = () => {
   try {
@@ -156,7 +145,7 @@ function MermaidViewer({ chart, repoName }: MermaidViewerProps) {
     const renderChart = async () => {
       try {
         setSvg("");
-        let cleanChart = chart
+        let cleanChart = sanitizeForStorage(chart)
           .replace(/```mermaid/g, "")
           .replace(/```/g, "")
           .trim();
@@ -173,11 +162,32 @@ function MermaidViewer({ chart, repoName }: MermaidViewerProps) {
           cleanChart = `graph TD\n${cleanChart}`;
         }
 
+        const mermaidModule = await import("mermaid");
+        const mermaid = mermaidModule.default;
+
+        try {
+          mermaid.initialize({
+            startOnLoad: false,
+            theme: document.documentElement.getAttribute("data-theme") === "light" ? "base" : "dark",
+            securityLevel: "strict",
+            themeVariables: {
+              background: "#0f172a",
+              primaryColor: "#3b82f6",
+              primaryTextColor: "#e5e7eb",
+              lineColor: "#c084fc",
+              nodeBorder: "#3b82f6",
+              mainBkg: "#1e293b",
+            },
+          });
+        } catch (e) {
+          console.error("Failed to initialize Mermaid:", e);
+        }
+
         const { svg: renderedSvg } = await mermaid.render(uniqueId, cleanChart);
         if (cancelled) return;
         const sanitized = sanitizeMermaidOutput(renderedSvg);
         setSvg(sanitized);
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (cancelled) return;
         console.error("Mermaid Render Error:", err);
         setError(
@@ -469,10 +479,25 @@ export default function Dashboard() {
     return () => document.removeEventListener("keydown", handler);
   }, [apiError]);
 
+  const isValidAuditEntry = (entry: unknown): entry is AuditHistoryEntry => {
+    if (!entry || typeof entry !== 'object') return false;
+    const e = entry as Record<string, unknown>;
+    return typeof e.id === 'string' &&
+      typeof e.repoUrl === 'string' &&
+      typeof e.repoName === 'string' &&
+      typeof e.auditedAt === 'string' &&
+      typeof e.totalFindings === 'number' &&
+      typeof e.overallGrade === 'string' &&
+      e.response !== null && typeof e.response === 'object';
+  };
+
   const [auditHistory, setAuditHistory] = useState<AuditHistoryEntry[]>(() => {
     try {
       const savedHistory = localStorage.getItem('reposage_audit_history');
-      return savedHistory ? JSON.parse(savedHistory) : [];
+      if (!savedHistory) return [];
+      const parsed = JSON.parse(savedHistory);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(isValidAuditEntry);
     } catch (err) {
       console.error('Failed to load audit history:', err);
       return [];
@@ -737,12 +762,42 @@ export default function Dashboard() {
       } else {
         throw new Error("Response did not contain issue URL");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      alert(`Error creating issue: ${err.message}`);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      alert(`Error creating issue: ${errorMessage}`);
     } finally {
       setCreatingIssues((prev) => ({ ...prev, [itemKey]: false }));
     }
+  };
+
+  const safeSetItem = (key: string, value: string, maxRetries = 2): boolean => {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        localStorage.setItem(key, value);
+        return true;
+      } catch (e: unknown) {
+        if (!(e instanceof DOMException && e.name === 'QuotaExceededError')) {
+          console.warn('Failed to save to localStorage:', e);
+          return false;
+        }
+        if (attempt < maxRetries) {
+          // Evict oldest audit and chat entries to free space
+          for (const storageKey of ['reposage_audit_history', CHAT_HISTORY_KEY]) {
+            try {
+              const raw = localStorage.getItem(storageKey);
+              if (!raw) continue;
+              const data = JSON.parse(raw);
+              if (Array.isArray(data) && data.length > 0) {
+                const evicted = data.slice(data.length <= 1 ? 0 : 1);
+                localStorage.setItem(storageKey, JSON.stringify(evicted));
+              }
+            } catch { /* ignore corrupt entries */ }
+          }
+        }
+      }
+    }
+    return false;
   };
 
   // AI Chat with Repository States
@@ -794,7 +849,7 @@ export default function Dashboard() {
     setChatInput("");
     setChatHistory((prev) => {
       const updated = [...prev, { role: "user" as const, content: userMessage }];
-      try { localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(truncateChatHistory(updated))); } catch (e) { if (e instanceof DOMException && e.name === 'QuotaExceededError') setStorageWarning(true); }
+      if (!safeSetItem(CHAT_HISTORY_KEY, JSON.stringify(truncateChatHistory(updated)))) setStorageWarning(true);
       return updated;
     });
     setIsChatLoading(true);
@@ -805,15 +860,16 @@ export default function Dashboard() {
       const response = await apiFetch("/api/chat", {
         method: "POST",
         body: JSON.stringify({
-          message: userMessage,
-          history: truncateChatHistory(chatHistory),
-          model: selectedModel,
-          temperature: chatAiSettings.temperature ?? 0.4,
-          maxTokens: chatAiSettings.maxTokens ?? 2048,
-          sessionId,
-          useRag,
-          systemPrompt: chatAiSettings.systemPrompt ?? "",
-        }),
+            message: userMessage,
+            history: truncateChatHistory(chatHistory),
+            model: selectedModel,
+            temperature: chatAiSettings.temperature ?? 0.4,
+            maxTokens: chatAiSettings.maxTokens ?? 2048,
+            sessionId,
+            sessionOwnerToken: localStorage.getItem("sessionOwnerToken") || "",
+            useRag,
+            systemPrompt: chatAiSettings.systemPrompt ?? "",
+          }),
       });
 
       if (!response.ok) {
@@ -827,12 +883,12 @@ export default function Dashboard() {
           ...prev,
           { role: "assistant" as const, content: data.response, sources: sources.length > 0 ? sources : undefined },
         ]);
-        try { localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(updated)); } catch (e) { if (e instanceof DOMException && e.name === 'QuotaExceededError') setStorageWarning(true); }
+        if (!safeSetItem(CHAT_HISTORY_KEY, JSON.stringify(updated))) setStorageWarning(true);
         return updated;
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      let errMsg = err.message || "Chat service unavailable.";
+      let errMsg = (err instanceof Error ? err.message : String(err)) || "Chat service unavailable.";
       if (errMsg.includes("Failed to fetch") || errMsg.toLowerCase().includes("offline")) {
         errMsg = "Backend AI Engine offline. Please ensure the server is running.";
       } else if (errMsg.toLowerCase().includes("api key") || errMsg.toLowerCase().includes("unauthorized")) {
@@ -945,7 +1001,8 @@ export default function Dashboard() {
       ].slice(0, 5); // reduced to 5 to save space
 
       try {
-        localStorage.setItem('reposage_audit_history', JSON.stringify(updatedHistory));
+        const sanitized = updatedHistory.map((entry) => sanitizeAuditEntry(entry as unknown as Record<string, unknown>));
+        localStorage.setItem('reposage_audit_history', JSON.stringify(sanitized));
       } catch (e: any) {
         if (e instanceof DOMException && e.name === 'QuotaExceededError') {
           console.warn('localStorage quota exceeded — audit history not saved.');
@@ -1044,9 +1101,9 @@ export default function Dashboard() {
       if (filesList.length > 0) {
         setSelectedFile(filesList[0]);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      let errMsg = err.message || "Could not connect to the backend server. Make sure node backend is running on port 5000.";
+      let errMsg = (err instanceof Error ? err.message : String(err)) || "Could not connect to the backend server. Make sure node backend is running on port 5000.";
       if (errMsg.includes("Failed to fetch") || errMsg.toLowerCase().includes("offline")) {
         errMsg = "Backend AI Engine offline. Please ensure the server is running.";
       } else if (errMsg.toLowerCase().includes("api key") || errMsg.toLowerCase().includes("unauthorized") || errMsg.includes("not configured")) {
@@ -1070,9 +1127,10 @@ export default function Dashboard() {
     element.href = URL.createObjectURL(file);
     element.download = "GENERATED_README.md";
     document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-  };
+      element.click();
+      document.body.removeChild(element);
+      URL.revokeObjectURL(element.href);
+    };
 
   const chatInputEmpty = !chatInput.trim();
 
@@ -2363,6 +2421,27 @@ export default function Dashboard() {
                   >
                     <FileDown size={14} /> Export Markdown
                   </button>
+                  <button
+                    onClick={() => analysisResult && handlePdfExport(analysisResult.repoName, analysisResult.analysis, apiFetch)}
+                    style={{
+                      background: "rgba(220, 38, 38, 0.1)",
+                      border: "1px solid rgba(220, 38, 38, 0.3)",
+                      color: "#f87171",
+                      borderRadius: "6px",
+                      padding: "8px 16px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      transition: "all 0.2s ease-in-out",
+                    }}
+                    className="hover:bg-red-500/20"
+                    title="Export the complete audit report as PDF"
+                  >
+                    <FileText size={14} /> Export PDF
+                  </button>
                 </div>
               </div>
 
@@ -3554,7 +3633,9 @@ export default function Dashboard() {
                                     </div>
                                   </div>
                                 </div>
-                                <MetricsChart reviewId={sessionId} />
+                                <React.Suspense fallback={<div style={{ height: 350, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--subtext-color)', fontSize: '12px' }}>Loading codebase metrics...</div>}>
+                                  <LazyMetricsChart sessionId={sessionId} />
+                                </React.Suspense>
                               </div>
                             );
                           })()
@@ -4454,88 +4535,9 @@ export default function Dashboard() {
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} />
       )}
-      {showShortcutsHelp && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.55)",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            zIndex: 9999,
-          }}
-          onClick={() => setShowShortcutsHelp(false)}
-        >
-          <div
-            className="glass-panel"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "400px",
-              padding: "24px",
-              borderRadius: "12px",
-              background: "var(--panel-bg)",
-              color: "var(--text-color)",
-              border: "1px solid var(--border-color)",
-            }}
-          >
-            <h2 style={{ marginTop: 0 }}>Keyboard Shortcuts</h2>
-            <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: "14px" }}>
-              <li style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                <span>Focus Search</span>
-                <kbd style={{ background: "#374151", padding: "2px 6px", borderRadius: "4px" }}>Ctrl + K</kbd>
-              </li>
-              <li style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                <span>Close Modals / Blur Input</span>
-                <kbd style={{ background: "#374151", padding: "2px 6px", borderRadius: "4px" }}>Esc</kbd>
-              </li>
-              <li style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                <span>Show Shortcuts</span>
-                <kbd style={{ background: "#374151", padding: "2px 6px", borderRadius: "4px" }}>?</kbd>
-              </li>
-            </ul>
-            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "24px" }}>
-              <button
-                onClick={() => setShowShortcutsHelp(false)}
-                style={{
-                  background: "#2563eb",
-                  color: "#fff",
-                  border: "none",
-                  padding: "8px 16px",
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                }}
-              >
-                Got it
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {showShortcutsHelp && <KeyboardShortcutsHelp onClose={() => setShowShortcutsHelp(false)} />}
 
-      {/* 🚀 Sleek Footer */}
-      <footer
-        style={{
-          marginTop: "auto",
-          background: "rgba(15, 23, 42, 0.4)",
-          padding: "12px 24px",
-          borderTop: "1px solid rgba(255,255,255,0.05)",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          fontSize: "11px",
-          color: "#9ca3af",
-        }}
-      >
-        <span>
-          RepoSage AI © 2026. Made with 💜 for GirlScript Summer of Code
-          (GSSoC).
-        </span>
-        <div style={{ display: "flex", gap: "16px" }}>
-          <span>Mentors: Kalyan Reddy Bhoompally</span>
-          <span>Status: Production MVP Ready</span>
-        </div>
-      </footer>
+      <DashboardFooter />
     </div>
   );
 }

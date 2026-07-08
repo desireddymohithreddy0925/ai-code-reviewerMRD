@@ -11,6 +11,9 @@ _COLLECTION_NAME = os.getenv("CHROMA_COLLECTION", "reposage_code_chunks")
 _PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./chroma_data")
 _CHROMA_HOST = os.getenv("CHROMA_HOST", "")
 _CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
+_CHROMA_API_KEY = os.getenv("CHROMA_API_KEY", "")
+_CHROMA_AUTH_PROVIDER = os.getenv("CHROMA_AUTH_PROVIDER", "")
+_MAX_INGEST_CHUNKS = int(os.getenv("MAX_INGEST_CHUNKS", "500"))
 
 _client = None
 _client_lock = threading.Lock()
@@ -22,10 +25,14 @@ def _get_client() -> chromadb.ClientAPI:
         with _client_lock:
             if _client is None:
                 if _CHROMA_HOST:
+                    settings_dict = {"anonymized_telemetry": False}
+                    if _CHROMA_AUTH_PROVIDER and _CHROMA_API_KEY:
+                        settings_dict["chroma_client_auth_provider"] = _CHROMA_AUTH_PROVIDER
+                        settings_dict["chroma_client_auth_credentials"] = _CHROMA_API_KEY
                     _client = chromadb.HttpClient(
                         host=_CHROMA_HOST,
                         port=_CHROMA_PORT,
-                        settings=Settings(anonymized_telemetry=False),
+                        settings=Settings(**settings_dict),
                     )
                 else:
                     _client = chromadb.PersistentClient(
@@ -36,16 +43,6 @@ def _get_client() -> chromadb.ClientAPI:
 
 
 def _collection_name(repo_url: Optional[str] = None) -> str:
-    """Return a tenant-isolated collection name.
-
-    When *repo_url* is provided, the collection is namespaced with a
-    deterministic hash so that each repository's vectors live in a separate
-    ChromaDB collection.  This prevents cross-user / cross-repo code snippet
-    leakage (tenant isolation).
-
-    When *repo_url* is ``None``, the base ``_COLLECTION_NAME`` is returned
-    for backward compatibility.
-    """
     if repo_url:
         suffix = hashlib.sha256(repo_url.encode()).hexdigest()[:12]
         return f"{_COLLECTION_NAME}_{suffix}"
@@ -55,13 +52,10 @@ def _collection_name(repo_url: Optional[str] = None) -> str:
 def _get_collection(repo_url: Optional[str] = None):
     client = _get_client()
     name = _collection_name(repo_url)
-    try:
-        return client.get_collection(name)
-    except ValueError:
-        return client.create_collection(
-            name,
-            metadata={"hnsw:space": "cosine"},
-        )
+    return client.get_or_create_collection(
+        name,
+        metadata={"hnsw:space": "cosine"},
+    )
 
 
 def ingest_chunks(
@@ -74,6 +68,9 @@ def ingest_chunks(
         return 0
     if not (len(chunks) == len(metadatas) == len(ids)):
         raise ValueError("chunks, metadatas, and ids must have the same length")
+    chunks = chunks[:_MAX_INGEST_CHUNKS]
+    metadatas = metadatas[:_MAX_INGEST_CHUNKS]
+    ids = ids[:_MAX_INGEST_CHUNKS]
     collection = _get_collection(repo_url)
     embeddings = embed_texts(chunks)
     collection.add(
@@ -144,12 +141,6 @@ def get_chunks_paginated(
 
 
 def delete_chunks_for_file(file_path: str, repo_url: Optional[str] = None) -> int:
-    """Remove all ChromaDB chunks whose metadata contains the given file path.
-
-    Chunks are matched using the ``source_file`` metadata field that is set
-    during ingestion (via /api/rag/split).  Returns the number of chunks that
-    were deleted.
-    """
     collection = _get_collection(repo_url)
     results = collection.get(where={"source_file": file_path})
     ids_to_delete = results.get("ids", [])
@@ -159,21 +150,16 @@ def delete_chunks_for_file(file_path: str, repo_url: Optional[str] = None) -> in
 
 
 def cleanup_stale_chunks(current_files: set, repo_url: Optional[str] = None) -> dict:
-    """Remove ChromaDB chunks for any file path that is no longer in the
-    provided *current_files* set.
-
-    Returns a summary dict with ``stale_paths``, ``removed_count``, and
-    ``remaining_count`` so the API response shape stays identical to the
-    previous vectorstore-based implementation.
-    """
     collection = _get_collection(repo_url)
-    # Fetch all stored source_file values without retrieving embeddings
-    all_results = collection.get(include=["metadatas"])
-    stored_paths = {
-        m.get("source_file")
-        for m in (all_results.get("metadatas") or [])
-        if m.get("source_file")
-    }
+    stored_paths = set()
+    offset = 0
+    while True:
+        batch = collection.get(limit=_MAX_INGEST_CHUNKS, offset=offset, include=["metadatas"])
+        metadatas = batch.get("metadatas") or []
+        if not metadatas:
+            break
+        stored_paths.update(m.get("source_file") for m in metadatas if m and m.get("source_file"))
+        offset += len(metadatas)
     stale_paths = stored_paths - current_files
     removed_count = 0
     for stale_path in stale_paths:
@@ -191,15 +177,13 @@ def upsert_chunks(
     ids: list[str],
     repo_url: Optional[str] = None,
 ) -> int:
-    """Upsert chunks into ChromaDB using chunk IDs for deduplication.
-
-    Unlike the previous delete_repo_chunks + ingest_chunks sequence, this
-    is atomic at the collection level and safe across concurrent workers.
-    """
     if not chunks:
         return 0
     if not (len(chunks) == len(metadatas) == len(ids)):
         raise ValueError("chunks, metadatas, and ids must have the same length")
+    chunks = chunks[:_MAX_INGEST_CHUNKS]
+    metadatas = metadatas[:_MAX_INGEST_CHUNKS]
+    ids = ids[:_MAX_INGEST_CHUNKS]
     collection = _get_collection(repo_url)
     embeddings = embed_texts(chunks)
     collection.upsert(
@@ -212,21 +196,19 @@ def upsert_chunks(
 
 
 def delete_repo_chunks(repo_url: str) -> int:
-    """Delete ALL chunks for a given repository.
-
-    Removes every document in the tenant-isolated collection so that
-    re-analysing the same repo replaces old chunks instead of duplicating
-    them.  Returns the number of deleted chunks.
-    """
     collection = _get_collection(repo_url)
-    all_ids = collection.get()["ids"]
-    if all_ids:
-        collection.delete(ids=all_ids)
-    return len(all_ids)
+    total = 0
+    while True:
+        batch = collection.get(limit=_MAX_INGEST_CHUNKS)
+        ids = batch.get("ids", [])
+        if not ids:
+            break
+        collection.delete(ids=ids)
+        total += len(ids)
+    return total
 
 
 def delete_collection(repo_url: str) -> bool:
-    """Delete a per-repo collection for cleanup on repo re-analysis."""
     client = _get_client()
     name = _collection_name(repo_url)
     try:

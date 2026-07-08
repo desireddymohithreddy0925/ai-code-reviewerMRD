@@ -1,5 +1,11 @@
 import crypto from 'crypto';
 
+const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isValidUuid(value) {
+  return typeof value === 'string' && UUID_V4_RE.test(value);
+}
+
 export const SESSION_COOKIE_NAME = 'rps_v1_session';
 const SESSION_MAX_AGE_SECONDS = 24 * 60 * 60;
 
@@ -53,20 +59,20 @@ function safeEqual(left, right) {
   return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function hasValidSessionCookie(req, secret) {
+function decodeSessionCookie(req) {
   const cookieValue = getCookie(req, SESSION_COOKIE_NAME);
-  if (!cookieValue) return false;
+  if (!cookieValue) return null;
 
   const [payload, signature] = cookieValue.split('.');
-  if (!payload || !signature || !safeEqual(signature, signValue(payload, secret))) {
-    return false;
-  }
+  if (!payload || !signature) return null;
+
+  const secret = getSessionSecret();
+  if (!safeEqual(signature, signValue(payload, secret))) return null;
 
   try {
-    const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    return Number.isFinite(session.exp) && session.exp > Date.now();
+    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -81,8 +87,10 @@ export function createFrontendSessionCookie(res) {
     return null;
   }
 
+  const clientId = crypto.randomUUID();
+
   const payload = Buffer.from(
-    JSON.stringify({ exp: Date.now() + SESSION_MAX_AGE_SECONDS * 1000, uid: crypto.randomUUID() }),
+    JSON.stringify({ exp: Date.now() + SESSION_MAX_AGE_SECONDS * 1000, uid: clientId }),
   ).toString('base64url');
   const signature = signValue(payload, sessionSecret);
 
@@ -94,7 +102,10 @@ export function createFrontendSessionCookie(res) {
     maxAge: SESSION_MAX_AGE_SECONDS * 1000,
   });
 
-  return `${SESSION_COOKIE_NAME}=${payload}.${signature}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}; Secure`;
+  return {
+    cookieHeader: `${SESSION_COOKIE_NAME}=${payload}.${signature}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}; Secure`,
+    clientId,
+  };
 }
 
 export const requireApiKey = (req, res, next) => {
@@ -107,14 +118,22 @@ export const requireApiKey = (req, res, next) => {
 
   const sessionSecret = getSessionSecret();
 
-  if (sessionSecret && hasValidSessionCookie(req, sessionSecret)) {
-    req.clientId = crypto.createHash('sha256').update(validKey).digest('hex');
+  // When a valid session cookie exists, use its uid as clientId.
+  // This gives each browser/client a unique identifier, preventing
+  // cross-user session access even when the API key is shared.
+  const cookieData = decodeSessionCookie(req);
+  if (cookieData && Number.isFinite(cookieData.exp) && cookieData.exp > Date.now()) {
+    req.clientId = cookieData.uid;
     next();
     return;
   }
 
   if (providedKey && safeEqual(providedKey, validKey)) {
-    req.clientId = crypto.createHash('sha256').update(validKey).digest('hex');
+    // API key auth without cookie — derive clientId from a fresh UUID
+    // so that any session created with this clientId is unique to this
+    // request. The next response's Set-Cookie will bind subsequent
+    // requests to the cookie's uid.
+    req.clientId = crypto.randomUUID();
     next();
     return;
   }
