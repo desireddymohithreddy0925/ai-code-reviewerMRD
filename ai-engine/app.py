@@ -41,6 +41,9 @@ MAX_CHAT_FILES = int(os.getenv("MAX_CHAT_FILES", "20"))
 MAX_MESSAGE_LENGTH = int(os.getenv("MAX_MESSAGE_LENGTH", "10000"))
 # Maximum seconds to wait for a single LLM API response before returning 504 (#786)
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
+# Maximum number of Groq batch requests to run concurrently during /analyze.
+# Bounds fan-out so large repositories don't blow past Groq's rate limits. (#1675)
+GROQ_CONCURRENCY_LIMIT = int(os.getenv("GROQ_CONCURRENCY_LIMIT", "10"))
 
 # Single source of truth — loaded from shared-safety-config.json
 _SHARED_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'shared-safety-config.json')
@@ -503,21 +506,28 @@ async def analyze_repository(request: AnalyzeRequest):
     # 2. Sort files deterministically before chunking into batches
     files.sort(key=lambda f: f.name)
     batches = [files[i:i + batch_size] for i in range(0, len(files), batch_size)]
-    
+
     combined_result = {
         "fileReviews": {},
         "generatedReadme": "",
         "mermaidDiagram": ""
     }
 
-    # 3. Process batches sequentially
-    truncated_files = []
-    for idx, batch in enumerate(batches):
+    # 3. Process batches concurrently (bounded by GROQ_CONCURRENCY_LIMIT) instead
+    # of one-at-a-time. Each Groq call already runs in a thread-pool executor
+    # (see _call_groq_with_timeout), so fanning them out via asyncio.gather cuts
+    # total wall-clock time from O(n_batches * latency) to roughly
+    # O(ceil(n_batches / GROQ_CONCURRENCY_LIMIT) * latency) for large repos. (#1675)
+    groq_semaphore = asyncio.Semaphore(GROQ_CONCURRENCY_LIMIT)
+
+    async def process_batch(idx, batch):
+        is_first_batch = (idx == 0)
+        local_truncated_files = []
         file_contents_summary = []
         for f in batch:
             content = f.content[:MAX_FILE_CHARS_PER_FILE]
             if len(f.content) > MAX_FILE_CHARS_PER_FILE:
-                truncated_files.append({
+                local_truncated_files.append({
                     "name": f.name,
                     "original_length": len(f.content),
                     "truncated_length": MAX_FILE_CHARS_PER_FILE
@@ -526,9 +536,7 @@ async def analyze_repository(request: AnalyzeRequest):
             file_contents_summary.append(f"--- File: {f.name} ---\n{content}")
         contents_text = "\n\n".join(file_contents_summary)
         contents_text = sanitize_file_content(contents_text)
-        
-        is_first_batch = (idx == 0)
-        
+
         if is_first_batch:
             review_prompt = f"""Target Company Persona: {company}
 Response Language: {language}
@@ -602,7 +610,7 @@ Format your JSON precisely as:
 
 You must obey the JSON output format above."""
 
-        try:
+        async with groq_semaphore:
             print(f"⏳ Processing batch {idx + 1}/{len(batches)} ({len(batch)} files)...")
             completion = await _call_groq_with_timeout(
                 model=groq_model,
