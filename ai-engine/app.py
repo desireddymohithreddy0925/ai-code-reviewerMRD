@@ -456,7 +456,7 @@ async def analyze_repository(request: AnalyzeRequest):
     temperature = request.temperature if request.temperature is not None else 0.7
     max_tokens = request.maxTokens or 2048
     batch_size = request.batchSize or 5
-    custom_system_prompt = validate_system_prompt(request.systemPrompt or "")
+    custom_system_prompt = await asyncio.to_thread(validate_system_prompt, request.systemPrompt or "")
 
     # 1. Apply diff mode filtering if requested
     diff_mode_header = ""
@@ -684,7 +684,7 @@ async def chat_with_repository(request: ChatRequest):
     files = request.files
     message = request.message
     history = request.history
-    custom_system_prompt = validate_system_prompt(request.systemPrompt or "")
+    custom_system_prompt = await asyncio.to_thread(validate_system_prompt, request.systemPrompt or "")
     
     # 1. Build the system prompt injecting repository context
     message_lower = message.lower()
