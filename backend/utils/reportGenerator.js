@@ -222,6 +222,7 @@ function getReportPath(format = 'json', outputDir = '.') {
 }
 
 export {
+  escapeHtml,
   generateJSONReport,
   generateHTMLReport,
   getReportPath,
