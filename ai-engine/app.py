@@ -1,3 +1,4 @@
+import sys
 import os
 import json
 import re
@@ -52,9 +53,8 @@ try:
     DANGEROUS_PATTERNS = _shared_config['dangerous_phrases']
     HOMOGLYPH_MAP = _shared_config['homoglyph_map']
 except (FileNotFoundError, json.JSONDecodeError, RuntimeError) as _e:
-    print(f"SECURITY: Failed to load shared-safety-config.json ({_e}), prompt injection defenses may be incomplete.")
-    DANGEROUS_PATTERNS = []
-    HOMOGLYPH_MAP = {}
+    print(f"FATAL: Failed to load shared-safety-config.json ({_e}). Prompt injection defenses cannot be initialized.")
+    sys.exit(1)
 
 def _neutralize_pattern(content: str, pattern: str) -> str:
     """Replace a dangerous pattern with a non-deterministic placeholder."""
