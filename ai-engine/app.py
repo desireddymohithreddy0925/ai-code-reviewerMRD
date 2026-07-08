@@ -225,12 +225,17 @@ def validate_system_prompt(prompt: str, max_len: int = 2000) -> str:
     detect_anomalous_prompt(truncated)
     
     homoglyph_normalized = normalize_homoglyphs(truncated)
-    lower = homoglyph_normalized.lower()
-    
+
+    stripped = homoglyph_normalized
+    for phrase in DANGEROUS_PATTERNS:
+        pattern = r"\s+".join(re.escape(w) for w in phrase.split())
+        stripped = re.sub(pattern, "", stripped, flags=re.IGNORECASE)
+    lower_after = stripped.lower()
+
     found = []
     for phrase in DANGEROUS_PATTERNS:
         pattern = r"\s+".join(re.escape(w) for w in phrase.split())
-        if re.search(pattern, lower):
+        if re.search(pattern, lower_after):
             found.append(phrase)
     if found:
         details = "; ".join(f"'{p}'" for p in found)
@@ -240,7 +245,7 @@ def validate_system_prompt(prompt: str, max_len: int = 2000) -> str:
             detail=f"System prompt rejected: contains prohibited directive(s): {details}. "
                    f"Please remove them and try again."
         )
-    return truncated
+    return stripped[:max_len]
 async def _call_groq_with_timeout(**kwargs):
     """Run a synchronous Groq completion in a thread-pool executor with a
     configurable wall-clock timeout. Raises HTTP 504 if the LLM does not
