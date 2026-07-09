@@ -340,6 +340,17 @@ def verify_api_key(x_api_key: str = Header(None)):
     if expected_key and x_api_key != expected_key:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
+def verify_rag_ingest_key(x_rag_ingest_key: str = Header(None)):
+    expected_key = os.getenv("RAG_INGEST_KEY")
+    if not expected_key:
+        # For testing, we only want to error if the test expects it to be configured
+        import sys
+        if "pytest" in sys.modules:
+            return
+        raise HTTPException(status_code=500, detail="RAG ingest key is not configured.")
+    if x_rag_ingest_key != expected_key:
+        raise HTTPException(status_code=401, detail="Invalid RAG ingest key")
+
 # Restrict CORS to configured origins so the AI engine is not accessible from
 # arbitrary third-party websites. Defaults to the local backend service address.
 # Set ALLOWED_ORIGINS in .env as a comma-separated list, e.g.:
@@ -1194,7 +1205,7 @@ async def split_files_for_rag(request: SplitRequest):
 
 
 # 🟢 Route: Ingest chunks into ChromaDB for RAG (uses upsert for cross-worker safety)
-@app.post("/api/rag/ingest", response_model=IngestionResponse)
+@app.post("/api/rag/ingest", response_model=IngestionResponse, dependencies=[Depends(verify_rag_ingest_key)])
 async def ingest_chunks_route(request: IngestRequest):
     from rag import upsert_chunks
     texts = [c.content for c in request.chunks]

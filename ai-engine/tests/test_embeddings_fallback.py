@@ -22,9 +22,12 @@ def reset_embeddings_state():
     """Reset embeddings module state before and after each test."""
     embeddings._model = None
     embeddings._fallback_active = False
+    original_use_st = embeddings._USE_SENTENCE_TRANSFORMER
+    embeddings._USE_SENTENCE_TRANSFORMER = True
     yield
     embeddings._model = None
     embeddings._fallback_active = False
+    embeddings._USE_SENTENCE_TRANSFORMER = original_use_st
 
 
 class TestIsFallbackActive:
