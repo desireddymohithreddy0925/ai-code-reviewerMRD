@@ -1836,18 +1836,7 @@ Please ensure the AI Engine service is running correctly and re-trigger the revi
     });
     postedReviewIds.push(createdReview.id);
   } else {
-    console.log('🎉 No code issues or recommendations found. Posting approval review...');
-    const { data: createdReview } = await octokit.rest.pulls.createReview({
-      owner,
-      repo,
-      pull_number: pullNumber,
-      commit_id: headSha,
-      event: 'APPROVE',
-      body: `## 🛡️ RepoSage AI Code Review Audit Completed!
-
-🎉 Outstanding work! I have scanned the PR and found **0 issues**. Your changes look pristine, clean, and optimized! Approved! 🚀`
-    });
-    postedReviewIds.push(createdReview.id);
+    console.log('🎉 No code issues or recommendations found. Adding label and posting approval...');
 
     try {
       await octokit.rest.issues.addLabels({
@@ -1860,6 +1849,17 @@ Please ensure the AI Engine service is running correctly and re-trigger the revi
     } catch (err) {
       console.warn('⚠️ Could not add gssoc:approved label:', err.message);
     }
+
+    console.log('🎉 No code issues or recommendations found. Posting approval review...');
+    const { data: createdReview } = await octokit.rest.pulls.createReview({
+      owner,
+      repo,
+      pull_number: pullNumber,
+      commit_id: headSha,
+      event: 'APPROVE',
+      body: `## 🛡️ RepoSage AI Code Review Audit Completed!\n\n🎉 Outstanding work! I have scanned the PR and found **0 issues**. Your changes look pristine, clean, and optimized! Approved! 🚀`
+    });
+    postedReviewIds.push(createdReview.id);
   }
 
   if (redisClient && postedReviewIds.length > 0) {
