@@ -61,7 +61,7 @@ export const rules = [
   },
   {
     type: "Hardcoded IPv4 Address",
-    regex: /\b(?!127\.\d{1,3}\.\d{1,3}\.\d{1,3}\b)(?!0\.0\.0\.0\b)(?!255\.255\.255\.255\b)\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,
+    regex: /\b(?!10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b)(?!127\.\d{1,3}\.\d{1,3}\.\d{1,3}\b)(?!172\.1[6-9]\.\d{1,3}\.\d{1,3}\b)(?!172\.2\d\.\d{1,3}\.\d{1,3}\b)(?!172\.3[01]\.\d{1,3}\.\d{1,3}\b)(?!169\.254\.\d{1,3}\.\d{1,3}\b)(?!192\.168\.\d{1,3}\.\d{1,3}\b)(?!192\.0\.2\.\d{1,3}\b)(?!198\.51\.100\.\d{1,3}\b)(?!203\.0\.113\.\d{1,3}\b)(?!0\.0\.0\.0\b)(?!255\.255\.255\.255\b)\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,
     description: "🌐 [Network/Crypto Leak] Hardcoded IPv4 address detected. Exposing internal or public IP addresses in source code reveals network topology and can assist attackers in reconnaissance or lateral movement."
   },
   {
