@@ -141,4 +141,26 @@ describe('sanitizeMermaidOutput', () => {
     expect(result).not.toContain('<script>');
     expect(result).toContain('<path');
   });
+
+  it('strips xlink:href with javascript: URI', () => {
+    const svg = '<svg><use xlink:href="javascript:alert(1)"/><path d="M0 0"/></svg>';
+    const result = sanitizeMermaidOutput(svg);
+    expect(result).not.toContain('xlink:href');
+    expect(result).not.toContain('javascript:');
+    expect(result).toContain('<path');
+  });
+
+  it('strips xlink:href with regular href', () => {
+    const svg = '<svg><use xlink:href="#icon-user"/><path d="M0 0"/></svg>';
+    const result = sanitizeMermaidOutput(svg);
+    expect(result).not.toContain('xlink:href');
+    expect(result).toContain('<path');
+  });
+
+  it('strips xlink:href with data: URI', () => {
+    const svg = '<svg><use xlink:href="data:text/html,<script>alert(1)</script>"/><path d="M0 0"/></svg>';
+    const result = sanitizeMermaidOutput(svg);
+    expect(result).not.toContain('xlink:href');
+    expect(result).toContain('<path');
+  });
 });
