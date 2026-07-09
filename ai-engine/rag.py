@@ -90,6 +90,10 @@ def query_chunks(
     if not query_text or not query_text.strip():
         return []
     collection = _get_collection(repo_url)
+    count = collection.count()
+    if count == 0:
+        return []
+    n_results = min(n_results, count)
     query_embedding = embed_texts([query_text])
     results = collection.query(
         query_embeddings=query_embedding,
