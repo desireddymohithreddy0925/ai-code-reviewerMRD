@@ -830,10 +830,11 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
       let sessionId = null;
       let sessionOwnerToken = null;
       let sessionPersisted = false;
+      let csrfToken = null;
       if (estimatedSize <= MAX_SESSION_DOC_SIZE) {
         sessionId = crypto.randomUUID();
         sessionOwnerToken = crypto.randomUUID();
-        const csrfToken = generateCsrfToken();
+        csrfToken = generateCsrfToken();
         try {
           await Session.create({
             sessionId,
