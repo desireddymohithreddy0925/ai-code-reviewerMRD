@@ -28,31 +28,31 @@ function parseIgnoreFile(filePath) {
  *   ** -> zero-or-more directories pattern
  */
 function globToRegex(pattern) {
-  // Strategy:
-  // - ** expands to (?:\/.*)? which optionally matches / + remaining path content.
-  //   This MUST be placed directly after the preceding literal segment with NO extra /.
-  //   For example: src/test/** -> ^src\/test(?:\/.*)?$
-  //   The optional / is inside the (?:\/.*)? group, not before it.
-  // - For ** at the start: handled specially in shouldIgnore (prefix check)
   let result = '';
   let i = 0;
   while (i < pattern.length) {
     if (pattern[i] === '.') {
       result += '\\.';
       i++;
-    } else if (pattern[i] === '*') {
-      if (i + 1 < pattern.length && pattern[i + 1] === '*') {
-        // ** token -- optionally matches / + remaining path
-        // The / is inside the (?:\/.*)? group, so strip trailing / from result to avoid duplication
-        if (result.endsWith('/')) {
-          result = result.slice(0, -1);
-        }
-        result += '(?:\/.*)?';
-        i += 2;
+    } else if (pattern[i] === '*' && i + 1 < pattern.length && pattern[i + 1] === '*') {
+      // ** token
+      i += 2;
+      if (i < pattern.length && pattern[i] === '/') {
+        // `**/` matches zero or more directories
+        result += '(?:.*\\/)?';
+        i++; // skip the slash
+      } else if (i === pattern.length) {
+        // `**` at the end
+        result += '.*';
       } else {
-        result += '[^/]*';
-        i++;
+        result += '.*';
       }
+    } else if (pattern[i] === '*') {
+      result += '[^/]*';
+      i++;
+    } else if (pattern[i] === '?') {
+      result += '[^/]';
+      i++;
     } else {
       result += pattern[i];
       i++;
@@ -78,31 +78,6 @@ function shouldIgnore(filePath, repoRoot) {
   const normalizedPath = filePath.replace(/\\/g, '/');
 
   for (const pattern of patterns) {
-    let matched = false;
-
-    // For patterns starting with **/ -- special handling for root-level match
-    // e.g. **/test/** should match 'test/file.js' and 'src/test/file.js'
-    // e.g. **/.git/** should match '.git/config' and 'src/.git/HEAD'
-    if (pattern.startsWith('**/')) {
-      // Extract the segment after **/ up to the next ** (if any)
-      // e.g. **/test/** -> 'test' (from 'test/**')
-      // e.g. **/.git/** -> '.git'
-      const afterPrefix = pattern.slice(3); // strip leading **/
-      // Find the last ** and take the segment before it
-      const lastDblIdx = afterPrefix.lastIndexOf('**');
-      let target = lastDblIdx >= 0 ? afterPrefix.slice(0, lastDblIdx) : afterPrefix;
-      // Strip any trailing / that was before the ** (e.g. 'test/**' -> target = 'test/' -> strip to 'test')
-      target = target.replace(/\/$/, '');
-      // Match if path starts with 'target/' (at root or after directories)
-      // or path equals 'target' (for exact directory match)
-      // Match if path starts with 'target/' (at root) or contains '/target/' (nested)
-      // or path equals 'target' (for exact directory match)
-      if (normalizedPath.startsWith(target + '/') ||
-          normalizedPath === target ||
-          normalizedPath.includes('/' + target + '/')) {
-        return true;
-      }
-    }
 
     const regex = globToRegex(pattern);
     if (regex.test(normalizedPath)) return true;
