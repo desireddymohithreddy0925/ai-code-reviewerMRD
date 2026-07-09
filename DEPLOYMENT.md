@@ -24,6 +24,7 @@ Render is perfect for our Node.js and Python services because they run continuou
 5. It will ask you to fill in the environment variables:
    * `GROQ_API_KEY`: *(Your Groq API key)*
    * `ALLOWED_ORIGINS`: *(The URL of your deployed Vercel frontend, e.g., `https://reposage-frontend.vercel.app`)*
+   * `SESSION_SECRET`: *(A long, random string used to sign frontend session cookies)*
 6. Click **Apply**.
 
 ### 🎉 That's it!
