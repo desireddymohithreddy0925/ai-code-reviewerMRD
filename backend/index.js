@@ -1043,6 +1043,8 @@ if (reviewResult?.fileReviews) {
   
   partial_review,
 
+  _mock: reviewResult?._mock,
+
   repositoryHealth,
 
   prSummary,
