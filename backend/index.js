@@ -380,9 +380,14 @@ function cleanupTempRepos() {
 function onShutdown() { cleanupTempRepos(); cleanupTimers(); if (redisClient) redisClient.quit(); closeDatabase(); process.exit(0); }
 process.on('SIGINT', onShutdown);
 process.on('SIGTERM', onShutdown);
+process.on('exit', cleanupTempRepos);
+
 // Clean up temp_repos and timers on uncaught exceptions to prevent orphan temp folders
 process.on('uncaughtException', (err) => {
   console.error('Uncaught exception:', err);
+  if (err.stack) {
+    console.error(err.stack);
+  }
   cleanupTempRepos();
   cleanupTimers();
   if (redisClient) redisClient.quit();
@@ -395,14 +400,6 @@ process.on('unhandledRejection', (reason, promise) => {
   if (reason instanceof Error && reason.stack) {
     console.error(reason.stack);
   }
-});
-
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error.message);
-  if (error.stack) {
-    console.error(error.stack);
-  }
-  process.exit(1);
 });
 
 // Repository contexts for chat are now persisted in MongoDB via the Session model.
