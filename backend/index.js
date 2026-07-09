@@ -534,6 +534,7 @@ const aiEngineHealthTimer = setInterval(async () => {
     aiEngineHealthy = false;
   }
 }, AI_ENGINE_HEALTH_INTERVAL);
+aiEngineHealthTimer.unref();
 
 // Periodic sweeper for stale exclusive locks to prevent unbounded memory growth
 const EXCLUSIVE_LOCK_CLEANUP_INTERVAL = 5 * 60 * 1000;
