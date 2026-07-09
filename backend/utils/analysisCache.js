@@ -225,6 +225,7 @@ class AnalysisCache {
     const size = this.cache.size;
     this.cache.clear();
     this._repoUrlIndex.clear();
+    this._startSweeper();
     console.log(`🗑️  Cleared analysis cache (${size} entries removed)`);
   }
 
