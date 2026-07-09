@@ -1831,7 +1831,7 @@ The AI engine identified **${aiCommentsDiscarded} potential issue(s)** but could
     postedReviewIds.push(createdReview.id);
   } else if (!aiEngineQueried) {
     console.error('Γ¥î AI Engine was unreachable or returned an empty/malformed response ΓÇö posting COMMENT review instead of auto-approving.');
-    await octokit.rest.pulls.createReview({
+    const { data: createdReview } = await octokit.rest.pulls.createReview({
       owner,
       repo,
       pull_number: pullNumber,
