@@ -232,17 +232,14 @@ def validate_system_prompt(prompt: str, max_len: int = 2000) -> str:
     
     homoglyph_normalized = normalize_homoglyphs(truncated)
 
-    stripped = homoglyph_normalized
-    for phrase in DANGEROUS_PATTERNS:
-        pattern = r"\s+".join(re.escape(w) for w in phrase.split())
-        stripped = re.sub(pattern, "", stripped, flags=re.IGNORECASE)
-    lower_after = stripped.lower()
+    lower_before = homoglyph_normalized.lower()
 
     found = []
     for phrase in DANGEROUS_PATTERNS:
         pattern = r"\s+".join(re.escape(w) for w in phrase.split())
-        if re.search(pattern, lower_after):
+        if re.search(pattern, lower_before):
             found.append(phrase)
+    
     if found:
         details = "; ".join(f"'{p}'" for p in found)
         print(f"⚠️ System prompt rejected: contains prohibited directives: {details}")
@@ -251,7 +248,7 @@ def validate_system_prompt(prompt: str, max_len: int = 2000) -> str:
             detail=f"System prompt rejected: contains prohibited directive(s): {details}. "
                    f"Please remove them and try again."
         )
-    return stripped[:max_len]
+    return homoglyph_normalized[:max_len]
 async def _call_groq_with_timeout(**kwargs):
     """Run a synchronous Groq completion in a thread-pool executor with a
     configurable wall-clock timeout. Raises HTTP 504 if the LLM does not
@@ -547,6 +544,7 @@ async def analyze_repository(request: AnalyzeRequest):
     # total wall-clock time from O(n_batches * latency) to roughly
     # O(ceil(n_batches / GROQ_CONCURRENCY_LIMIT) * latency) for large repos. (#1675)
     groq_semaphore = asyncio.Semaphore(GROQ_CONCURRENCY_LIMIT)
+    truncated_files = []
 
     async def process_batch(idx, batch):
         is_first_batch = (idx == 0)
@@ -697,6 +695,8 @@ You must obey the JSON output format above."""
                                 existing[category] = existing_items
                         else:
                             combined_result["fileReviews"][file_path] = review
+
+                truncated_files.extend(local_truncated_files)
 
         except Exception as e:
             print(f"❌ Groq API Call Failed for batch {idx + 1}: {sanitize_error(str(e), api_key)}")
