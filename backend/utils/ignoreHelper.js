@@ -59,7 +59,16 @@ export function isIgnored(filePath, patterns, baseDir) {
         return true;
       }
     } else if (pattern.includes('*')) {
-      const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*');
+      // Convert glob to regex. Handle `**` (matches across any number of
+      // directories, including `/`) correctly: split on `**` first, replace
+      // any single `*` within the segments with `[^/]*`, then join the
+      // segments with `.*` so globstar crosses directory boundaries.
+      const escaped = pattern
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+        .split('**')
+        .map(part => part.split('*').join('[^/]*'))
+        .join('.*')
+        .replace(/^\.\*\//, '(?:.*/)?');
       try {
         if (new RegExp(`^${escaped}$`).test(relative)) return true;
       } catch { /* skip invalid pattern */ }
