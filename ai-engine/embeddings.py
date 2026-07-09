@@ -12,12 +12,14 @@ except Exception as exc:
 
 _EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 _FALLBACK_EMBEDDING_DIMENSION = 384
+_USE_SENTENCE_TRANSFORMER = os.getenv("USE_SENTENCE_TRANSFORMER", "false").lower() == "true"
 _model = None
 _fallback_active = False
 
 _MAX_CACHE_SIZE = int(os.getenv("MAX_EMBEDDING_CACHE_SIZE", "10000"))
 _cache_enabled = os.getenv("EMBEDDING_CACHE_ENABLED", "true").lower() == "true"
 _embedding_cache = collections.OrderedDict()
+_cache_access_order = _embedding_cache
 _cache_lock = threading.Lock()
 _per_key_locks: dict[str, threading.Lock] = {}
 _per_key_locks_lock = threading.Lock()
@@ -72,7 +74,7 @@ def is_fallback_active() -> bool:
 def _get_model():
     global _model, _fallback_active
     if _model is None:
-        if SentenceTransformer is None:
+        if not _USE_SENTENCE_TRANSFORMER or SentenceTransformer is None:
             _fallback_active = True
             _model = _DeterministicEmbeddingModel()
         else:
