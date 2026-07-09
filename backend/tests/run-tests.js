@@ -131,9 +131,10 @@ function runTests() {
 
   if (nodeTestFiles.length > 0) {
     console.log(`\n🧪 Running node:test suites (${nodeTestFiles.length} files)`);
+    const testPaths = nodeTestFiles.map(file => path.join(__dirname, file));
     const result = spawnSync(
       process.execPath,
-      ['--test', '--test-concurrency=1', __dirname],
+      ['--test', '--test-concurrency=1', ...testPaths],
       { stdio: 'inherit' }
     );
     if (result.status !== 0) {
