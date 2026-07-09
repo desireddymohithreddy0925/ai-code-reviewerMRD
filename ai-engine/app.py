@@ -179,14 +179,31 @@ css_sanitizer = CSSSanitizer(allowed_css_properties=[
     'font-family', 'text-anchor', 'color', 'background', 'background-color',
 ])
 
+_KNOWN_GROQ_MODELS = {
+    "llama-3.3-70b-versatile": "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant": "llama-3.1-8b-instant",
+    "llama-3.1-70b-versatile": "llama-3.1-70b-versatile",
+    "deepseek-r1-distill-llama-70b": "deepseek-r1-distill-llama-70b",
+    "gemma2-9b-it": "gemma2-9b-it",
+}
+
 def get_groq_model(model_name: Optional[str]) -> str:
     default_model = "llama-3.3-70b-versatile"
     if not model_name:
         return default_model
     req_model = model_name.lower()
+    # Exact match first so valid model ids are never mis-routed by substring.
+    if req_model in _KNOWN_GROQ_MODELS:
+        return _KNOWN_GROQ_MODELS[req_model]
+    # Anchored family fallback (avoid bare substring over-matching, e.g.
+    # "llama-3.1-70b-versatile" must not be downgraded to the 8B model).
     if "deepseek" in req_model:
         return "deepseek-r1-distill-llama-70b"
-    if "llama-3.1" in req_model or "8b" in req_model:
+    if req_model.startswith("llama-3.1-70b"):
+        return "llama-3.1-70b-versatile"
+    if req_model.startswith("llama-3.1-8b") or "8b-instant" in req_model:
+        return "llama-3.1-8b-instant"
+    if req_model.startswith("llama-3.1"):
         return "llama-3.1-8b-instant"
     if "gemma" in req_model:
         return "gemma2-9b-it"
