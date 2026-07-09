@@ -54,7 +54,13 @@ const getSecretsContent = () => {
     'twilio_sid = "AC' + '0123456789abcdef0123456789abcdef"',
     "",
     "# 10. Twilio Auth Token",
-    'twilio_token = "' + '0123456789abcdef0123456789abcdef"'
+    'twilio_token = "' + '0123456789abcdef0123456789abcdef"',
+    "",
+    "# 11. Slack Token Check",
+    'slack_token = "xoxb-mockslacktokenvalue"',
+    "",
+    "# 12. Discord Bot Token",
+    'discord_token = "notarealdiscorduseridher.notrea.notarealdiscordbottokenhere"'
   ].join('\n');
 };
 
@@ -79,7 +85,9 @@ function runTests() {
     "Generic Private Key",
     "Common Environment Credential",
     "Twilio Account SID",
-    "Twilio Auth Token"
+    "Twilio Auth Token",
+    "Slack Token Check",
+    "Discord Bot Token"
   ];
 
   const foundTypes = secretsFindings.map(f => f.type);

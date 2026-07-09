@@ -73,6 +73,16 @@ export const rules = [
     type: "Bitcoin (BTC) Wallet Address",
     regex: /\b(?:1[1-9A-HJ-NP-Za-km-z]{25,34}|3[1-9A-HJ-NP-Za-km-z]{25,34}|bc1[0-9a-z]{25,39})\b/g,
     description: "🪙 [Network/Crypto Leak] Hardcoded Bitcoin wallet address detected. Committing cryptocurrency wallet addresses to public repositories exposes them to scraping bots and targeted attacks."
+  },
+  {
+    type: "Slack Token Check",
+    regex: /xox[baprs]-[0-9a-zA-Z]{10,48}/g,
+    description: "Potential hardcoded Slack token (User, Bot, App, or Workspace) detected. Unauthorized users can interact with your Slack workspace APIs."
+  },
+  {
+    type: "Discord Bot Token",
+    regex: /[a-zA-Z0-9_-]{24}\.[a-zA-Z0-9_-]{6}\.[a-zA-Z0-9_-]{27}/g,
+    description: "Potential hardcoded Discord Bot Token detected. This allows attackers to fully control your Discord bot and access guilds/channels."
   }
 ];
 
