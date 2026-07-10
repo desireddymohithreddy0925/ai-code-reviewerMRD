@@ -2440,6 +2440,16 @@ const SANITIZE_PATTERNS = [
   { pattern: /[A-Za-z0-9_-]{32,}/g, replacement: '***' },
 ];
 
+function fullyDecode(str) {
+  let prev = str;
+  let current = str;
+  while (current !== prev) {
+    prev = current;
+    try { current = decodeURIComponent(prev); } catch { break; }
+  }
+  return current;
+}
+
 function sanitizeErrorMessage(msg) {
   if (!msg || typeof msg !== 'string') return msg;
   let sanitized = msg;
@@ -2447,11 +2457,13 @@ function sanitizeErrorMessage(msg) {
     sanitized = sanitized.replace(pattern, replacement);
   }
   try {
-    const decoded = decodeURIComponent(sanitized);
+    const decoded = fullyDecode(sanitized);
     if (decoded !== sanitized) {
+      let reSanitized = decoded;
       for (const { pattern, replacement } of SANITIZE_PATTERNS) {
-        sanitized = sanitized.replace(pattern, replacement);
+        reSanitized = reSanitized.replace(pattern, replacement);
       }
+      sanitized = reSanitized;
     }
   } catch { /* keep as-is */ }
   return sanitized;
