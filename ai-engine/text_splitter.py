@@ -71,6 +71,9 @@ def _make_splitter(file_name: str, content: str = "", chunk_size: Optional[int] 
     final_chunk_size = chunk_size if chunk_size is not None else _CHUNK_SIZE
     final_chunk_overlap = chunk_overlap if chunk_overlap is not None else _CHUNK_OVERLAP
     
+    if final_chunk_size <= 0:
+        raise ValueError("chunk_size must be > 0")
+        
     if final_chunk_overlap >= final_chunk_size:
         final_chunk_overlap = max(0, final_chunk_size - 1)
         

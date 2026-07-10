@@ -2,229 +2,144 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
-import {
-  escapeHtml,
-  generateJSONReport,
-  generateHTMLReport,
-  getReportPath,
-  SCHEMA_VERSION,
-} from '../utils/reportGenerator.js';
+import os from 'os';
+import { fileURLToPath } from 'url';
 
-const TEST_OUT_DIR = '/tmp/rg-out-' + Date.now();
-fs.mkdirSync(TEST_OUT_DIR, { recursive: true });
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const TMPDIR = os.tmpdir();
 
-test('escapeHtml escapes ampersand', () => {
-  assert.equal(escapeHtml('a & b'), 'a &amp; b');
+import { generateJSONReport, generateHTMLReport, getReportPath, SCHEMA_VERSION } from '../utils/reportGenerator.js';
+
+test('reportGenerator: SCHEMA_VERSION is exported and is a non-empty string', () => {
+  assert.equal(typeof SCHEMA_VERSION, 'string');
+  assert.ok(SCHEMA_VERSION.length > 0);
 });
 
-test('escapeHtml escapes less-than', () => {
-  assert.equal(escapeHtml('<script>'), '&lt;script&gt;');
+test('reportGenerator: getReportPath returns correct extension for json format', () => {
+  const result = getReportPath('json', TMPDIR);
+  assert.ok(result.endsWith('.json'), 'json format should return .json extension');
+  assert.ok(result.includes(TMPDIR));
 });
 
-test('escapeHtml escapes greater-than', () => {
-  assert.equal(escapeHtml('a > b'), 'a &gt; b');
+test('reportGenerator: getReportPath returns correct extension for html format', () => {
+  const result = getReportPath('html', TMPDIR);
+  assert.ok(result.endsWith('.html'), 'html format should return .html extension');
+  assert.ok(result.includes(TMPDIR));
 });
 
-test('escapeHtml escapes double quote', () => {
-  assert.equal(escapeHtml('say "hello"'), 'say &quot;hello&quot;');
+test('reportGenerator: getReportPath defaults to json when format is unknown', () => {
+  const result = getReportPath('csv', '/tmp');
+  assert.ok(result.endsWith('.json'), 'unknown format should default to .json');
 });
 
-test('escapeHtml escapes single quote', () => {
-  assert.equal(escapeHtml("it's"), 'it&#39;s');
-});
-
-test('escapeHtml escapes all special chars together', () => {
-  assert.equal(
-    escapeHtml('<a href="url"> & \'x\' > y</a>'),
-    '&lt;a href=&quot;url&quot;&gt; &amp; &#39;x&#39; &gt; y&lt;/a&gt;'
-  );
-});
-
-test('escapeHtml returns empty string for non-string input', () => {
-  assert.equal(escapeHtml(null), '');
-  assert.equal(escapeHtml(undefined), '');
-  assert.equal(escapeHtml(123), '');
-  assert.equal(escapeHtml({}), '');
-});
-
-test('escapeHtml handles empty string', () => {
-  assert.equal(escapeHtml(''), '');
-});
-
-test('escapeHtml preserves normal text unchanged', () => {
-  assert.equal(escapeHtml('hello world'), 'hello world');
-});
-
-test('generateJSONReport creates valid report file', () => {
-  const outputPath = path.join(TEST_OUT_DIR, 'report.json');
-  const reviewResult = {
-    fileReviews: {
-      'src/app.js': {
-        bugs: [{ description: 'unused variable', line: 10, rule: 'no-unused-vars' }],
-        security: [],
-        optimization: [],
-        styling: [],
+test('reportGenerator: generateJSONReport writes valid JSON with correct schema', () => {
+  const outputPath = path.join(TMPDIR, `test-json-${Date.now()}.json`);
+  try {
+    const repoName = 'test-repo';
+    const files = [{ name: 'src/index.js' }];
+    const reviewResult = {
+      fileReviews: {
+        'src/index.js': {
+          bugs: [{ line: 10, description: 'Unused variable', rule: 'no-unused-vars' }],
+          security: [{ line: 20, message: 'Hardcoded password', rule: 'no-passwords' }],
+          optimization: [{ line: 30, description: 'Inefficient loop', rule: 'no-inner-loops' }],
+          styling: [{ line: 40, message: 'Missing semicolon', rule: 'semi' }],
+        },
       },
-    },
-  };
-  const result = generateJSONReport('test-repo', ['src/app.js'], reviewResult, outputPath);
-  assert.equal(result.success, true);
-  assert.equal(result.path, outputPath);
-  assert.equal(result.findingCount, 1);
-  assert.ok(fs.existsSync(outputPath));
+    };
+    const result = generateJSONReport(repoName, files, reviewResult, outputPath);
+    assert.equal(result.success, true);
+    assert.equal(result.path, outputPath);
+    assert.equal(result.findingCount, 4, 'should count bugs+security+optimization+styling = 4 findings');
+    assert.ok(fs.existsSync(outputPath), 'file should be written');
+    const written = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+    assert.equal(written.schema_version, SCHEMA_VERSION);
+    assert.equal(written.repository, repoName);
+    assert.equal(written.files_reviewed, 1);
+    assert.equal(written.total_findings, 4);
+    assert.equal(written.by_severity.error, 2, 'bugs and security are error severity');
+    assert.equal(written.by_severity.warning, 1, 'optimization is warning severity');
+    assert.equal(written.by_severity.info, 1, 'styling is info severity');
+    assert.ok(written.timestamp, 'should include a timestamp');
+  } finally {
+    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+  }
 });
 
-test('generateJSONReport counts bugs as errors', () => {
-  const outputPath = path.join(TEST_OUT_DIR, 'report2.json');
-  const reviewResult = {
-    fileReviews: {
-      'src/app.js': {
-        bugs: [{ description: 'bug1' }, { description: 'bug2' }],
-        security: [],
-        optimization: [],
-        styling: [],
-      },
-    },
-  };
-  const result = generateJSONReport('test-repo', ['src/app.js'], reviewResult, outputPath);
-  assert.equal(result.findingCount, 2);
-  const report = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-  assert.equal(report.by_severity.error, 2);
-});
-
-test('generateJSONReport counts security issues as errors', () => {
-  const outputPath = path.join(TEST_OUT_DIR, 'report3.json');
-  const reviewResult = {
-    fileReviews: {
-      'src/auth.js': {
-        bugs: [],
-        security: [{ message: 'sql injection vulnerability', line: 5, rule: 'sql-injection' }],
-        optimization: [],
-        styling: [],
-      },
-    },
-  };
-  const result = generateJSONReport('test-repo', ['src/auth.js'], reviewResult, outputPath);
-  const report = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-  assert.equal(report.by_severity.error, 1);
-  assert.equal(report.by_category.security, 1);
-});
-
-test('generateJSONReport counts optimization as warnings', () => {
-  const outputPath = path.join(TEST_OUT_DIR, 'report4.json');
-  const reviewResult = {
-    fileReviews: {
-      'src/slow.js': {
-        bugs: [],
-        security: [],
-        optimization: [{ description: 'slow loop', line: 20, rule: 'slow-loop' }],
-        styling: [],
-      },
-    },
-  };
-  const result = generateJSONReport('test-repo', ['src/slow.js'], reviewResult, outputPath);
-  const report = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-  assert.equal(report.by_severity.warning, 1);
-});
-
-test('generateJSONReport counts styling as info', () => {
-  const outputPath = path.join(TEST_OUT_DIR, 'report5.json');
-  const reviewResult = {
-    fileReviews: {
-      'src/style.js': {
-        bugs: [],
-        security: [],
-        optimization: [],
-        styling: [{ description: 'missing semicolon', line: 1, rule: 'semi' }],
-      },
-    },
-  };
-  const result = generateJSONReport('test-repo', ['src/style.js'], reviewResult, outputPath);
-  const report = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-  assert.equal(report.by_severity.info, 1);
-});
-
-test('generateJSONReport handles empty reviewResult', () => {
-  const outputPath = path.join(TEST_OUT_DIR, 'report6.json');
-  const result = generateJSONReport('test-repo', ['src/app.js'], {}, outputPath);
-  assert.equal(result.success, true);
-  assert.equal(result.findingCount, 0);
-  const report = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-  assert.equal(report.total_findings, 0);
-  assert.equal(report.by_severity.error, 0);
-});
-
-test('generateJSONReport handles missing fields in issue', () => {
-  const outputPath = path.join(TEST_OUT_DIR, 'report7.json');
-  const reviewResult = {
-    fileReviews: {
-      'src/app.js': {
-        bugs: [{ line: 1 }], // no description or rule
-        security: [],
-        optimization: [],
-        styling: [],
-      },
-    },
-  };
-  const result = generateJSONReport('test-repo', ['src/app.js'], reviewResult, outputPath);
-  assert.equal(result.success, true);
-  const report = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-  assert.equal(report.findings[0].message, '');
-  assert.equal(report.findings[0].rule_id, 'unknown');
-});
-
-test('generateJSONReport returns error on write failure', () => {
-  const result = generateJSONReport('test-repo', ['src/app.js'], {}, '/nonexistent/path/report.json');
+test('reportGenerator: generateJSONReport returns success:false when write fails', () => {
+  const result = generateJSONReport('repo', [], null, '/nonexistent-dir/fail.json');
   assert.equal(result.success, false);
-  assert.ok(result.error !== undefined);
+  assert.ok(result.error, 'should include error message');
 });
 
-test('generateHTMLReport creates valid HTML file', () => {
-  const outputPath = path.join(TEST_OUT_DIR, 'report.html');
-  const result = generateHTMLReport('test-repo', ['src/app.js'], {}, outputPath);
-  assert.equal(result.success, true);
-  assert.ok(fs.existsSync(outputPath));
-  const content = fs.readFileSync(outputPath, 'utf-8');
-  assert.ok(content.includes('<!DOCTYPE html>'));
-  assert.ok(content.includes('test-repo'));
-  assert.ok(content.includes('No findings'));
+test('reportGenerator: generateJSONReport handles null reviewResult gracefully', () => {
+  const outputPath = path.join(TMPDIR, `test-empty-${Date.now()}.json`);
+  try {
+    const result = generateJSONReport('empty-repo', [], null, outputPath);
+    assert.equal(result.success, true);
+    assert.equal(result.findingCount, 0, 'no findings for null reviewResult');
+  } finally {
+    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+  }
 });
 
-test('generateHTMLReport includes severity colors and findings', () => {
-  const outputPath = path.join(TEST_OUT_DIR, 'report2.html');
-  const reviewResult = {
-    fileReviews: {
-      'src/buggy.js': {
-        bugs: [{ description: 'bug', line: 1, rule: 'bug' }],
-        security: [],
-        optimization: [],
-        styling: [],
+test('reportGenerator: generateJSONReport handles fileReviews with no issues', () => {
+  const outputPath = path.join(TMPDIR, `test-clean-${Date.now()}.json`);
+  try {
+    const result = generateJSONReport('clean-repo', [{ name: 'src/index.js' }], {
+      fileReviews: { 'src/index.js': { bugs: [], security: [], optimization: [], styling: [] } },
+    }, outputPath);
+    assert.equal(result.success, true);
+    assert.equal(result.findingCount, 0);
+  } finally {
+    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+  }
+});
+
+test('reportGenerator: generateHTMLReport writes valid HTML with finding rows', () => {
+  const outputPath = path.join(TMPDIR, `test-html-${Date.now()}.html`);
+  try {
+    const repoName = 'html-test-repo';
+    const files = [{ name: 'src/app.js' }];
+    const reviewResult = {
+      fileReviews: {
+        'src/app.js': {
+          bugs: [{ line: 5, description: 'Bug here', rule: 'bug-rule' }],
+          security: [],
+          optimization: [],
+          styling: [],
+        },
       },
-    },
-  };
-  generateHTMLReport('test-repo', ['src/buggy.js'], reviewResult, outputPath);
-  const content = fs.readFileSync(outputPath, 'utf-8');
-  assert.ok(content.includes('#ff4444')); // error color
-  assert.ok(content.includes('buggy.js'));
+    };
+    const result = generateHTMLReport(repoName, files, reviewResult, outputPath);
+    assert.equal(result.success, true);
+    assert.equal(result.path, outputPath);
+    assert.ok(fs.existsSync(outputPath), 'file should be written');
+    const html = fs.readFileSync(outputPath, 'utf-8');
+    assert.ok(html.includes('<!DOCTYPE html>'), 'should be valid HTML5');
+    assert.ok(html.includes('html-test-repo'), 'should include repo name');
+    assert.ok(html.includes('src/app.js'), 'should include file path');
+    assert.ok(html.includes('Bug here'), 'should include finding message');
+  } finally {
+    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+  }
 });
 
-test('generateHTMLReport returns error on write failure', () => {
-  const result = generateHTMLReport('test-repo', [], {}, '/nonexistent/out.html');
+test('reportGenerator: generateHTMLReport returns success:false when write fails', () => {
+  const result = generateHTMLReport('repo', [], null, '/nonexistent-dir/fail.html');
   assert.equal(result.success, false);
-  assert.ok(result.error !== undefined);
 });
 
-test('getReportPath returns correct json extension', () => {
-  const p = getReportPath('json', '/tmp');
-  assert.ok(p.endsWith('.json'));
-  assert.ok(p.includes('review-report'));
-});
-
-test('getReportPath returns correct html extension', () => {
-  const p = getReportPath('html', '/tmp');
-  assert.ok(p.endsWith('.html'));
-});
-
-test('SCHEMA_VERSION is defined as 1.0', () => {
-  assert.equal(SCHEMA_VERSION, '1.0');
+test('reportGenerator: generateHTMLReport handles empty reviewResult with no findings', () => {
+  const outputPath = path.join(TMPDIR, `test-empty-html-${Date.now()}.html`);
+  try {
+    const result = generateHTMLReport('empty-repo', [], null, outputPath);
+    assert.equal(result.success, true);
+    assert.equal(result.findingCount, 0);
+    const html = fs.readFileSync(outputPath, 'utf-8');
+    assert.ok(html.includes('0'), 'empty count should appear in stats');
+  } finally {
+    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+  }
 });

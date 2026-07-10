@@ -226,8 +226,8 @@ test('AnalysisCache: invalidateByRepoUrl removes all entries for that repo', () 
   // Store two different entries for the same repo
   const key1 = cache.generateKey(repo, [{ name: 'a.js', content: 'a' }]);
   const key2 = cache.generateKey(repo, [{ name: 'b.js', content: 'b' }]);
-  cache.set(key1, { data: 1 }, repo);
-  cache.set(key2, { data: 2 }, repo);
+  cache.set(key1, { data: 1 }, { repoUrl: repo });
+  cache.set(key2, { data: 2 }, { repoUrl: repo });
 
   assert.equal(cache.cache.size, 2);
 
@@ -243,7 +243,7 @@ test('AnalysisCache: invalidateByRepoUrl returns 0 for non-existent repo', () =>
   const cache = new AnalysisCache();
   const repo = 'https://github.com/nonexistent/project';
   const key = cache.generateKey(repo, [{ name: 'x.js', content: 'x' }]);
-  cache.set(key, { data: 1 }, repo);
+  cache.set(key, { data: 1 }, { repoUrl: repo });
 
   const removed = cache.invalidateByRepoUrl('https://github.com/other/repo');
 
@@ -256,7 +256,7 @@ test('AnalysisCache: invalidateByRepoUrl normalizes trailing slashes and case', 
   const repo1 = 'https://github.com/owner/repo';
   const repo2 = 'https://github.com/owner/repo///';
   const key1 = cache.generateKey(repo1, [{ name: 'f.js', content: 'f' }]);
-  cache.set(key1, { data: 1 }, repo1);
+  cache.set(key1, { data: 1 }, { repoUrl: repo1 });
 
   const removed = cache.invalidateByRepoUrl(repo2);
 

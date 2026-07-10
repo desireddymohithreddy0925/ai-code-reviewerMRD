@@ -20,6 +20,7 @@ interface AnalysisData {
 }
 
 export const generateMarkdownReport = (repoName: string, analysis: AnalysisData): string => {
+  const escapeMarkdownCell = (str: string | number) => String(str).replace(/[&<>"`|]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '`': '&#96;', '|': '&#124;'})[c] || c);
   let markdown = `# 🛡️ RepoSage AI Code Audit Report\n\n`;
   markdown += `**Repository Name:** ${repoName}\n`;
   markdown += `**Report Timestamp:** ${new Date().toLocaleString()}\n`;
@@ -56,8 +57,7 @@ export const generateMarkdownReport = (repoName: string, analysis: AnalysisData)
 
       all.forEach(f => {
         hasFindings = true;
-        const escapeHtml = (str: string | number) => String(str).replace(/[&<>"`|]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '`': '&#96;', '|': '&#124;'})[c] || c);
-        findingsTableRows += `| ${escapeHtml(file)} | ${escapeHtml(f.category)} | ${escapeHtml(f.line)} | ${escapeHtml(f.type)} | ${escapeHtml(f.description)} | <code>${escapeHtml(f.suggestion)}</code> |\n`;
+        findingsTableRows += `| ${escapeMarkdownCell(file)} | ${escapeMarkdownCell(f.category)} | ${escapeMarkdownCell(f.line)} | ${escapeMarkdownCell(f.type)} | ${escapeMarkdownCell(f.description)} | <code>${escapeMarkdownCell(f.suggestion)}</code> |\n`;
       });
     });
   }
@@ -89,7 +89,7 @@ export const generateMarkdownReport = (repoName: string, analysis: AnalysisData)
     Object.keys(metrics).forEach(file => {
       const m = metrics[file];
       if (!m) return;
-      markdown += `| ${file} | ${m.totalLines ?? 0} | ${m.codeLines ?? 0} | ${m.commentLines ?? 0} | ${m.emptyLines ?? 0} | ${m.functionCount ?? 0} | ${m.complexityScore ?? 0} | ${m.grade ?? 'A'} |\n`;
+      markdown += `| ${escapeMarkdownCell(file)} | ${escapeMarkdownCell(m.totalLines ?? 0)} | ${escapeMarkdownCell(m.codeLines ?? 0)} | ${escapeMarkdownCell(m.commentLines ?? 0)} | ${escapeMarkdownCell(m.emptyLines ?? 0)} | ${escapeMarkdownCell(m.functionCount ?? 0)} | ${escapeMarkdownCell(m.complexityScore ?? 0)} | ${escapeMarkdownCell(m.grade ?? 'A')} |\n`;
     });
     markdown += `\n`;
   }

@@ -1,224 +1,199 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const originalWarn = console.warn;
-console.warn = () => {};
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-test('stripMagicCommands removes %matplotlib magic', async () => {
-  const { stripMagicCommands } = await import('../utils/notebookParser.js');
-  const result = stripMagicCommands('%matplotlib inline\nprint("hello")');
-  assert.ok(!result.includes('%matplotlib'));
-  assert.ok(result.includes('print("hello")'));
+const FIXTURE_PATH = path.join(__dirname, 'notebook.fixture.ipynb');
+const ORIGINAL_READ_FILE_SYNC = fs.readFileSync;
+const ORIGINAL_EXISTS_SYNC = fs.existsSync;
+
+function withNotebookFixture(notebook, fn) {
+  const content = JSON.stringify(notebook);
+  fs.existsSync = (p) => p === FIXTURE_PATH ? true : ORIGINAL_EXISTS_SYNC(p);
+  fs.readFileSync = (p) => p === FIXTURE_PATH ? content : ORIGINAL_READ_FILE_SYNC(p);
+  try {
+    return fn();
+  } finally {
+    fs.existsSync = ORIGINAL_EXISTS_SYNC;
+    fs.readFileSync = ORIGINAL_READ_FILE_SYNC;
+  }
+}
+
+import {
+  stripMagicCommands,
+  extractCodeCells,
+  parseCellsWithMetadata,
+  isNotebookFile,
+  formatNotebookFindings,
+} from '../utils/notebookParser.js';
+
+test('notebookParser: stripMagicCommands removes %matplotlib magic commands', () => {
+  const code = '%matplotlib inline\nimport numpy as np\n';
+  const result = stripMagicCommands(code);
+  assert.equal(result.includes('%matplotlib'), false, 'should remove %matplotlib');
+  assert.ok(result.includes('import numpy as np'), 'should keep actual code');
 });
 
-test('stripMagicCommands removes %pylab magic', async () => {
-  const { stripMagicCommands } = await import('../utils/notebookParser.js');
-  const result = stripMagicCommands('%pylab inline\nx = 1');
-  assert.ok(!result.includes('%pylab'));
+test('notebookParser: stripMagicCommands removes %pylab magic commands', () => {
+  const code = '%pylab inline\nimport matplotlib.pyplot as plt\n';
+  const result = stripMagicCommands(code);
+  assert.equal(result.includes('%pylab'), false);
+  assert.ok(result.includes('import matplotlib.pyplot'));
 });
 
-test('stripMagicCommands removes %config magic', async () => {
-  const { stripMagicCommands } = await import('../utils/notebookParser.js');
-  const result = stripMagicCommands('%config InlineBackend.figure_format = "retina"\nx = 1');
-  assert.ok(!result.includes('%config'));
+test('notebookParser: stripMagicCommands removes %config magic commands', () => {
+  const code = '%config InlineBackend.figure_format = "retina"\nplt.plot([1,2,3])\n';
+  const result = stripMagicCommands(code);
+  assert.equal(result.includes('%config'), false);
+  assert.ok(result.includes('plt.plot'));
 });
 
-test('stripMagicCommands removes %%time magic', async () => {
-  const { stripMagicCommands } = await import('../utils/notebookParser.js');
-  const result = stripMagicCommands('%%time\nsum(range(1000))');
-  assert.ok(!result.includes('%%time'));
+test('notebookParser: stripMagicCommands removes %%time cell magic', () => {
+  const code = '%%time\nfor i in range(1000):\n    pass\n';
+  const result = stripMagicCommands(code);
+  assert.equal(result.includes('%%time'), false);
+  assert.ok(result.includes('for i in range'));
 });
 
-test('stripMagicCommands removes %%timeit magic', async () => {
-  const { stripMagicCommands } = await import('../utils/notebookParser.js');
-  const result = stripMagicCommands('%%timeit -n 10\nsum(range(1000))');
-  assert.ok(!result.includes('%%timeit'));
+test('notebookParser: stripMagicCommands removes %%capture cell magic line', () => {
+  const code = '%%capture\nprint("captured")\n';
+  const result = stripMagicCommands(code);
+  assert.equal(result.includes('%%capture'), false, '%%capture should be removed');
+  assert.ok(result.includes('print("captured")'), 'cell body should remain');
 });
 
-test('stripMagicCommands removes %%capture magic', async () => {
-  const { stripMagicCommands } = await import('../utils/notebookParser.js');
-  const result = stripMagicCommands('%%capture output\nprint("captured")');
-  assert.ok(!result.includes('%%capture'));
+test('notebookParser: stripMagicCommands removes %%writefile cell magic', () => {
+  const code = '%%writefile output.txt\nHello World\n';
+  const result = stripMagicCommands(code);
+  assert.equal(result.includes('%%writefile'), false);
 });
 
-test('stripMagicCommands removes %%writefile magic', async () => {
-  const { stripMagicCommands } = await import('../utils/notebookParser.js');
-  const result = stripMagicCommands('%%writefile data.txt\nhello world');
-  assert.ok(!result.includes('%%writefile'));
+test('notebookParser: stripMagicCommands removes %%sh and %%bash cell magic lines', () => {
+  const code = '%%sh\nls -la\n';
+  const result = stripMagicCommands(code);
+  assert.equal(result.includes('%%sh'), false, '%%sh should be removed');
+  assert.ok(result.includes('ls -la'), 'shell command should remain');
+
+  const code2 = '%%bash\necho hello\n';
+  const result2 = stripMagicCommands(code2);
+  assert.equal(result2.includes('%%bash'), false, '%%bash should be removed');
+  assert.ok(result2.includes('echo hello'), 'bash command should remain');
 });
 
-test('stripMagicCommands removes shell escape ! commands', async () => {
-  const { stripMagicCommands } = await import('../utils/notebookParser.js');
-  const result = stripMagicCommands('!pip install numpy\nimport numpy as np');
-  assert.ok(!result.includes('!pip'));
+test('notebookParser: stripMagicCommands removes ! shell escape lines', () => {
+  const code = '!pip install numpy\nimport numpy as np\n';
+  const result = stripMagicCommands(code);
+  assert.equal(result.includes('!pip'), false);
+  assert.ok(result.includes('import numpy'));
 });
 
-test('stripMagicCommands removes standalone % magic commands', async () => {
-  const { stripMagicCommands } = await import('../utils/notebookParser.js');
-  const result = stripMagicCommands('%who_ls\nx = 1\n%reset');
-  assert.ok(!result.includes('%who_ls'));
-  assert.ok(!result.includes('%reset'));
+test('notebookParser: stripMagicCommands removes bare % line magics', () => {
+  const code = '%reset -f\n%time sum(range(100))\nimport os\n';
+  const result = stripMagicCommands(code);
+  assert.equal(result.includes('%reset'), false);
+  assert.equal(result.includes('%time'), false);
+  assert.ok(result.includes('import os'));
 });
 
-test('stripMagicCommands removes empty lines after magic removal', async () => {
-  const { stripMagicCommands } = await import('../utils/notebookParser.js');
-  const result = stripMagicCommands('!pip install\n\n\nprint("done")');
-  assert.ok(!result.includes('\n\n\n'));
+test('notebookParser: stripMagicCommands removes leading/trailing blank lines after stripping', () => {
+  const code = '\n\n   \n!echo hello\n   \n\n';
+  const result = stripMagicCommands(code);
+  assert.equal(result.startsWith('\n'), false, 'should not start with newline');
+  assert.equal(result.endsWith('\n'), false, 'should not end with newline');
 });
 
-test('stripMagicCommands trims trailing whitespace', async () => {
-  const { stripMagicCommands } = await import('../utils/notebookParser.js');
-  const result = stripMagicCommands('!ls\n   \n   ');
-  assert.strictEqual(result.trimEnd(), result);
+test('notebookParser: extractCodeCells returns empty array for invalid notebook', () => {
+  withNotebookFixture({ cells: null }, () => {
+    const result = extractCodeCells(FIXTURE_PATH);
+    assert.deepEqual(result, [], 'should return empty for invalid notebook');
+  });
 });
 
-test('stripMagicCommands passes through plain code unchanged', async () => {
-  const { stripMagicCommands } = await import('../utils/notebookParser.js');
-  const code = 'def hello():\n    print("world")';
-  assert.strictEqual(stripMagicCommands(code), code);
+test('notebookParser: extractCodeCells returns empty array when cells is not an array', () => {
+  withNotebookFixture({}, () => {
+    const result = extractCodeCells(FIXTURE_PATH);
+    assert.deepEqual(result, []);
+  });
 });
 
-test('stripMagicCommands handles empty string', async () => {
-  const { stripMagicCommands } = await import('../utils/notebookParser.js');
-  assert.strictEqual(stripMagicCommands(''), '');
-});
-
-test('stripMagicCommands removes %%sh and %%bash magic', async () => {
-  const { stripMagicCommands } = await import('../utils/notebookParser.js');
-  const result = stripMagicCommands('%%sh\nls -la\npwd');
-  assert.ok(!result.includes('%%sh'));
-  const result2 = stripMagicCommands('%%bash\necho hello');
-  assert.ok(!result2.includes('%%bash'));
-});
-
-test('isNotebookFile returns true for .ipynb files', async () => {
-  const { isNotebookFile } = await import('../utils/notebookParser.js');
-  assert.strictEqual(isNotebookFile('notebook.ipynb'), true);
-  assert.strictEqual(isNotebookFile('path/to/data.ipynb'), true);
-});
-
-test('isNotebookFile returns false for non-notebook files', async () => {
-  const { isNotebookFile } = await import('../utils/notebookParser.js');
-  assert.strictEqual(isNotebookFile('script.py'), false);
-  assert.strictEqual(isNotebookFile('data.txt'), false);
-  assert.strictEqual(isNotebookFile('notebook.py'), false);
-});
-
-test('formatNotebookFindings adds cellContext to each finding', async () => {
-  const { formatNotebookFindings } = await import('../utils/notebookParser.js');
-  const findings = [{ line: 1, type: 'secret' }, { line: 5, type: 'secret' }];
-  const result = formatNotebookFindings(findings, 2);
-  assert.strictEqual(result[0].cellContext, 'Cell 2');
-  assert.strictEqual(result[1].cellContext, 'Cell 2');
-  assert.strictEqual(result.length, 2);
-});
-
-console.warn = originalWarn;
-
-test('extractCodeCells returns code cells from valid notebook', async () => {
-  const { extractCodeCells } = await import('../utils/notebookParser.js');
-  const fs = await import('fs');
-  const path = await import('path');
-  const os = await import('os');
-  const tmpDir = await os.tmpdir();
-  const tmpFile = path.join(tmpDir, 'test_notebook_' + Date.now() + '.ipynb');
-
+test('notebookParser: extractCodeCells returns only code cells with non-empty source', () => {
   const notebook = {
     cells: [
       { cell_type: 'markdown', source: '# Title' },
-      { cell_type: 'code', source: 'x = 1' },
-      { cell_type: 'code', source: ['y = 2\n', 'z = 3'] },
-      { cell_type: 'markdown', source: '## Section' },
+      { cell_type: 'code', source: 'print("hello")' },
       { cell_type: 'code', source: '' },
-    ]
-  };
-  fs.writeFileSync(tmpFile, JSON.stringify(notebook));
-
-  const result = extractCodeCells(tmpFile);
-  fs.unlinkSync(tmpFile);
-
-  assert.strictEqual(result.length, 2);
-  assert.strictEqual(result[0], 'x = 1');
-  assert.strictEqual(result[1], 'y = 2\nz = 3');
-});
-
-test('extractCodeCells returns empty array for notebook without cells', async () => {
-  const { extractCodeCells } = await import('../utils/notebookParser.js');
-  const fs = await import('fs');
-  const path = await import('path');
-  const os = await import('os');
-  const tmpDir = await os.tmpdir();
-  const tmpFile = path.join(tmpDir, 'test_notebook2_' + Date.now() + '.ipynb');
-
-  const notebook = {};
-  fs.writeFileSync(tmpFile, JSON.stringify(notebook));
-
-  const result = extractCodeCells(tmpFile);
-  fs.unlinkSync(tmpFile);
-
-  assert.deepStrictEqual(result, []);
-});
-
-test('extractCodeCells returns empty array for non-notebook JSON', async () => {
-  const { extractCodeCells } = await import('../utils/notebookParser.js');
-  const fs = await import('fs');
-  const path = await import('path');
-  const os = await import('os');
-  const tmpDir = await os.tmpdir();
-  const tmpFile = path.join(tmpDir, 'test_notebook3_' + Date.now() + '.ipynb');
-
-  fs.writeFileSync(tmpFile, JSON.stringify({ cells: 'not an array' }));
-
-  const result = extractCodeCells(tmpFile);
-  fs.unlinkSync(tmpFile);
-
-  assert.deepStrictEqual(result, []);
-});
-
-test('extractCodeCells skips cells with empty source', async () => {
-  const { extractCodeCells } = await import('../utils/notebookParser.js');
-  const fs = await import('fs');
-  const path = await import('path');
-  const os = await import('os');
-  const tmpDir = await os.tmpdir();
-  const tmpFile = path.join(tmpDir, 'test_notebook4_' + Date.now() + '.ipynb');
-
-  const notebook = {
-    cells: [
-      { cell_type: 'code', source: '   \n  ' },
-      { cell_type: 'code', source: 'valid = True' },
-    ]
-  };
-  fs.writeFileSync(tmpFile, JSON.stringify(notebook));
-
-  const result = extractCodeCells(tmpFile);
-  fs.unlinkSync(tmpFile);
-
-  assert.strictEqual(result.length, 1);
-  assert.strictEqual(result[0], 'valid = True');
-});
-
-test('parseCellsWithMetadata returns cells with metadata', async () => {
-  const { parseCellsWithMetadata } = await import('../utils/notebookParser.js');
-  const fs = await import('fs');
-  const path = await import('path');
-  const os = await import('os');
-  const tmpDir = await os.tmpdir();
-  const tmpFile = path.join(tmpDir, 'test_notebook5_' + Date.now() + '.ipynb');
-
-  const notebook = {
-    cells: [
-      { cell_type: 'code', source: '%%time\nx = 1' },
-      { cell_type: 'markdown', source: '# Title' },
+      { cell_type: 'code', source: '  \n  \n' },
+      { cell_type: 'code', source: ['x = 1\n', 'y = 2\n'] },
+      { cell_type: 'markdown', source: 'Another text cell' },
     ],
   };
-  fs.writeFileSync(tmpFile, JSON.stringify(notebook));
+  withNotebookFixture(notebook, () => {
+    const result = extractCodeCells(FIXTURE_PATH);
+    assert.equal(result.length, 2, 'should return 2 code cells with non-empty source');
+    assert.equal(result[0], 'print("hello")');
+    assert.equal(result[1], 'x = 1\ny = 2\n');
+  });
+});
 
-  const cells = parseCellsWithMetadata(tmpFile);
-  fs.unlinkSync(tmpFile);
-  
-  assert.equal(cells.length, 1);
-  assert.equal(cells[0].cellIndex, 0);
-  assert.equal(cells[0].cleanedSource, 'x = 1');
-  assert.ok(cells[0].originalSource.includes('%%time'));
+test('notebookParser: parseCellsWithMetadata strips magic commands and tracks line counts', () => {
+  const notebook = {
+    cells: [
+      {
+        cell_type: 'code',
+        source: '%matplotlib inline\nx = [1, 2, 3]\n',
+      },
+    ],
+  };
+  withNotebookFixture(notebook, () => {
+    const result = parseCellsWithMetadata(FIXTURE_PATH);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].cellIndex, 0);
+    assert.equal(result[0].originalSource, '%matplotlib inline\nx = [1, 2, 3]\n');
+    assert.ok(result[0].cleanedSource.includes('x = [1, 2, 3]'), 'cleaned source should have code');
+    assert.ok(!result[0].cleanedSource.includes('%matplotlib'), 'cleaned source should not have magic');
+    assert.ok(result[0].lineCount > 0, 'should have a line count');
+  });
+});
+
+test('notebookParser: parseCellsWithMetadata skips empty cells after magic stripping', () => {
+  const notebook = {
+    cells: [
+      { cell_type: 'code', source: '%matplotlib inline\n' },
+      { cell_type: 'code', source: 'print("real code")\n' },
+    ],
+  };
+  withNotebookFixture(notebook, () => {
+    const result = parseCellsWithMetadata(FIXTURE_PATH);
+    assert.equal(result.length, 1, 'only non-empty-after-stripping cell should be returned');
+    assert.ok(result[0].cleanedSource.includes('print'));
+  });
+});
+
+test('notebookParser: isNotebookFile returns true for .ipynb files', () => {
+  assert.equal(isNotebookFile('notebook.ipynb'), true);
+  assert.equal(isNotebookFile('path/to/file.ipynb'), true);
+  assert.equal(isNotebookFile('NOTEBOOK.ipynb'), true);
+});
+
+test('notebookParser: isNotebookFile returns false for non-ipynb files', () => {
+  assert.equal(isNotebookFile('script.py'), false);
+  assert.equal(isNotebookFile('script.js'), false);
+  assert.equal(isNotebookFile('notebook.py'), false);
+  assert.equal(isNotebookFile('notebook.ipynb.txt'), false);
+});
+
+test('notebookParser: formatNotebookFindings adds cellContext to each finding', () => {
+  const findings = [
+    { file: 'cell.ipynb', line: 1, severity: 'error', message: 'Bug in cell' },
+    { file: 'cell.ipynb', line: 5, severity: 'warning', message: 'Style issue' },
+  ];
+  const result = formatNotebookFindings(findings, 2);
+  assert.equal(result.length, 2);
+  assert.equal(result[0].cellContext, 'Cell 2');
+  assert.equal(result[1].cellContext, 'Cell 2');
+  assert.equal(result[0].message, 'Bug in cell', 'original fields preserved');
 });

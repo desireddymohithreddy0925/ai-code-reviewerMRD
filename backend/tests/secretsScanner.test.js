@@ -100,6 +100,22 @@ test('scanSecrets detects auth_token assignment', async () => {
   assert.ok(findings.some(f => f.type === 'Common Environment Credential'));
 });
 
+test('scanSecrets detects Slack Token Check', async () => {
+  const { scanSecrets } = await import('../utils/secretsScanner.js');
+  const code = 'slack_token = "xoxb-mockslacktokenvalue"';
+  const findings = scanSecrets(code);
+  assert.ok(findings.length > 0);
+  assert.ok(findings.some(f => f.type === 'Slack Token Check'));
+});
+
+test('scanSecrets detects Discord Bot Token', async () => {
+  const { scanSecrets } = await import('../utils/secretsScanner.js');
+  const code = 'discord_token = "notarealdiscorduseridher.notrea.notarealdiscordbottokenhere"';
+  const findings = scanSecrets(code);
+  assert.ok(findings.length > 0);
+  assert.ok(findings.some(f => f.type === 'Discord Bot Token'));
+});
+
 test('scanSecrets returns findings with expected shape', async () => {
   const { scanSecrets } = await import('../utils/secretsScanner.js');
   const code = 'AWS_KEY = "AKIAIOSFODNN7EXAMPLE"';

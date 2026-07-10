@@ -21,11 +21,11 @@ class TestHealthCheck:
         data = response.json()
         assert "embedding_model" in data
 
-    def test_health_check_returns_deterministic_fallback_when_st_is_unavailable(self):
-        # conftest.py stubs sentence_transformers, so fallback is active
+    def test_health_check_returns_sentence_transformer(self):
+        # conftest.py does not stub sentence_transformers, so it loads correctly
         response = client.get("/health")
         data = response.json()
-        assert data["embedding_model"] == "deterministic_fallback"
+        assert data["embedding_model"] == "sentence-transformer"
 
     def test_health_check_response_is_json_object(self):
         response = client.get("/health")

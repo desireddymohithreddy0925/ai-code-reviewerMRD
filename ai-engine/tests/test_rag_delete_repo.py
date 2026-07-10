@@ -20,7 +20,7 @@ class TestDeleteRepoChunks:
     def test_deletes_all_chunks_in_single_batch(self):
         with patch("rag._get_collection") as mock_get_col:
             mock_collection = MagicMock()
-            mock_collection.get.return_value = {"ids": ["a", "b", "c"]}
+            mock_collection.get.side_effect = [{"ids": ["a", "b", "c"]}, {"ids": []}]
             mock_get_col.return_value = mock_collection
 
             result = delete_repo_chunks("https://github.com/owner/repo")
@@ -59,7 +59,7 @@ class TestDeleteRepoChunks:
     def test_is_idempotent_on_already_empty_collection(self):
         with patch("rag._get_collection") as mock_get_col:
             mock_collection = MagicMock()
-            mock_collection.get.side_effect = [{"ids": []}]
+            mock_collection.get.side_effect = [{"ids": []}, {"ids": []}]
             mock_get_col.return_value = mock_collection
 
             result = delete_repo_chunks("https://github.com/owner/repo")

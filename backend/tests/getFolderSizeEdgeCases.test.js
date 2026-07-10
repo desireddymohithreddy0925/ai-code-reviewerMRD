@@ -9,6 +9,20 @@ import { getFolderSize } from '../utils/fileHelper.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const canCreateSymlinks = (() => {
+  try {
+    const tempTarget = path.join(os.tmpdir(), `symlink-test-target-${Date.now()}`);
+    const tempLink = path.join(os.tmpdir(), `symlink-test-link-${Date.now()}`);
+    fs.writeFileSync(tempTarget, 'test');
+    fs.symlinkSync(tempTarget, tempLink);
+    fs.unlinkSync(tempLink);
+    fs.unlinkSync(tempTarget);
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 test('getFolderSize returns correct size for deeply nested directories', async () => {
   const base = path.join(__dirname, 'temp_edge_nested');
   const cleanup = () => {
@@ -78,7 +92,7 @@ test('getFolderSize counts files with leading-dot names', async () => {
   }
 });
 
-test('getFolderSize skips symlinked subdirectories without following them', async () => {
+test('getFolderSize skips symlinked subdirectories without following them', { skip: !canCreateSymlinks }, async () => {
   // Create a real directory with content
   const realDir = fs.mkdtempSync(path.join(os.tmpdir(), 'real-target-'));
   fs.writeFileSync(path.join(realDir, 'real_file.txt'), 'real content');
@@ -128,7 +142,7 @@ test('getFolderSize handles empty subdirectories correctly', async () => {
   }
 });
 
-test('getFolderSize returns 0 for a directory with only broken symlinks', async () => {
+test('getFolderSize returns 0 for a directory with only broken symlinks', { skip: !canCreateSymlinks }, async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'broken_sym_edge-'));
   const brokenLink = path.join(tempDir, 'broken_link');
   fs.symlinkSync('/this/path/does/not/exist', brokenLink);

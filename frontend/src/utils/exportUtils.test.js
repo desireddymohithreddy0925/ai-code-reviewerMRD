@@ -91,6 +91,18 @@ describe('generateMarkdownReport', () => {
     expect(report).toContain('B');
   });
 
+  it('escapes pipe characters in metric file paths', () => {
+    const analysis: any = {
+      fileReviews: {},
+      metrics: {
+        'src/a|b.js': { totalLines: 1, codeLines: 1, commentLines: 0, emptyLines: 0, functionCount: 0, complexityScore: 1, grade: 'A|B' }
+      }
+    };
+    const report = generateMarkdownReport('test-repo', analysis);
+    expect(report).toContain('src/a&#124;b.js');
+    expect(report).toContain('A&#124;B');
+  });
+
   it('does not include metrics table when metrics is empty', () => {
     const report = generateMarkdownReport('test-repo', { fileReviews: {}, metrics: {} });
     expect(report).not.toContain('Code Metrics');

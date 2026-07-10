@@ -43,6 +43,7 @@ test('requireApiKey calls next() when valid key is provided', () => {
 
   assert.equal(nextCalled, true, 'next() should be called for valid key');
   assert.equal(res.statusCode, null, 'no response should be sent for valid key');
+  assert.ok(req.clientId && typeof req.clientId === 'string', 'should set a clientId');
 });
 
 test('requireApiKey returns 401 when API key is missing', () => {
@@ -66,6 +67,7 @@ test('requireApiKey calls next() when a valid frontend session cookie is provide
 
   assert.equal(nextCalled, true, 'next() should be called for valid session cookie');
   assert.equal(res.statusCode, null, 'no response should be sent for valid session cookie');
+  assert.ok(req.clientId, 'session cookie should set a client id');
 });
 
 test('requireApiKey returns 401 when frontend session cookie is tampered', () => {

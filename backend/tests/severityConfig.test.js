@@ -50,7 +50,7 @@ test('categorizeFinding handles missing message and rule_id fields', () => {
   assert.equal(categorizeFinding({ rule_id: '' }), 'other');
 });
 
-test('filterByMinimumSeverity returns findings below the threshold', () => {
+test('filterByMinimumSeverity returns findings equal to or more severe than error', () => {
   const findings = [
     { severity: 'error' },
     { severity: 'warning' },
@@ -58,10 +58,11 @@ test('filterByMinimumSeverity returns findings below the threshold', () => {
   ];
 
   const result = filterByMinimumSeverity(findings, 'error');
-  assert.equal(result.length, 0);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].severity, 'error');
 });
 
-test('filterByMinimumSeverity with warning returns only warning and info', () => {
+test('filterByMinimumSeverity with warning returns error and warning', () => {
   const findings = [
     { severity: 'error' },
     { severity: 'warning' },
@@ -69,8 +70,9 @@ test('filterByMinimumSeverity with warning returns only warning and info', () =>
   ];
 
   const result = filterByMinimumSeverity(findings, 'warning');
-  assert.equal(result.length, 1);
-  assert.equal(result[0].severity, 'warning');
+  assert.equal(result.length, 2);
+  assert.equal(result[0].severity, 'error');
+  assert.equal(result[1].severity, 'warning');
 });
 
 test('filterByMinimumSeverity with info returns all three severities', () => {
@@ -84,28 +86,28 @@ test('filterByMinimumSeverity with info returns all three severities', () => {
   assert.equal(result.length, 3);
 });
 
-test('filterByMinimumSeverity with unknown minimum severity falls back to rank 0', () => {
+test('filterByMinimumSeverity with unknown minimum severity falls back to error', () => {
   const findings = [
     { severity: 'error' },
     { severity: 'warning' },
     { severity: 'info' },
   ];
 
-  // 'unknown' is not a key in severityRank, so minRank falls back to 0 via || 0.
-  // With minRank=0, no finding with a positive rank passes the <= check.
   const result = filterByMinimumSeverity(findings, 'unknown');
-  assert.equal(result.length, 0);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].severity, 'error');
 });
 
-test('filterByMinimumSeverity handles findings with unknown severity values', () => {
+test('filterByMinimumSeverity handles findings with unknown severity values (treated as info)', () => {
   const findings = [
     { severity: 'error' },
     { severity: 'unknown-severity' },
     { severity: 'info' },
   ];
 
-  const result = filterByMinimumSeverity(findings, 'error');
-  assert.equal(result.length, 0);
+  const result = filterByMinimumSeverity(findings, 'warning');
+  assert.equal(result.length, 1);
+  assert.equal(result[0].severity, 'error');
 });
 
 test('filterByMinimumSeverity handles empty findings array', () => {

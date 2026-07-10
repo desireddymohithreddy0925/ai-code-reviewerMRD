@@ -890,11 +890,17 @@ export default function Dashboard() {
 
     const userMessage = chatInput;
     setChatInput("");
-    setChatHistory((prev) => {
-      const updated = [...prev, { role: "user" as const, content: userMessage }];
-      if (!safeSetItem(CHAT_HISTORY_KEY, JSON.stringify(truncateChatHistory(updated)))) setStorageWarning(true);
-      return updated;
-    });
+
+    // Build the updated history array locally FIRST so it includes the user's
+    // current message when sent to the API, rather than relying on the stale
+    // chatHistory closure value (which would be one message behind).
+    const updatedHistory = truncateChatHistory([
+      ...(chatHistory || []),
+      { role: "user" as const, content: userMessage }
+    ]);
+    setChatHistory(updatedHistory);
+    if (!safeSetItem(CHAT_HISTORY_KEY, JSON.stringify(updatedHistory))) setStorageWarning(true);
+
     setIsChatLoading(true);
 
     try {
@@ -904,7 +910,7 @@ export default function Dashboard() {
         method: "POST",
         body: JSON.stringify({
             message: userMessage,
-            history: truncateChatHistory(chatHistory),
+            history: updatedHistory,
             model: selectedModel,
             temperature: chatAiSettings.temperature ?? 0.4,
             maxTokens: chatAiSettings.maxTokens ?? 2048,
@@ -1046,7 +1052,7 @@ export default function Dashboard() {
       try {
         const sanitized = updatedHistory.map((entry) => sanitizeAuditEntry(entry as unknown as Record<string, unknown>));
         localStorage.setItem('reposage_audit_history', JSON.stringify(sanitized));
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (e instanceof DOMException && e.name === 'QuotaExceededError') {
           console.warn('localStorage quota exceeded — audit history not saved.');
         } else {

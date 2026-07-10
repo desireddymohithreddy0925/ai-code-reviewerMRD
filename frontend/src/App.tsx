@@ -55,4 +55,3 @@ export default function App() {
     );
 }
 
-// TODO: Complete full implementation for #1291 - Tech Debt: Replace 'any' type in catch clauses with 'unknown' or 'Error' across Dashboard.tsx

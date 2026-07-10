@@ -9,6 +9,20 @@ import { getFolderSize } from '../utils/fileHelper.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const canCreateSymlinks = (() => {
+  try {
+    const tempTarget = path.join(os.tmpdir(), `symlink-test-target-${Date.now()}`);
+    const tempLink = path.join(os.tmpdir(), `symlink-test-link-${Date.now()}`);
+    fs.writeFileSync(tempTarget, 'test');
+    fs.symlinkSync(tempTarget, tempLink);
+    fs.unlinkSync(tempLink);
+    fs.unlinkSync(tempTarget);
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 test('getFolderSize returns 0 for non-existent directory', async () => {
   const size = await getFolderSize('/non/existent/path/12345');
   assert.equal(size, 0, 'Non-existent path should return 0');
@@ -86,7 +100,7 @@ test('getFolderSize returns total size for mixed files and subdirectories', asyn
   fs.rmSync(tempDir, { recursive: true });
 });
 
-test('getFolderSize skips symbolic links to files', async () => {
+test('getFolderSize skips symbolic links to files', { skip: !canCreateSymlinks }, async () => {
   const tempDir = path.join(__dirname, 'temp_size_symlink');
   if (fs.existsSync(tempDir)) {
     fs.rmSync(tempDir, { recursive: true });

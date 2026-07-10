@@ -64,11 +64,10 @@ class TestLanguageSeparators:
 class TestMakeSplitterEdgeCases:
     """Boundary value tests for _make_splitter."""
 
-    def test_chunk_size_zero_is_allowed(self):
-        """chunk_size=0 should not raise an error."""
-        splitter = _make_splitter("main.py", chunk_size=0)
-        assert isinstance(splitter, RecursiveCharacterTextSplitter)
-        assert splitter._chunk_size == 0
+    def test_chunk_size_zero_raises_error(self):
+        """chunk_size=0 should raise a ValueError in LangChain."""
+        with pytest.raises(ValueError, match="chunk_size must be > 0"):
+            _make_splitter("main.py", chunk_size=0)
 
     def test_chunk_size_one_is_allowed(self):
         """chunk_size=1 should not raise an error."""
@@ -97,10 +96,9 @@ class TestMakeSplitterEdgeCases:
         assert splitter._chunk_size == 1_000_000
 
     def test_both_zero_chunk_size_and_overlap(self):
-        """chunk_size=0 and chunk_overlap=0 should be valid together."""
-        splitter = _make_splitter("main.py", chunk_size=0, chunk_overlap=0)
-        assert splitter._chunk_size == 0
-        assert splitter._chunk_overlap == 0
+        """chunk_size=0 raises ValueError, regardless of overlap."""
+        with pytest.raises(ValueError, match="chunk_size must be > 0"):
+            _make_splitter("main.py", chunk_size=0, chunk_overlap=0)
 
 
 class TestDetectLanguageCoversAllSeparators:

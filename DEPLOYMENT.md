@@ -10,8 +10,7 @@ Vercel is the best place to host the frontend. We have already added a `vercel.j
 3. Important: Open the **"Framework Preset"** section and ensure it says **Vite**.
 4. Open the **"Root Directory"** setting and type `frontend`.
 5. Under **Environment Variables**, add:
-    * `GROQ_API_KEY`: *(Your Groq API key - server-side only, never exposed to clients)*
-   * `VITE_API_BASE_URL`: *(The URL of your deployed backend, e.g., `https://reposage-backend.onrender.com`)*
+   * `VITE_API_URL`: *(The URL of your deployed backend, e.g., `https://reposage-backend.onrender.com`)*
 6. Click **Deploy**.
 
 ## 2. Backend & AI Engine ➜ Render
@@ -24,6 +23,7 @@ Render is perfect for our Node.js and Python services because they run continuou
 5. It will ask you to fill in the environment variables:
    * `GROQ_API_KEY`: *(Your Groq API key)*
    * `ALLOWED_ORIGINS`: *(The URL of your deployed Vercel frontend, e.g., `https://reposage-frontend.vercel.app`)*
+   * `SESSION_SECRET`: *(A long, random string used to sign frontend session cookies)*
 6. Click **Apply**.
 
 ### 🎉 That's it!
