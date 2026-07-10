@@ -153,21 +153,28 @@ app.use((req, res, next) => {
     const MAX_WEBHOOK_BODY = 5 * 1024 * 1024; // 5 MB
     const chunks = [];
     let totalBytes = 0;
+    let responseAlreadySent = false;
     req.on('error', () => {});
     req.on('data', chunk => {
+      if (responseAlreadySent) return;
       totalBytes += chunk.length;
       if (totalBytes > MAX_WEBHOOK_BODY) {
+        responseAlreadySent = true;
         res.status(413).json({ error: 'Webhook payload too large' });
+        req.removeAllListeners('data');
+        req.removeAllListeners('end');
         req.resume();
         return;
       }
       chunks.push(chunk);
     });
     req.on('end', () => {
+      if (responseAlreadySent) return;
       req.rawBody = Buffer.concat(chunks);
       try {
         req.body = JSON.parse(req.rawBody.toString('utf-8'));
       } catch {
+        responseAlreadySent = true;
         return res.status(400).json({ error: 'Invalid webhook payload' });
       }
       next();
