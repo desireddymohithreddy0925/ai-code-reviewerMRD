@@ -507,6 +507,9 @@ async function generateDependencyReport(clonePath) {
 // TTL matches GitHub's webhook retry window (300 seconds)
 const DELIVERY_REDIS_TTL = 300;
 
+// In-memory fallback for webhook SHA dedup when Redis is unavailable
+const shaDedupMemoryMap = new Map();
+const SHA_DEDUP_MAX_SIZE = 10000;
 
 const cacheMetricsTimer = setInterval(() => {
   const stats = analysisCache.getStats();
@@ -1417,7 +1420,11 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
     if (redisClient) {
       isDuplicate = await redisClient.setnx(deliveryDedupKey, Date.now().toString());
     } else {
-      isDuplicate = checkAndSetDedup(deliveryDedupKey);
+      const existing = await dedupStore.get(deliveryDedupKey);
+      isDuplicate = existing ? 0 : 1;
+      if (isDuplicate) {
+        await dedupStore.set(deliveryDedupKey, Date.now().toString(), DELIVERY_REDIS_TTL * 1000);
+      }
     }
     if (isDuplicate === 0) {
       console.log(`ΓÅ¡∩╕Å Skipping duplicate webhook delivery: ${deliveryId}`);
