@@ -1202,7 +1202,7 @@ app.post('/api/analyze-file', requireApiKey, requireJsonContentType, analyzeLimi
 
 // ≡ƒƒó Route: AI Chat with Repository (session-isolated per issue #59)
 app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async (req, res) => {
-  let { message, history = [], model = 'llama-3.3-70b-versatile', temperature = 0.7, maxTokens = 2048, systemPrompt = 'You are a helpful code reviewer.', sessionId, useRag, ragSources } = req.body;
+  let { message, history = [], model = 'llama-3.3-70b-versatile', temperature = 0.7, maxTokens = 2048, systemPrompt = 'You are a helpful code reviewer.', sessionId, sessionOwnerToken, useRag, ragSources } = req.body;
 
   const chatNormalized = ALLOWED_ANALYSIS_MODELS.find(m => m.toLowerCase() === model.toLowerCase());
   if (!chatNormalized) {
@@ -1248,16 +1248,30 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
       }
 
       // Verify session ownership to prevent IDOR (issue #742).
-      // Ownership is validated server-side using the stored ownerToken from MongoDB.
-      // The ownerToken is now set on the session document during creation and
-      // verified against the sessionId alone ΓÇö not leaked to the frontend.
+      // The caller must provide the correct sessionOwnerToken that was set during session creation.
       if (context.ownerToken) {
-        const sessionOwnerToken = await Session.findById(context._id).select('ownerToken');
-        if (!sessionOwnerToken || !sessionOwnerToken.ownerToken) {
-          console.warn(`ΓÜá∩╕Å Session ownership validation failed: session ${sessionId} missing ownerToken`);
+        if (!sessionOwnerToken) {
+          console.warn(`ΓÜá∩╕Å Session ownership validation failed: session ${sessionId} missing sessionOwnerToken in request`);
+          res.status(403).json({ error: 'Access denied: sessionOwnerToken is required.' });
+          return;
+        }
+        const sessionDoc = await Session.findById(context._id).select('ownerToken').lean();
+        if (!sessionDoc || !sessionDoc.ownerToken) {
+          console.warn(`ΓÜá∩╕Å Session ownership validation failed: session ${sessionId} missing ownerToken in database`);
+          res.status(403).json({ error: 'Access denied: session not found or missing owner token.' });
+          return;
+        }
+        const providedBuf = Buffer.from(String(sessionOwnerToken), 'utf8');
+        const storedBuf = Buffer.from(String(sessionDoc.ownerToken), 'utf8');
+        if (providedBuf.length !== storedBuf.length || !crypto.timingSafeEqual(providedBuf, storedBuf)) {
+          console.warn(`ΓÜá∩╕Å Session ownership mismatch: session ${sessionId} token does not match`);
           res.status(403).json({ error: 'Access denied: this session does not belong to you.' });
           return;
         }
+      } else {
+        // Sessions without ownerToken cannot be accessed via chat
+        res.status(403).json({ error: 'Access denied: session has no ownership token.' });
+        return;
       }
 
       // Extend TTL atomically with ownership check, inside the lock
