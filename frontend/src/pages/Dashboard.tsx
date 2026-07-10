@@ -7,7 +7,6 @@ import KeyboardShortcutsHelp from "../components/KeyboardShortcutsHelp";
 import { VulnerabilitiesBarChart } from '../components/VulnerabilitiesBarChart';
 import MarkdownErrorBoundary from '../components/MarkdownErrorBoundary';
 import CopyToClipboardButton from "../components/CopyToClipboardButton";
-import HealthScoreGauge from "../components/HealthScoreGauge";
 import SectionErrorBoundary from "../components/SectionErrorBoundary";
 import AnalysisForm from "../components/AnalysisForm";
 import AuditHistoryPanel from "../components/AuditHistoryPanel";
@@ -20,7 +19,6 @@ import {
   ShieldAlert,
   Zap,
   Sparkles,
-  FolderGit,
   FileCode,
   CheckCircle,
   AlertOctagon,
@@ -30,9 +28,6 @@ import {
   Layers,
   Code2,
   MessageSquare,
-  Send,
-  Clock,
-  Trash2,
   Search,
   X,
   ChevronsUpDown,
@@ -44,7 +39,7 @@ import {
   FileText,
 } from "lucide-react";
 import { handleMarkdownExport, handleHtmlExport, handlePdfExport } from "../utils/exportUtils";
-import { sanitizeMermaidOutput, sanitizeAuditEntry, sanitizeForStorage } from "../utils/sanitize";
+import { sanitizeAuditEntry } from "../utils/sanitize";
 // Path resolves correctly: pages/ -> ../utils/api -> frontend/src/utils/api
 import { apiFetch } from "../utils/api";
 

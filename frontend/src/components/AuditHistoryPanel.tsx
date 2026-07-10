@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { Clock, Trash2 } from "lucide-react";
 import { AuditHistoryEntry } from "../pages/Dashboard";
 

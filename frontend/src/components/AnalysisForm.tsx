@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { FolderGit, Sparkles } from "lucide-react";
 
 interface AnalysisFormProps {

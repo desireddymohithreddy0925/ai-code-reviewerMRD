@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { BackendResponse } from "../pages/Dashboard";
 import HealthScoreGauge from "./HealthScoreGauge";
 

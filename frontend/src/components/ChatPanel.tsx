@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { Sparkles, MessageSquare, FileCode, AlertTriangle, Send } from "lucide-react";
+import { Sparkles, FileCode, AlertTriangle, Send } from "lucide-react";
 import CopyToClipboardButton from "./CopyToClipboardButton";
 import { ChatMessage } from "../store/useStore";
 
