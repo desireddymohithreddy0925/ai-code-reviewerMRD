@@ -6,6 +6,9 @@ import { scanSecretsInChanges } from './utils/secretsScanner.js';
 import { globToRegex } from './utils/globToRegex.js';
 import { cleanAndParseJSON, normalizeReviewLineNumber } from './utils/actionUtils.js';
 
+import { GitHubProvider } from './providers/GitHubProvider.js';
+import { GitLabProvider } from './providers/GitLabProvider.js';
+
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -59,27 +62,27 @@ async function run() {
     const validExtensions = includeExtensions.length > 0 ? includeExtensions : defaultExtensions;
 
     // 2. Initialize Clients
-    const octokit = github.getOctokit(githubToken);
+    let provider;
+    if (process.env.GITLAB_CI) {
+      provider = new GitLabProvider(process.env.GITLAB_TOKEN || core.getInput('gitlab-token') || process.env.GITHUB_TOKEN);
+    } else {
+      provider = new GitHubProvider(githubToken);
+    }
+    provider.init();
+    
     const groq = new Groq({ apiKey: groqApiKey });
 
     // 3. Verify Context
-    const { owner, repo, number: pullNumber } = github.context.issue;
+    const { owner, repo, pullNumber } = provider.getContext();
     if (!pullNumber) {
-      core.setFailed('❌ This action can only be run on pull_request events.');
+      core.setFailed('❌ This script can only be run on pull_request or merge_request events.');
       return;
     }
 
     console.log(`🚀 Starting RepoSage AI PR Review for PR #${pullNumber} in ${owner}/${repo}`);
 
     // 4. Fetch PR Diff
-    const { data: diff } = await octokit.rest.pulls.get({
-      owner,
-      repo,
-      pull_number: pullNumber,
-      mediaType: {
-        format: 'diff'
-      }
-    });
+    const diff = await provider.getDiff();
 
     if (!diff) {
       core.warning('⚠️ No diff content found for this Pull Request.');
@@ -249,10 +252,7 @@ If no issues are found, reply with: { "reviews": [] }`;
     if (commentsToPost.length > 0) {
       console.log(`✍️ Posting PR Review with ${commentsToPost.length} inline comments...`);
       try {
-      await octokit.rest.pulls.createReview({
-        owner,
-        repo,
-        pull_number: pullNumber,
+      await provider.createReview({
         event: 'COMMENT',
         body: `## 🛡️ RepoSage AI Code Review Audit Completed!
 
@@ -272,10 +272,7 @@ Please review my feedback and suggestions below. Happy coding! 🚀
         core.warning(`⚠️ Batched review creation failed (${err.message}); retrying comments individually and skipping invalid ones.`);
         for (const comment of commentsToPost) {
           try {
-            await octokit.rest.pulls.createReview({
-              owner,
-              repo,
-              pull_number: pullNumber,
+            await provider.createReview({
               event: 'COMMENT',
               body: 'RepoSage AI Code Review Audit (individual comment retry)',
               comments: [comment]
@@ -288,10 +285,7 @@ Please review my feedback and suggestions below. Happy coding! 🚀
 
     } else if (incompleteSecretScan) {
       console.log('Secret scan was incomplete. Posting warning review instead of approving.');
-      await octokit.rest.pulls.createReview({
-        owner,
-        repo,
-        pull_number: pullNumber,
+      await provider.createReview({
         event: 'COMMENT',
         body: `## RepoSage Secret Scan Incomplete\n\nThe local secret scanner stopped before processing all changed lines. No approval was posted because hardcoded credentials may exist in the unscanned portion of this Pull Request.\n\nPlease split the PR or raise the configured scan limits and rerun the review.`
       });
@@ -309,10 +303,7 @@ Please review my feedback and suggestions below. Happy coding! 🚀
             : `🎉 Outstanding work! I have scanned the PR and found **0 issues**. Your changes look pristine, clean, and optimized! Approved! 🚀`)
         : `⚠️ I have scanned **${successfulReviewsCount}** files and found **0 issues** in them. However, **${failedReviewsCount}** files could not be reviewed due to errors.`;
         
-      await octokit.rest.pulls.createReview({
-        owner,
-        repo,
-        pull_number: pullNumber,
+      await provider.createReview({
         event: reviewEvent,
         body: `## 🛡️ RepoSage AI Code Review Audit Completed!
 
@@ -326,12 +317,7 @@ ${issuesText}${truncationWarning}
 
       if (autoApprove && failedReviewsCount === 0 && !diffTruncated && !emptyOrUnparseable) {
         try {
-          await octokit.rest.issues.addLabels({
-            owner,
-            repo,
-            issue_number: pullNumber,
-            labels: ['gssoc:approved']
-          });
+          await provider.addLabel('gssoc:approved');
           console.log('✅ Added gssoc:approved label to PR');
         } catch (err) {
           console.warn('⚠️ Could not add gssoc:approved label:', err.message);
