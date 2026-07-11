@@ -1743,7 +1743,30 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
   let reviewDiffTruncated = false;
 
   if (filesToReview.length > 0) {
-    console.log(`≡ƒºá Querying AI engine for ${filesToReview.length} files...`);
+    let customRules = null;
+    try {
+      let customRulesResponse;
+      try {
+        customRulesResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.ai-reviewer.yml', ref: headSha });
+      } catch (err) {
+        if (err.status === 404) {
+          try {
+            customRulesResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.github/ai-reviewer.md', ref: headSha });
+          } catch (err2) {
+            // Not found
+          }
+        }
+      }
+      
+      if (customRulesResponse && customRulesResponse.data && customRulesResponse.data.content) {
+        customRules = Buffer.from(customRulesResponse.data.content, 'base64').toString('utf8');
+        console.log('✅ Found custom repository rules.');
+      }
+    } catch (err) {
+      console.warn('⚠️ Error fetching custom rules:', err.message);
+    }
+
+    console.log(`🧠 Querying AI engine for ${filesToReview.length} files...`);
     const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
     
     try {
@@ -1751,7 +1774,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       const aiResponse = await fetchWithTimeout(`${baseUrl}/review-diff`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
-        body: JSON.stringify({ files: filesToReview })
+        body: JSON.stringify({ files: filesToReview, custom_rules: customRules })
       }, 60000);
 
       if (aiResponse.ok) {
