@@ -43,6 +43,7 @@ async function run() {
     }
     const maxTokens = parseInt(core.getInput('max-tokens') || '4096', 10);
     const autoApprove = core.getInput('auto-approve')?.toLowerCase() === 'true';
+    const muteNitpicks = core.getInput('mute-nitpicks')?.toLowerCase() === 'true';
 
     const excludePatterns = excludePathsInput
       .split(',')
@@ -178,6 +179,7 @@ Format your JSON precisely as:
     {
       "line": 12,
       "type": "bug | security | optimization | style",
+      "severity": "CRITICAL | WARNING | NITPICK",
       "comment": "### 🐞 Bug Title\\n\\nClear, constructive description of the issue.\\n\\n#### 💡 Actionable Suggestion\\n\\x60\\x60\\x60language\\n// corrected code\\n\\x60\\x60\\x60"
     }
   ]
@@ -218,7 +220,12 @@ If no issues are found, reply with: { "reviews": [] }`;
             const issueLine = normalizeReviewLineNumber(issue.line);
             const changeExists = issueLine !== null && file.changes.some(c => c.line === issueLine);
             if (changeExists) {
-              const bodyText = `<!-- RepoSage Review Comment -->\n${issue.comment}`;
+              const severity = issue.severity || 'WARNING';
+              if (muteNitpicks && severity === 'NITPICK') {
+                continue;
+              }
+              const badge = severity === 'CRITICAL' ? '🛑 **[CRITICAL]**' : severity === 'WARNING' ? '⚠️ **[WARNING]**' : '📝 **[NITPICK]**';
+              const bodyText = `<!-- RepoSage Review Comment -->\n${badge}\n\n${issue.comment}`;
               const alreadyFlagged = commentsToPost.some(c => c.path === file.path && c.line === issueLine && c.body === bodyText);
               if (!alreadyFlagged) {
                 commentsToPost.push({

@@ -23,6 +23,10 @@ inputs:
     description: 'Maximum tokens for the AI model response.'
     required: false
     default: '4096'
+  mute-nitpicks:
+    description: 'If true, ignores [NITPICK] severity comments.'
+    required: false
+    default: 'false'
   auto-approve:
     description: 'Whether to automatically approve PRs with no issues found.'
     required: false

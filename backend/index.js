@@ -1765,10 +1765,20 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
           result.comments.forEach(c => {
             const validLines = validChangedLines.get(c.path);
             if (!validLines || !validLines.has(Number(c.line))) {
-              console.warn(`ΓÜá∩╕Å Skipping invalid inline comment location ${c.path}:${c.line}`);
+              console.warn(`⚠️ Skipping invalid inline comment location ${c.path}:${c.line}`);
               aiCommentsDiscarded++;
               return;
             }
+            
+            const severity = c.severity || 'WARNING';
+            const muteNitpicks = customRules && (customRules.includes('mute_nitpicks: true') || customRules.includes('mute-nitpicks: true'));
+            if (muteNitpicks && severity === 'NITPICK') {
+              return;
+            }
+            
+            const badge = severity === 'CRITICAL' ? '🛑 **[CRITICAL]**' : severity === 'WARNING' ? '⚠️ **[WARNING]**' : '📝 **[NITPICK]**';
+            c.body = `<!-- RepoSage Review Comment -->\n${badge}\n${c.body.replace('<!-- RepoSage Review Comment -->\\n', '').trim()}`;
+            
             // Avoid duplicate comments if secrets scanner already flagged it
             const duplicate = commentsToPost.some(exist => exist.path === c.path && exist.line === c.line);
             if (!duplicate) {

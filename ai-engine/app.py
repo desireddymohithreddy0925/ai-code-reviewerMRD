@@ -1091,7 +1091,8 @@ Format your JSON precisely as:
     {{
       "line": 12,
       "type": "bug | security | optimization | style",
-      "comment": "### 🐞 Bug Title\\n\\nClear, constructive description of the issue.\\n\\n#### 💡 Actionable Suggestion\\n\\n```language\\n// corrected code\\n```"
+      "severity": "CRITICAL | WARNING | NITPICK",
+      "comment": "### 🐞 Bug Title\\n\\nClear, constructive description of the issue.\\n\\n#### 💡 Actionable Suggestion\\n```language\\n// corrected code\\n```"
     }}
   ]
 }}
@@ -1140,6 +1141,7 @@ If no issues are found, reply with: {{ "reviews": [] }}"""
                         comments.append({
                             "path": file.path,
                             "line": line_int,
+                            "severity": issue.get("severity", "WARNING"),
                             "body": f"\n{sanitize_ai_output(comment_body)}"
                         })
         except Exception as e:
