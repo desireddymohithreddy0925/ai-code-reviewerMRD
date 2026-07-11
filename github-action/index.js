@@ -2,6 +2,7 @@ import core from '@actions/core';
 import github from '@actions/github';
 import Groq from 'groq-sdk';
 import { parseDiff } from './utils/diffParser.js';
+import { processJupyterDiff } from './utils/jupyterParser.js';
 import { scanSecretsInChanges } from './utils/secretsScanner.js';
 import { globToRegex } from './utils/globToRegex.js';
 import { cleanAndParseJSON, normalizeReviewLineNumber } from './utils/actionUtils.js';
@@ -55,7 +56,7 @@ async function run() {
       .map(e => e.trim().toLowerCase().replace(/^\./, ''))
       .filter(e => e.length > 0);
 
-    const defaultExtensions = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'cpp', 'h', 'cs', 'css', 'html', 'php', 'rb', 'sql'];
+    const defaultExtensions = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'cpp', 'h', 'cs', 'css', 'html', 'php', 'rb', 'sql', 'ipynb'];
     const validExtensions = includeExtensions.length > 0 ? includeExtensions : defaultExtensions;
 
     // 2. Initialize Clients
@@ -139,6 +140,12 @@ async function run() {
         break;
       }
 
+      // Process Jupyter Notebooks to extract raw Python for the AI
+      let fileChanges = file.changes;
+      if (ext === 'ipynb') {
+        fileChanges = processJupyterDiff(fileChanges);
+      }
+
       // 1. Run local secrets scanner
       const { findings: localSecretIssues, truncated: scanTruncated, totalChanges: scanTotal, skippedReason: scanReason } = scanSecretsInChanges(file.changes);
       for (const issue of localSecretIssues) {
@@ -153,7 +160,7 @@ async function run() {
         console.warn(`⚠️ Secrets scan truncated for ${file.path}: ${scanReason} (total ${scanTotal} changes)`);
       }
 
-      const changesText = file.changes
+      const changesText = fileChanges
         .map(c => `Line ${c.line}: ${c.content}`)
         .join('\n');
 

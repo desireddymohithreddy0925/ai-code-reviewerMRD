@@ -21,6 +21,7 @@ import { isValidGithubToken } from './utils/tokenValidator.js';
 import simpleGit from 'simple-git';
 import escapeHtml from 'lodash.escape';
 import { parseDiff } from './utils/diffParser.js';
+import { processJupyterDiff } from './utils/jupyterParser.js';
 import { analyzeComplexity } from './utils/complexityAnalyzer.js';
 import { deleteFolderRecursive, getFolderSize } from './utils/fileHelper.js';
 import { verifyWebhookSignature } from './utils/signatureVerifier.js';
@@ -1710,7 +1711,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
   for (const file of parsedFiles) {
     // Check if file is supported
     const ext = file.path.split('.').pop()?.toLowerCase();
-    const validExtensions = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'cpp', 'h', 'cs', 'css', 'html', 'php', 'rb', 'sql'];
+    const validExtensions = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'cpp', 'h', 'cs', 'css', 'html', 'php', 'rb', 'sql', 'ipynb'];
     if (!ext || !validExtensions.includes(ext) || file.changes.length === 0) {
       continue;
     }
@@ -1726,13 +1727,19 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       });
     });
     if (scanTruncated) {
-      console.warn(`ΓÜá∩╕Å Secrets scan truncated for ${file.path}: ${scanReason} (total ${scanTotal} changes)`);
+      console.warn(`⚠️ Secrets scan truncated for ${file.path}: ${scanReason} (total ${scanTotal} changes)`);
+    }
+
+    // Process Jupyter Notebooks to extract raw Python for the AI
+    let fileChanges = file.changes;
+    if (ext === 'ipynb') {
+      fileChanges = processJupyterDiff(fileChanges);
     }
 
     // Save list to send to FastAPI AI Engine
     filesToReview.push({
       path: file.path,
-      changes: file.changes.map(c => ({ line: c.line, content: c.content }))
+      changes: fileChanges.map(c => ({ line: c.line, content: c.content }))
     });
   }
 
