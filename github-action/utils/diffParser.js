@@ -1,16 +1,10 @@
-// ─────────────────────────────────────────────────────
-// IMPORTANT: This file is synced from backend/utils/diffParser.js.
-// To ensure consistency, run: node scripts/sync-diff-parser.js
-// or use the prebuild script in package.json.
-// ─────────────────────────────────────────────────────
-
 export function parseDiff(diffStr) {
   const files = [];
   const binaryFiles = [];
   if (!diffStr || typeof diffStr !== 'string') {
     return { files, binaryFiles };
   }
-  const lines = diffStr.split('\n');
+  const lines = diffStr.replace(/\r\n/g, '\n').split('\n');
   let currentFile = null;
   let currentLineInNewFile = 0;
   let currentLineInOldFile = 0;
