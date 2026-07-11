@@ -1029,6 +1029,10 @@ class VectorDeleteRequest(BaseModel):
     file_path: str
     repo_url: Optional[str] = None
 
+class SummarizeRequest(BaseModel):
+    diff: str
+    model: Optional[str] = "llama-3.3-70b-versatile"
+
 # 🟢 Route: Cleanup stale vectors (remove embeddings for deleted/modified files)
 @app.post("/api/rag/cleanup", dependencies=[Depends(verify_api_key)])
 async def cleanup_vectors(request: CleanupRequest):
@@ -1042,6 +1046,47 @@ async def delete_vectors(request: VectorDeleteRequest):
     from rag import delete_chunks_for_file
     removed = delete_chunks_for_file(request.file_path, repo_url=request.repo_url)
     return {"removed_count": removed, "file_path": request.file_path}
+
+# 🟢 Route: PR Summary Generator
+@app.post("/summarize-pr")
+async def summarize_pr(request: SummarizeRequest):
+    if not groq_client:
+        raise HTTPException(status_code=500, detail="Groq API client is not configured on this engine.")
+    
+    groq_model = get_groq_model(request.model)
+    
+    summary_prompt = f"""You are a Senior Staff Engineer.
+Generate a concise, high-level summary of the architectural and functional changes in this Pull Request based on the following diff.
+Use a bulleted list. Limit to 3-5 concise bullet points. Avoid extremely minor details unless they are critical.
+
+Diff:
+```
+{request.diff}
+```
+
+Format your JSON precisely as:
+{{
+  "summary": "- Added new feature X\\n- Refactored component Y"
+}}
+"""
+    try:
+        completion = await _call_groq_with_timeout(
+            model=groq_model,
+            messages=[
+                {"role": "system", "content": "You are a code reviewer. Always output valid JSON matching the schema {'summary': 'string'}."},
+                {"role": "user", "content": summary_prompt}
+            ],
+            temperature=0.3,
+            response_format={"type": "json_object"}
+        )
+        content = completion.choices[0].message.content
+        if not content:
+            raise HTTPException(status_code=502, detail="Groq returned empty response.")
+        
+        data = json.loads(content)
+        return {"summary": data.get("summary", "")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # 🟢 Route: AI Pull Request Review (Reviews specific file code additions/diffs)
 @app.post("/review-diff")

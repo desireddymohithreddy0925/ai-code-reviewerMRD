@@ -1794,8 +1794,55 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       if (err.message === 'AI Engine authentication failed') {
         throw err;
       }
-      console.warn("ΓÜá∩╕Å FastAPI AI Engine error, posting local scans only:", err.message);
+      console.warn("⚠️ FastAPI AI Engine error, posting local scans only:", err.message);
     }
+  }
+
+  // PR Summary generation
+  try {
+    const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+    const baseUrl = aiEngineUrl.replace(/\/+$/, '');
+    
+    // We truncate diff to max 15000 chars for summary
+    const truncatedDiff = diff.length > 15000 ? diff.substring(0, 15000) + '\n...[Diff truncated]' : diff;
+    
+    const summaryResponse = await fetchWithTimeout(`${baseUrl}/summarize-pr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
+      body: JSON.stringify({ diff: truncatedDiff })
+    }, 60000);
+    
+    if (summaryResponse.ok) {
+      const summaryData = await summaryResponse.json();
+      if (summaryData.summary) {
+        let currentBody = pullRequest.body || '';
+        const summaryStartTag = '<!-- RepoSage Summary -->';
+        const summaryEndTag = '<!-- End RepoSage Summary -->';
+        const newSummaryBlock = `${summaryStartTag}\n### 🤖 RepoSage PR Summary\n${summaryData.summary}\n${summaryEndTag}`;
+        
+        let newBody;
+        const startIndex = currentBody.indexOf(summaryStartTag);
+        const endIndex = currentBody.indexOf(summaryEndTag);
+        
+        if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+          // Replace existing block
+          newBody = currentBody.substring(0, startIndex) + newSummaryBlock + currentBody.substring(endIndex + summaryEndTag.length);
+        } else {
+          // Append
+          newBody = currentBody + (currentBody ? '\n\n' : '') + newSummaryBlock;
+        }
+        
+        await octokit.rest.pulls.update({
+          owner,
+          repo,
+          pull_number: pullNumber,
+          body: newBody
+        });
+        console.log(`✅ Updated PR #${pullNumber} description with AI summary`);
+      }
+    }
+  } catch (err) {
+    console.warn("⚠️ Failed to generate or update PR summary:", err.message);
   }
 
   // 3. Post consolidated review comment back to GitHub PR

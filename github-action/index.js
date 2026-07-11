@@ -245,7 +245,84 @@ If no issues are found, reply with: { "reviews": [] }`;
       }
     }
 
-    // 6. Post Consolidated Review
+    // 6. Generate PR Summary
+    try {
+      let fullDiff = '';
+      for (const file of parsedFiles) {
+        if (file.changes.length > 0) {
+          fullDiff += `\n--- a/${file.path}\n+++ b/${file.path}\n`;
+          fullDiff += file.changes.map(c => c.content).join('\n');
+        }
+      }
+      
+      if (fullDiff.length > 0) {
+        const truncatedDiff = fullDiff.length > 15000 ? fullDiff.substring(0, 15000) + '\n...[Diff truncated]' : fullDiff;
+        
+        const summaryPrompt = `You are a Senior Staff Engineer.
+Generate a concise, high-level summary of the architectural and functional changes in this Pull Request based on the following diff.
+Use a bulleted list. Limit to 3-5 concise bullet points. Avoid extremely minor details unless they are critical.
+
+Diff:
+\`\`\`
+${truncatedDiff}
+\`\`\`
+
+Format your JSON precisely as:
+{
+  "summary": "- Added new feature X\\n- Refactored component Y"
+}`;
+
+        const summaryCompletion = await groq.chat.completions.create({
+          messages: [
+            { role: 'system', content: 'You are a code reviewer. Always output valid JSON matching the schema {"summary": "string"}.' },
+            { role: 'user', content: summaryPrompt }
+          ],
+          model: 'llama-3.3-70b-versatile',
+          temperature: 0.3,
+          max_tokens: 500,
+          response_format: { type: 'json_object' }
+        });
+        
+        const summaryContent = summaryCompletion.choices[0]?.message?.content;
+        if (summaryContent) {
+          const summaryData = JSON.parse(summaryContent);
+          if (summaryData.summary) {
+            const { data: pullRequest } = await octokit.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: pullNumber
+            });
+            
+            let currentBody = pullRequest.body || '';
+            const summaryStartTag = '<!-- RepoSage Summary -->';
+            const summaryEndTag = '<!-- End RepoSage Summary -->';
+            const newSummaryBlock = `${summaryStartTag}\n### 🤖 RepoSage PR Summary\n${summaryData.summary}\n${summaryEndTag}`;
+            
+            let newBody;
+            const startIndex = currentBody.indexOf(summaryStartTag);
+            const endIndex = currentBody.indexOf(summaryEndTag);
+            
+            if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+              newBody = currentBody.substring(0, startIndex) + newSummaryBlock + currentBody.substring(endIndex + summaryEndTag.length);
+            } else {
+              newBody = currentBody + (currentBody ? '\n\n' : '') + newSummaryBlock;
+            }
+            
+            await octokit.rest.pulls.update({
+              owner,
+              repo,
+              pull_number: pullNumber,
+              body: newBody
+            });
+            console.log(`✅ Updated PR #${pullNumber} description with AI summary`);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("⚠️ Failed to generate or update PR summary:", err.message);
+    }
+
+    // 7. Post Consolidated Review
     if (commentsToPost.length > 0) {
       console.log(`✍️ Posting PR Review with ${commentsToPost.length} inline comments...`);
       try {
