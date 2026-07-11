@@ -185,13 +185,31 @@ Format your JSON precisely as:
 If no issues are found, reply with: { "reviews": [] }`;
 
       try {
-        const completion = await groq.chat.completions.create({
-          model: 'llama-3.3-70b-versatile',
-          messages: [{ role: 'user', content: reviewPrompt }],
-          temperature: 0.2,
-          max_tokens: maxTokens,
-          response_format: { type: 'json_object' },
-        });
+        let completion;
+        let attempts = 0;
+        const maxRetries = 5;
+        while (attempts < maxRetries) {
+          try {
+            completion = await groq.chat.completions.create({
+              model: 'llama-3.3-70b-versatile',
+              messages: [{ role: 'user', content: reviewPrompt }],
+              temperature: 0.2,
+              max_tokens: maxTokens,
+              response_format: { type: 'json_object' },
+            });
+            break;
+          } catch (err) {
+            attempts++;
+            if (err.status === 429 && attempts < maxRetries) {
+              const retryAfter = err.headers && err.headers['retry-after'];
+              const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : Math.pow(2, attempts) * 1000;
+              console.warn(`⚠️ Rate limited (429). Retrying in ${delay}ms... (Attempt ${attempts} of ${maxRetries})`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            } else {
+              throw err;
+            }
+          }
+        }
 
         const content = completion.choices[0].message.content;
         if (!content || typeof content !== 'string' || !content.trim()) {
