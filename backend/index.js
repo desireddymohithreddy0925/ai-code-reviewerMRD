@@ -38,6 +38,7 @@ import DedupStore from './utils/dedupStore.js';
 import mongoose from 'mongoose';
 import Analytics from './models/Analytics.js';
 import Session, { estimateSessionSize } from './models/Session.js';
+import { RoiMetrics } from './models/RoiMetrics.js';
 import { connectDatabase, isDatabaseConnected, ensureConnection, closeDatabase } from './config/db.js';
 
 dotenv.config();
@@ -144,6 +145,7 @@ const pdfExportLimiter = rateLimit({
 
 // Parse cookies for CSRF token validation
 app.use(cookieParser());
+app.use('/dashboard', express.static(path.join(__dirname, 'public/dashboard')));
 
 // Raw body capture for webhook signature verification.
 // This runs BEFORE express.json() so the stream is consumed here for the
@@ -1392,7 +1394,44 @@ const webhookLimiter = rateLimit({
   message: { error: 'Too many webhook requests.' }
 });
 
-// ≡ƒƒó Route: GitHub Webhook Receiver for automated Pull Request Reviews
+app.get('/api/roi', async (req, res) => {
+  try {
+    const metrics = await RoiMetrics.find({});
+    
+    const aggregated = metrics.reduce((acc, curr) => {
+      acc.totalPrsReviewed += curr.totalPrsReviewed;
+      acc.totalAiComments += curr.totalAiComments;
+      acc.acceptedSuggestions += curr.acceptedSuggestions;
+      acc.timeSavedMinutes += curr.timeSavedMinutes;
+      return acc;
+    }, {
+      totalPrsReviewed: 0,
+      totalAiComments: 0,
+      acceptedSuggestions: 0,
+      timeSavedMinutes: 0
+    });
+
+    const acceptanceRate = aggregated.totalAiComments > 0 
+      ? ((aggregated.acceptedSuggestions / aggregated.totalAiComments) * 100).toFixed(1) 
+      : 0;
+
+    const timeSavedHours = (aggregated.timeSavedMinutes / 60).toFixed(1);
+
+    res.json({
+      metrics,
+      aggregated: {
+        ...aggregated,
+        acceptanceRate,
+        timeSavedHours
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching ROI metrics:', error);
+    res.status(500).json({ error: 'Failed to fetch ROI metrics' });
+  }
+});
+
+// 🚀 Route: GitHub Webhook Receiver for automated Pull Request Reviews
 app.post('/api/webhook', webhookLimiter, async (req, res) => {
   const webhookSecret = process.env.WEBHOOK_SECRET;
   if (!webhookSecret) {
@@ -1419,7 +1458,7 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
   if (!payload || typeof payload !== 'object') {
     return res.status(400).json({ error: 'Invalid webhook payload.' });
   }
-  if (event !== 'pull_request' && event !== 'push' && event !== 'ping') {
+  if (event !== 'pull_request' && event !== 'pull_request_review_comment' && event !== 'push' && event !== 'ping') {
     return res.status(400).json({ error: `Unsupported webhook event: ${event}` });
   }
 
@@ -1430,9 +1469,21 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
       const repoUrl = `https://github.com/${owner}/${repo}`;
       const removed = analysisCache.invalidateByRepoUrl(repoUrl);
       if (removed > 0) {
-        console.log(`≡ƒôí Push event invalidated ${removed} cache entries for ${repoUrl}`);
+        console.log(`🗑️ Push event invalidated ${removed} cache entries for ${repoUrl}`);
       }
     }
+  }
+
+  if (event === 'pull_request_review_comment') {
+    if (payload.action === 'resolved') {
+      const repoName = payload.repository?.full_name;
+      if (repoName) {
+        console.log(`Tracking resolved AI comment for ROI on ${repoName}`);
+        await RoiMetrics.recordAcceptedSuggestion(repoName).catch(e => console.error("ROI tracking error", e));
+      }
+    }
+    // We only care about resolved comments for ROI metrics right now
+    return res.status(200).json({ message: 'Review comment event processed' });
   }
 
   if (event === 'pull_request') {
@@ -1818,18 +1869,17 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       if (!aiEngineQueried && filesToReview.length > 0 && batchIdx === 0) {
         body += `ΓÜá∩╕Å **Limited Review:** The AI engine was unreachable or returned an unexpected response during this review. Only regex-based secret scanning was performed. AI-powered bug/performance/style analysis was skipped. Please ensure the AI Engine service is running correctly and re-trigger the review for a complete audit.\n\n`;
       }
-      body += `I have audited the code changes in this Pull Request and generated **${commentsToPost.length} actionable inline suggestion${commentsToPost.length === 1 ? '' : 's'}**.\n\nPlease review my feedback and suggestions below. Happy coding! ≡ƒÜÇ`;
+      body += `I have audited the code changes in this Pull Request and generated **${commentsToPost.length} actionable inline suggestion${commentsToPost.length === 1 ? '' : 's'}**.\n\nPlease review my feedback and suggestions below. Happy coding! 🚀`;
+      
+      const reviewEvent = 'COMMENT';
 
-      // Wrap review creation so a single malformed/stale inline comment does
-      // not abort the entire PR review. On failure, retry each comment
-      // individually and skip any that GitHub rejects.
       try {
         const { data: createdReview } = await octokit.rest.pulls.createReview({
           owner,
           repo,
           pull_number: pullNumber,
           commit_id: headSha,
-          event: 'COMMENT',
+          event: reviewEvent,
           body,
           comments: batch
         });
@@ -1854,6 +1904,11 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
         }
       }
     }
+    
+    // Log metrics for ROI Dashboard
+    const repoName = `${owner}/${repo}`;
+    await RoiMetrics.recordPrReview(repoName, commentsToPost.length).catch(e => console.error("ROI tracking error", e));
+
   } else if (aiCommentsDiscarded > 0) {
     console.warn(`ΓÜá∩╕Å ${aiCommentsDiscarded} AI comments were discarded due to line number mismatches ΓÇö posting COMMENT review instead of approving.`);
     const { data: createdReview } = await octokit.rest.pulls.createReview({
