@@ -16,7 +16,7 @@ import Redis from 'ioredis';
 import { scanSecrets, scanSecretsInChanges } from './utils/secretsScanner.js';
 import { recordAnalysis as recordFileAnalytics } from './utils/analyticsStore.js';
 import { loadIgnorePatterns, readFilesRecursively } from './utils/ignoreHelper.js';
-import { isValidRepoUrl, parseRepoUrl } from './utils/urlValidator.js';
+import { isValidRepoUrl, parseRepoUrl, isSafeUrl } from './utils/urlValidator.js';
 import { isValidGithubToken } from './utils/tokenValidator.js';
 import simpleGit from 'simple-git';
 import escapeHtml from 'lodash.escape';
@@ -406,12 +406,22 @@ process.on('unhandledRejection', (reason, promise) => {
 // The Session collection uses a TTL index on absoluteExpiry (expireAfterSeconds: 0)
 // so MongoDB handles expiry automatically ΓÇö no in-process Map or setInterval needed.
 
-// Utility: fetch with configurable timeout using AbortController
+// Utility: fetch with configurable timeout using AbortController and optional SSRF check
 async function fetchWithTimeout(url, options = {}, timeoutMs = 120000) {
+  if (options.validate !== false && options.validate !== true) {
+    // default: skip validation for explicitly trusted URLs; validate only when requested
+  }
+  if (options.validate === true) {
+    const safe = await isSafeUrl(url);
+    if (!safe.valid) {
+      throw new Error(`SSRF validation failed: ${safe.reason}`);
+    }
+  }
+  const { validate: _validate, ...fetchOptions } = options;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
+    const response = await fetch(url, { ...fetchOptions, signal: controller.signal });
     return response;
   } finally {
     clearTimeout(timeoutId);
