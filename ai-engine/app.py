@@ -918,10 +918,15 @@ async def split_files_for_rag(request: SplitRequest):
 
 
 # 🟢 Route: Ingest chunks into ChromaDB for RAG
-_ingest_locks: dict[str, asyncio.Lock] = {}
+_MAX_INGEST_LOCKS = 1000
+_ingest_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
 
 async def _get_ingest_lock(repo_url: str) -> asyncio.Lock:
-    if repo_url not in _ingest_locks:
+    if repo_url in _ingest_locks:
+        _ingest_locks.move_to_end(repo_url)
+    else:
+        if len(_ingest_locks) >= _MAX_INGEST_LOCKS:
+            _ingest_locks.popitem(last=False)
         _ingest_locks[repo_url] = asyncio.Lock()
     return _ingest_locks[repo_url]
 
