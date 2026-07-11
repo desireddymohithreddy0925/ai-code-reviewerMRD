@@ -111,9 +111,7 @@ async function run() {
     const parsedFiles = parseDiff(diff);
     console.log(`📁 Found ${parsedFiles.length} files in PR diff.`);
 
-    const commentsToPost = [];
-    let reviewedFilesCount = 0;
-
+    const filesToProcess = [];
     for (const file of parsedFiles) {
       const isExcluded = excludePatterns.some(regex => regex.test(file.path));
 
@@ -131,28 +129,44 @@ async function run() {
       if (file.changes.length === 0) {
         continue;
       }
-
-      console.log(`🔍 Reviewing: ${file.path} (${file.changes.length} changes)`);
-      reviewedFilesCount++;
-
-      // 1. Run local secrets scanner
-      const { findings: localSecretIssues, truncated: scanTruncated, totalChanges: scanTotal, skippedReason: scanReason } = scanSecretsInChanges(file.changes);
-      for (const issue of localSecretIssues) {
-        commentsToPost.push({
-          path: file.path,
-          line: issue.line,
-          body: `<!-- RepoSage Review Comment -->\n${issue.comment}`
-        });
-      }
-      if (scanTruncated) {
-        console.warn(`⚠️ Secrets scan truncated for ${file.path}: ${scanReason} (total ${scanTotal} changes)`);
-      }
-
+      
       const changesText = file.changes
         .map(c => `Line ${c.line}: ${c.content}`)
         .join('\n');
+        
+      if (changesText.length > 20000 || file.changes.length > 300) {
+        console.log(`⏭️ Skipping file too large for AI review: ${file.path} (${file.changes.length} changes, ${changesText.length} chars)`);
+        continue;
+      }
 
-      const reviewPrompt = `You are a Senior Staff Engineer performing an automated Pull Request code review.
+      filesToProcess.push({ file, changesText });
+    }
+
+    let reviewedFilesCount = 0;
+    let totalIssuesFound = 0;
+
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < filesToProcess.length; i += BATCH_SIZE) {
+      const batch = filesToProcess.slice(i, i + BATCH_SIZE);
+      const batchComments = [];
+
+      await Promise.all(batch.map(async ({ file, changesText }) => {
+        console.log(`🔍 Reviewing: ${file.path} (${file.changes.length} changes)`);
+        
+        // 1. Run local secrets scanner
+        const { findings: localSecretIssues, truncated: scanTruncated, totalChanges: scanTotal, skippedReason: scanReason } = scanSecretsInChanges(file.changes);
+        for (const issue of localSecretIssues) {
+          batchComments.push({
+            path: file.path,
+            line: issue.line,
+            body: `<!-- RepoSage Review Comment -->\n${issue.comment}`
+          });
+        }
+        if (scanTruncated) {
+          console.warn(`⚠️ Secrets scan truncated for ${file.path}: ${scanReason} (total ${scanTotal} changes)`);
+        }
+
+        const reviewPrompt = `You are a Senior Staff Engineer performing an automated Pull Request code review.
 Analyze the following code additions in the file "${file.path}". 
 Identify any logical bugs, security threats (API key leaks, hardcoded credentials, SQL injection, null references), naming/style issues, or performance optimization opportunities.
 
@@ -176,58 +190,78 @@ Format your JSON precisely as:
 }
 If no issues are found, reply with: { "reviews": [] }`;
 
-      try {
-        const completion = await groq.chat.completions.create({
-          model: 'llama-3.3-70b-versatile',
-          messages: [{ role: 'user', content: reviewPrompt }],
-          temperature: 0.2,
-          max_tokens: maxTokens,
-        });
+        try {
+          const completion = await groq.chat.completions.create({
+            model: 'llama-3.3-70b-versatile',
+            messages: [{ role: 'user', content: reviewPrompt }],
+            temperature: 0.2,
+            max_tokens: maxTokens,
+          });
 
-        const content = completion.choices[0].message.content;
-        let parsed = cleanAndParseJSON(content);
-        
-        let issues = [];
-        if (Array.isArray(parsed)) {
-          issues = parsed;
-        } else if (parsed && typeof parsed === 'object') {
-          for (const key of Object.keys(parsed)) {
-            if (Array.isArray(parsed[key])) {
-              issues = parsed[key];
-              break;
-            }
-          }
-        }
-
-        if (issues.length > 0) {
-          console.log(`✅ AI review returned ${issues.length} comments for ${file.path}`);
-          for (const issue of issues) {
-            const changeExists = file.changes.some(c => c.line === issue.line);
-            if (changeExists) {
-              const alreadyFlagged = commentsToPost.some(c => c.path === file.path && c.line === issue.line);
-              if (!alreadyFlagged) {
-                commentsToPost.push({
-                  path: file.path,
-                  line: issue.line,
-                  body: `<!-- RepoSage Review Comment -->\n${issue.comment}`
-                });
+          const content = completion.choices[0].message.content;
+          let parsed = cleanAndParseJSON(content);
+          
+          let issues = [];
+          if (Array.isArray(parsed)) {
+            issues = parsed;
+          } else if (parsed && typeof parsed === 'object') {
+            for (const key of Object.keys(parsed)) {
+              if (Array.isArray(parsed[key])) {
+                issues = parsed[key];
+                break;
               }
-            } else {
-              console.warn(`⚠️ AI suggested line ${issue.line} which is outside the PR changes for ${file.path}. Skipping.`);
             }
           }
-        } else {
-          console.warn(`⚠️ Warning: Expected array from AI response, got something else for ${file.path}. Parsed keys: ${Object.keys(parsed || {}).join(', ')}`);
-        }
 
-      } catch (err) {
-        core.error(`❌ Groq review request failed for ${file.path}: ${err.message}`);
+          if (issues.length > 0) {
+            console.log(`✅ AI review returned ${issues.length} comments for ${file.path}`);
+            for (const issue of issues) {
+              const changeExists = file.changes.some(c => c.line === issue.line);
+              if (changeExists) {
+                const alreadyFlagged = batchComments.some(c => c.path === file.path && c.line === issue.line);
+                if (!alreadyFlagged) {
+                  batchComments.push({
+                    path: file.path,
+                    line: issue.line,
+                    body: `<!-- RepoSage Review Comment -->\n${issue.comment}`
+                  });
+                }
+              } else {
+                console.warn(`⚠️ AI suggested line ${issue.line} which is outside the PR changes for ${file.path}. Skipping.`);
+              }
+            }
+          } else {
+            console.warn(`⚠️ Warning: Expected array from AI response, got something else for ${file.path}. Parsed keys: ${Object.keys(parsed || {}).join(', ')}`);
+          }
+
+        } catch (err) {
+          core.error(`❌ Groq review request failed for ${file.path}: ${err.message}`);
+        }
+      }));
+
+      reviewedFilesCount += batch.length;
+      totalIssuesFound += batchComments.length;
+
+      if (batchComments.length > 0) {
+        console.log(`✍️ Posting intermediate PR Review with ${batchComments.length} inline comments...`);
+        try {
+          await octokit.rest.pulls.createReview({
+            owner,
+            repo,
+            pull_number: pullNumber,
+            event: 'COMMENT',
+            body: `_RepoSage AI is processing this Pull Request... Found ${batchComments.length} issues in the current batch of files._`,
+            comments: batchComments
+          });
+        } catch (err) {
+          core.error(`❌ Failed to post intermediate review: ${err.message}`);
+        }
       }
     }
 
     // 6. Post Consolidated Review
-    if (commentsToPost.length > 0) {
-      console.log(`✍️ Posting PR Review with ${commentsToPost.length} inline comments...`);
+    if (totalIssuesFound > 0) {
+      console.log(`✍️ Posting Final PR Review Summary...`);
       await octokit.rest.pulls.createReview({
         owner,
         repo,
@@ -237,13 +271,12 @@ If no issues are found, reply with: { "reviews": [] }`;
 
 🧐 **I have professionally reviewed and checked all your changes** to ensure they meet our project's high quality standards.
 
-I have audited **${reviewedFilesCount} code files** in this Pull Request and generated **${commentsToPost.length} actionable inline suggestions**. 
+I have audited **${reviewedFilesCount} code files** in this Pull Request and generated **${totalIssuesFound} actionable inline suggestions** across multiple comments. 
 
 Please review my feedback and suggestions below. Happy coding! 🚀
 
 ---
-⭐ **Support RepoSage!** If you find this AI helpful, please consider giving us a **Star** 🌟 on GitHub! Your support helps us win GSSoC '26 and grow professionally!`,
-        comments: commentsToPost
+⭐ **Support RepoSage!** If you find this AI helpful, please consider giving us a **Star** 🌟 on GitHub! Your support helps us win GSSoC '26 and grow professionally!`
       });
     } else {
       console.log('🎉 No code issues or recommendations found. Posting positive review status...');
