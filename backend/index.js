@@ -21,6 +21,7 @@ import { isValidGithubToken } from './utils/tokenValidator.js';
 import simpleGit from 'simple-git';
 import escapeHtml from 'lodash.escape';
 import { parseDiff } from './utils/diffParser.js';
+import { globToRegex } from './utils/globToRegex.js';
 import { analyzeComplexity } from './utils/complexityAnalyzer.js';
 import { deleteFolderRecursive, getFolderSize } from './utils/fileHelper.js';
 import { verifyWebhookSignature } from './utils/signatureVerifier.js';
@@ -1699,6 +1700,25 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     return;
   }
 
+  // Fetch .ai-ignore patterns once
+  const excludePatternsInput = 'package-lock.json,yarn.lock,pnpm-lock.yaml,dist/**,build/**';
+  const baseExcludePatterns = excludePatternsInput.split(',').map(p => p.trim()).filter(Boolean).map(globToRegex);
+
+  let aiIgnorePatterns = [];
+  try {
+    const { data: ignoreFile } = await octokit.rest.repos.getContent({
+      owner, repo, path: '.ai-ignore', ref: headSha
+    });
+    const ignoreContent = Buffer.from(ignoreFile.content, 'base64').toString('utf8');
+    aiIgnorePatterns = ignoreContent.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(globToRegex);
+    console.log(`✅ Loaded ${aiIgnorePatterns.length} patterns from .ai-ignore in ${owner}/${repo}`);
+  } catch (e) {
+    // no .ai-ignore file
+  }
+
+  const allExcludePatterns = [...baseExcludePatterns, ...aiIgnorePatterns];
+  const matchIgnore = (filePath, ignoreRegexes) => ignoreRegexes.some(regex => regex.test(filePath));
+
   // 2. Parse files and changes
   const { files: parsedFiles, binaryFiles: parsedBinaryFiles } = parseDiff(diff);
   console.log(`≡ƒôü Found ${parsedFiles.length} files in PR diff.`);
@@ -1726,7 +1746,12 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       });
     });
     if (scanTruncated) {
-      console.warn(`ΓÜá∩╕Å Secrets scan truncated for ${file.path}: ${scanReason} (total ${scanTotal} changes)`);
+      console.warn(`⚠️ Secrets scan truncated for ${file.path}: ${scanReason} (total ${scanTotal} changes)`);
+    }
+
+    if (matchIgnore(file.path, allExcludePatterns)) {
+      console.log(`⏭️ Skipping excluded file: ${file.path}`);
+      continue;
     }
 
     // Save list to send to FastAPI AI Engine
