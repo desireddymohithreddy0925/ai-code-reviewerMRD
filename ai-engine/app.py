@@ -1029,6 +1029,12 @@ class VectorDeleteRequest(BaseModel):
     file_path: str
     repo_url: Optional[str] = None
 
+class ChatInlineRequest(BaseModel):
+    file_path: str
+    diff_hunk: str
+    message: str
+    model: Optional[str] = "llama-3.3-70b-versatile"
+
 # 🟢 Route: Cleanup stale vectors (remove embeddings for deleted/modified files)
 @app.post("/api/rag/cleanup", dependencies=[Depends(verify_api_key)])
 async def cleanup_vectors(request: CleanupRequest):
@@ -1042,6 +1048,48 @@ async def delete_vectors(request: VectorDeleteRequest):
     from rag import delete_chunks_for_file
     removed = delete_chunks_for_file(request.file_path, repo_url=request.repo_url)
     return {"removed_count": removed, "file_path": request.file_path}
+
+# 🟢 Route: Conversational AI Inline Chat
+@app.post("/chat-inline")
+async def chat_inline(request: ChatInlineRequest):
+    if not groq_client:
+        raise HTTPException(status_code=500, detail="Groq API client is not configured on this engine.")
+    
+    groq_model = get_groq_model(request.model)
+    
+    chat_prompt = f"""You are a helpful Senior Software Engineer acting as a Pull Request reviewer.
+A developer has asked a question or replied to an AI comment on a specific code snippet.
+
+File: {request.file_path}
+
+Diff Hunk context:
+```
+{request.diff_hunk}
+```
+
+Developer's message:
+"{request.message}"
+
+Please respond directly to the developer's message, keeping your tone helpful, constructive, and concise. Provide code examples if appropriate. Output strictly your reply in JSON format with a single key "reply" containing your response text.
+"""
+    try:
+        completion = await _call_groq_with_timeout(
+            model=groq_model,
+            messages=[
+                {"role": "system", "content": "You are a code reviewer. Always output valid JSON matching the schema {'reply': 'string'}."},
+                {"role": "user", "content": chat_prompt}
+            ],
+            temperature=0.3,
+            response_format={"type": "json_object"}
+        )
+        content = completion.choices[0].message.content
+        if not content:
+            raise HTTPException(status_code=502, detail="Groq returned empty response.")
+        
+        data = json.loads(content)
+        return {"reply": data.get("reply", "I couldn't process that request.")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # 🟢 Route: AI Pull Request Review (Reviews specific file code additions/diffs)
 @app.post("/review-diff")

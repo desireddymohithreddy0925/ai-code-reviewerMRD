@@ -1419,8 +1419,92 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
   if (!payload || typeof payload !== 'object') {
     return res.status(400).json({ error: 'Invalid webhook payload.' });
   }
-  if (event !== 'pull_request' && event !== 'push' && event !== 'ping') {
+  const validEvents = ['pull_request', 'push', 'ping', 'issue_comment', 'pull_request_review_comment'];
+  if (!validEvents.includes(event)) {
     return res.status(400).json({ error: `Unsupported webhook event: ${event}` });
+  }
+
+  if (event === 'issue_comment') {
+    if (payload.action === 'created' && payload.issue?.pull_request) {
+      if (payload.comment?.body?.includes('/ai-review')) {
+        const owner = payload.repository.owner.login;
+        const repo = payload.repository.name;
+        const pullNumber = payload.issue.number;
+        console.log(`Manual trigger /ai-review detected on PR #${pullNumber}`);
+        
+        try {
+          const octokit = new Octokit({ auth: process.env.GITHUB_PAT });
+          const { data: prData } = await octokit.rest.pulls.get({
+            owner,
+            repo,
+            pull_number: pullNumber
+          });
+          const headSha = prData.head.sha;
+          
+          const reviewKey = `${owner}/${repo}`;
+          reviewQueue.enqueue(reviewKey, { owner, repo, pullNumber, headSha }, async (item) => {
+            await runWebhookReview(item.owner, item.repo, item.pullNumber, item.headSha);
+          }).catch(error => {
+            console.error(`❌ Webhook review failed for manual trigger on PR #${pullNumber}:`, error.message);
+          });
+          
+          return res.json({ message: "Review queued via manual trigger" });
+        } catch (err) {
+          console.error("Error fetching PR data for manual trigger:", err.message);
+          return res.status(500).json({ error: "Failed to queue manual review" });
+        }
+      }
+    }
+    return res.json({ message: "Ignored issue_comment event" });
+  }
+
+  if (event === 'pull_request_review_comment') {
+    if (payload.action === 'created' && payload.comment?.body?.includes('@ai-reviewer')) {
+      const owner = payload.repository.owner.login;
+      const repo = payload.repository.name;
+      const pullNumber = payload.pull_request.number;
+      const commentId = payload.comment.id;
+      const diffHunk = payload.comment.diff_hunk;
+      const filePath = payload.comment.path;
+      const userMessage = payload.comment.body;
+      
+      console.log(`💬 Conversational AI trigger on PR #${pullNumber}, file: ${filePath}`);
+      
+      try {
+        const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+        const baseUrl = aiEngineUrl.replace(/\/+$/, '');
+        const aiResponse = await fetchWithTimeout(`${baseUrl}/chat-inline`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
+          body: JSON.stringify({
+            file_path: filePath,
+            diff_hunk: diffHunk,
+            message: userMessage
+          })
+        }, 60000);
+        
+        if (aiResponse.ok) {
+          const result = await aiResponse.json();
+          const octokit = new Octokit({ auth: process.env.GITHUB_PAT });
+          
+          await octokit.rest.pulls.createReplyForReviewComment({
+            owner,
+            repo,
+            pull_number: pullNumber,
+            comment_id: commentId,
+            body: `<!-- RepoSage Chat -->\n${result.reply}`
+          });
+          
+          return res.json({ message: "Conversational reply posted" });
+        } else {
+          console.error("AI engine returned error for chat-inline:", await aiResponse.text());
+        }
+      } catch (err) {
+        console.error("Error handling conversational AI comment:", err.message);
+      }
+      return res.status(500).json({ error: "Failed to process conversational comment" });
+    }
+    return res.json({ message: "Ignored pull_request_review_comment event" });
   }
 
   if (event === 'push') {
