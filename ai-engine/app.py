@@ -1091,7 +1091,8 @@ Format your JSON precisely as:
     {{
       "line": 12,
       "type": "bug | security | optimization | style",
-      "comment": "### 🐞 Bug Title\\n\\nClear, constructive description of the issue.\\n\\n#### 💡 Actionable Suggestion\\n\\n```language\\n// corrected code\\n```"
+      "comment": "### 🐞 Bug Title\\n\\nClear, constructive description of the issue.\\n\\n#### 💡 Actionable Suggestion\\n\\n```language\\n// corrected code\\n```",
+      "auto_fix_code": "optional: provide the EXACT replacement code snippet if this is a trivial fix (typo, lint, minor syntax) that we can automatically commit."
     }}
   ]
 }}

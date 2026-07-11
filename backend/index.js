@@ -24,6 +24,7 @@ import { parseDiff } from './utils/diffParser.js';
 import { analyzeComplexity } from './utils/complexityAnalyzer.js';
 import { deleteFolderRecursive, getFolderSize } from './utils/fileHelper.js';
 import { verifyWebhookSignature } from './utils/signatureVerifier.js';
+import { applyFixes } from './utils/autoFixer.js';
 import ReviewQueue from './utils/reviewQueue.js';
 const reviewQueue = new ReviewQueue();
 import { scanFileContentForWarnings } from './utils/sanitizeFileContent.js';
@@ -1736,6 +1737,16 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     });
   }
 
+  let autoFixTrivial = false;
+  if (customRules) {
+    const ruleStr = String(customRules);
+    autoFixTrivial = ruleStr.includes('auto_fix_trivial: true') || process.env.AUTO_FIX_TRIVIAL === 'true';
+  } else {
+    autoFixTrivial = process.env.AUTO_FIX_TRIVIAL === 'true';
+  }
+
+  const fixesToApply = [];
+
   // Track whether the AI engine was successfully queried
   let aiEngineQueried = false;
   let aiCommentsDiscarded = 0;
@@ -1765,18 +1776,26 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
           result.comments.forEach(c => {
             const validLines = validChangedLines.get(c.path);
             if (!validLines || !validLines.has(Number(c.line))) {
-              console.warn(`ΓÜá∩╕Å Skipping invalid inline comment location ${c.path}:${c.line}`);
+              console.warn(`⚠️ Skipping invalid inline comment location ${c.path}:${c.line}`);
               aiCommentsDiscarded++;
               return;
             }
-            // Avoid duplicate comments if secrets scanner already flagged it
-            const duplicate = commentsToPost.some(exist => exist.path === c.path && exist.line === c.line);
-            if (!duplicate) {
-              commentsToPost.push(c);
+            if (autoFixTrivial && c.auto_fix_code) {
+              fixesToApply.push({
+                path: c.path,
+                line: Number(c.line),
+                auto_fix_code: c.auto_fix_code
+              });
+            } else {
+              // Avoid duplicate comments if secrets scanner already flagged it
+              const duplicate = commentsToPost.some(exist => exist.path === c.path && exist.line === c.line);
+              if (!duplicate) {
+                commentsToPost.push(c);
+              }
             }
           });
           if (aiCommentsDiscarded > 0) {
-            console.warn(`ΓÜá∩╕Å ${aiCommentsDiscarded} AI comments could not be posted due to line number mismatches with the diff`);
+            console.warn(`⚠️ ${aiCommentsDiscarded} AI comments could not be posted due to line number mismatches with the diff`);
           }
           aiEngineQueried = true;
           if (result && result.truncated) {
@@ -1798,9 +1817,17 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     }
   }
 
+  // Apply Auto-Fixes if configured
+  let numFixesApplied = 0;
+  if (autoFixTrivial && fixesToApply.length > 0) {
+    console.log(`🔧 Applying ${fixesToApply.length} trivial fixes via Git API...`);
+    const branchRef = `refs/heads/${headBranch}`;
+    numFixesApplied = await applyFixes(octokit, owner, repo, branchRef, fixesToApply);
+  }
+
   // 3. Post consolidated review comment back to GitHub PR
-  if (commentsToPost.length > 0) {
-    console.log(`Γ£ì∩╕Å Posting PR Review with ${commentsToPost.length} inline comments...`);
+  if (commentsToPost.length > 0 || numFixesApplied > 0) {
+    console.log(`✍️ Posting PR Review with ${commentsToPost.length} inline comments...`);
 
     // Batch comments to respect GitHub's limits (50 per review for Checks API alignment)
     const COMMENTS_PER_BATCH = 50;
@@ -1816,9 +1843,13 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
         body += `**Part ${batchIdx + 1} of ${commentBatches.length}** ΓÇö Showing ${batch.length} of ${commentsToPost.length} findings.\n\n`;
       }
       if (!aiEngineQueried && filesToReview.length > 0 && batchIdx === 0) {
-        body += `ΓÜá∩╕Å **Limited Review:** The AI engine was unreachable or returned an unexpected response during this review. Only regex-based secret scanning was performed. AI-powered bug/performance/style analysis was skipped. Please ensure the AI Engine service is running correctly and re-trigger the review for a complete audit.\n\n`;
+        body += `⚠️ **Limited Review:** The AI engine was unreachable or returned an unexpected response during this review. Only regex-based secret scanning was performed. AI-powered bug/performance/style analysis was skipped. Please ensure the AI Engine service is running correctly and re-trigger the review for a complete audit.\n\n`;
       }
-      body += `I have audited the code changes in this Pull Request and generated **${commentsToPost.length} actionable inline suggestion${commentsToPost.length === 1 ? '' : 's'}**.\n\nPlease review my feedback and suggestions below. Happy coding! ≡ƒÜÇ`;
+      body += `I have audited the code changes in this Pull Request and generated **${commentsToPost.length} actionable inline suggestion${commentsToPost.length === 1 ? '' : 's'}**.\n`;
+      if (numFixesApplied > 0) {
+        body += `\n🤖 **Auto-Fix:** I automatically pushed **${numFixesApplied} trivial fixes** (linting, typos) to this branch.\n`;
+      }
+      body += `\nPlease review my feedback and suggestions below. Happy coding! 🚀`;
 
       // Wrap review creation so a single malformed/stale inline comment does
       // not abort the entire PR review. On failure, retry each comment

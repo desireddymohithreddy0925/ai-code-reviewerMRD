@@ -5,6 +5,7 @@ import { parseDiff } from './utils/diffParser.js';
 import { scanSecretsInChanges } from './utils/secretsScanner.js';
 import { globToRegex } from './utils/globToRegex.js';
 import { cleanAndParseJSON, normalizeReviewLineNumber } from './utils/actionUtils.js';
+import { applyFixes } from './utils/autoFixer.js';
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -107,7 +108,10 @@ async function run() {
       core.warning(`WARNING: PR diff has ${totalReviewableFiles} reviewable files, exceeding the review limit of ${MAX_REVIEW_FILES}. Only the first ${MAX_REVIEW_FILES} will be reviewed; the PR will NOT be auto-approved.`);
     }
 
+    const autoFixTrivial = core.getInput('auto_fix_trivial') === 'true' || process.env.AUTO_FIX_TRIVIAL === 'true';
+
     const commentsToPost = [];
+    const fixesToApply = [];
     let reviewedFilesCount = 0;
     let successfulReviewsCount = 0;
     let failedReviewsCount = 0;
@@ -178,7 +182,8 @@ Format your JSON precisely as:
     {
       "line": 12,
       "type": "bug | security | optimization | style",
-      "comment": "### 🐞 Bug Title\\n\\nClear, constructive description of the issue.\\n\\n#### 💡 Actionable Suggestion\\n\\x60\\x60\\x60language\\n// corrected code\\n\\x60\\x60\\x60"
+      "comment": "### 🐞 Bug Title\\n\\nClear, constructive description of the issue.\\n\\n#### 💡 Actionable Suggestion\\n\\x60\\x60\\x60language\\n// corrected code\\n\\x60\\x60\\x60",
+      "auto_fix_code": "optional: provide the EXACT replacement code snippet if this is a trivial fix (typo, lint, minor syntax) that we can automatically commit."
     }
   ]
 }
@@ -218,14 +223,23 @@ If no issues are found, reply with: { "reviews": [] }`;
             const issueLine = normalizeReviewLineNumber(issue.line);
             const changeExists = issueLine !== null && file.changes.some(c => c.line === issueLine);
             if (changeExists) {
-              const bodyText = `<!-- RepoSage Review Comment -->\n${issue.comment}`;
-              const alreadyFlagged = commentsToPost.some(c => c.path === file.path && c.line === issueLine && c.body === bodyText);
-              if (!alreadyFlagged) {
-                commentsToPost.push({
+              if (autoFixTrivial && issue.auto_fix_code) {
+                fixesToApply.push({
                   path: file.path,
                   line: issueLine,
-                  body: bodyText
+                  auto_fix_code: issue.auto_fix_code
                 });
+                console.log(`🔧 Queued auto-fix for ${file.path}:${issueLine}`);
+              } else {
+                const bodyText = `<!-- RepoSage Review Comment -->\n${issue.comment}`;
+                const alreadyFlagged = commentsToPost.some(c => c.path === file.path && c.line === issueLine && c.body === bodyText);
+                if (!alreadyFlagged) {
+                  commentsToPost.push({
+                    path: file.path,
+                    line: issueLine,
+                    body: bodyText
+                  });
+                }
               }
             } else {
               console.warn(`⚠️ AI suggested line ${issue.line} which is outside the PR changes for ${file.path}. Skipping.`);
@@ -245,8 +259,16 @@ If no issues are found, reply with: { "reviews": [] }`;
       }
     }
 
-    // 6. Post Consolidated Review
-    if (commentsToPost.length > 0) {
+    // 6. Apply Auto-Fixes if configured
+    let numFixesApplied = 0;
+    if (autoFixTrivial && fixesToApply.length > 0) {
+      console.log(`🔧 Applying ${fixesToApply.length} trivial fixes via Git API...`);
+      const branchRef = github.context.payload.pull_request.head.ref;
+      numFixesApplied = await applyFixes(octokit, owner, repo, `refs/heads/${branchRef}`, fixesToApply);
+    }
+
+    // 7. Post Consolidated Review
+    if (commentsToPost.length > 0 || numFixesApplied > 0) {
       console.log(`✍️ Posting PR Review with ${commentsToPost.length} inline comments...`);
       try {
       await octokit.rest.pulls.createReview({
@@ -259,7 +281,7 @@ If no issues are found, reply with: { "reviews": [] }`;
 🧐 **I have professionally reviewed and checked all your changes** to ensure they meet our project's high quality standards.
 
 I have audited **${reviewedFilesCount} code files** in this Pull Request and generated **${commentsToPost.length} actionable inline suggestions**. 
-
+${numFixesApplied > 0 ? `\n🤖 **Auto-Fix:** I automatically pushed **${numFixesApplied} trivial fixes** (linting, typos) to this branch.\n` : ''}
 ${incompleteSecretScan ? 'Warning: One or more changed files exceeded the configured secret scan limits. Please split the PR or raise the scan limits and rerun before merging.\\n\\n' : ''}
 
 Please review my feedback and suggestions below. Happy coding! 🚀
