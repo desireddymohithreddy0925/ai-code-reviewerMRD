@@ -4,7 +4,7 @@ import Groq from 'groq-sdk';
 import { parseDiff } from './utils/diffParser.js';
 import { scanSecretsInChanges } from './utils/secretsScanner.js';
 import { globToRegex } from './utils/globToRegex.js';
-import { cleanAndParseJSON, normalizeReviewLineNumber } from './utils/actionUtils.js';
+import { cleanAndParseJSON, normalizeReviewLineNumber, sanitizeMarkdownCodeBlocks } from './utils/actionUtils.js';
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -218,7 +218,8 @@ If no issues are found, reply with: { "reviews": [] }`;
             const issueLine = normalizeReviewLineNumber(issue.line);
             const changeExists = issueLine !== null && file.changes.some(c => c.line === issueLine);
             if (changeExists) {
-              const bodyText = `<!-- RepoSage Review Comment -->\n${issue.comment}`;
+              const sanitizedComment = sanitizeMarkdownCodeBlocks(issue.comment);
+              const bodyText = `<!-- RepoSage Review Comment -->\n${sanitizedComment}`;
               const alreadyFlagged = commentsToPost.some(c => c.path === file.path && c.line === issueLine && c.body === bodyText);
               if (!alreadyFlagged) {
                 commentsToPost.push({

@@ -61,3 +61,17 @@ export function normalizeReviewLineNumber(value) {
   const line = Number(value);
   return Number.isInteger(line) && line > 0 ? line : null;
 }
+
+/**
+ * Ensures that any markdown code blocks (triple backticks) are properly closed.
+ * Prevents unclosed blocks from breaking the GitHub PR UI.
+ */
+export function sanitizeMarkdownCodeBlocks(commentText) {
+  if (typeof commentText !== 'string') return commentText;
+  
+  const matches = commentText.match(/```/g);
+  if (matches && matches.length % 2 !== 0) {
+    return commentText.endsWith('\n') ? commentText + '```' : commentText + '\n```';
+  }
+  return commentText;
+}
