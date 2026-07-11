@@ -69,6 +69,12 @@ async function run() {
       return;
     }
 
+    const isDraft = github.context.payload?.pull_request?.draft;
+    if (isDraft) {
+      console.log(`⏭️ PR #${pullNumber} is a draft. Skipping AI review.`);
+      return;
+    }
+
     console.log(`🚀 Starting RepoSage AI PR Review for PR #${pullNumber} in ${owner}/${repo}`);
 
     // 4. Fetch PR Diff
