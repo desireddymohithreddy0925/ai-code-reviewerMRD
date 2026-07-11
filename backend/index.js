@@ -1747,11 +1747,29 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
     
     try {
+      // Look for .ai-reviewer.yml to check security mode
+      let securityMode = false;
+      try {
+        const { data: configFile } = await octokit.rest.repos.getContent({
+          owner,
+          repo,
+          path: '.ai-reviewer.yml',
+          ref: headSha
+        });
+        const content = Buffer.from(configFile.content, 'base64').toString('utf8');
+        if (content.includes('security_mode: true')) {
+          securityMode = true;
+          console.log(`🔒 Dedicated Security Mode enabled for ${owner}/${repo}`);
+        }
+      } catch (e) {
+        // file doesn't exist, ignore
+      }
+
       const baseUrl = aiEngineUrl.replace(/\/+$/, '');
       const aiResponse = await fetchWithTimeout(`${baseUrl}/review-diff`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
-        body: JSON.stringify({ files: filesToReview })
+        body: JSON.stringify({ files: filesToReview, security_mode: securityMode })
       }, 60000);
 
       if (aiResponse.ok) {

@@ -1020,6 +1020,7 @@ class FileChanges(BaseModel):
 class ReviewDiffRequest(BaseModel):
     files: List[FileChanges]
     model: Optional[str] = "llama-3.3-70b-versatile"
+    security_mode: Optional[bool] = False
 
 class CleanupRequest(BaseModel):
     current_files: List[str]
@@ -1075,12 +1076,21 @@ async def review_diff(request: ReviewDiffRequest):
         changes_text = sanitize_file_content(changes_text)
         
         # FIXED: Prompt now explicitly requests a JSON object {"reviews": [...]}
-        review_prompt = f"""You are a Senior Staff Engineer performing an automated Pull Request code review.
+        if request.security_mode:
+            review_prompt = f"""You are a dedicated DevSecOps engineer performing a rigorous security audit on this Pull Request.
+Analyze the following code additions in the file "{file.path}". 
+You must HUNT EXCLUSIVELY for OWASP Top 10 vulnerabilities (SQLi, XSS, CSRF, hardcoded secrets, injection, insecure deserialization). Ignore all stylistic, naming, or architectural nitpicks.
+If you find a vulnerability, provide a detailed exploit scenario.
+
+You must answer strictly based on the provided code additions. Do not use any external knowledge. If you cannot identify any critical security issues, return an empty array inside the reviews object.
+"""
+        else:
+            review_prompt = f"""You are a Senior Staff Engineer performing an automated Pull Request code review.
 Analyze the following code additions in the file "{file.path}". 
 Identify any logical bugs, security threats (API key leaks, hardcoded credentials, SQL injection, null references), naming/style issues, or performance optimization opportunities.
 
 You must answer strictly based on the provided code additions. Do not use any external knowledge, assumptions, or information beyond the code changes shown above. If you cannot identify any issues in the provided code, return an empty array inside the reviews object.
-
+"""
 Code additions with line numbers:
 {changes_text}
 
