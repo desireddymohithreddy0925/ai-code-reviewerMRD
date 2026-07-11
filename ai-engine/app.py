@@ -77,6 +77,10 @@ MAX_CHAT_FILES = int(os.getenv("MAX_CHAT_FILES", "20"))
 MAX_MESSAGE_LENGTH = int(os.getenv("MAX_MESSAGE_LENGTH", "10000"))
 # Maximum seconds to wait for a single LLM API response before returning 504 (#786)
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
+# Maximum seconds for the entire /analyze endpoint to complete before 504 (#2173)
+ANALYSIS_TIMEOUT_SECONDS = float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "300"))
+# Maximum seconds per individual batch during analysis (#2173)
+BATCH_TIMEOUT_SECONDS = float(os.getenv("BATCH_TIMEOUT_SECONDS", "60"))
 # Maximum number of Groq batch requests to run concurrently during /analyze.
 # Bounds fan-out so large repositories don't blow past Groq's rate limits. (#1675)
 GROQ_CONCURRENCY_LIMIT = int(os.getenv("GROQ_CONCURRENCY_LIMIT", "10"))
@@ -319,6 +323,14 @@ async def _call_groq_with_timeout(**kwargs):
         )
 
 
+def _raise_504_timeout(timeout_name: str, seconds: float):
+    """Raise an HTTP 504 with a descriptive message."""
+    raise HTTPException(
+        status_code=504,
+        detail=f"{timeout_name} timed out after {int(seconds)}s. Please retry.",
+    )
+
+
 app = FastAPI(title="RepoSage AI Engine", description="FastAPI microservice for repository analysis and documentation generation")
 
 
@@ -472,7 +484,7 @@ groq_client = None
 
 if api_key:
     try:
-        groq_client = Groq(api_key=api_key)
+        groq_client = Groq(api_key=api_key, timeout=LLM_TIMEOUT_SECONDS)
         print("🟢 Groq Client successfully initialized in FastAPI AI Engine!")
     except Exception as e:
         sanitized_error = sanitize_error(str(e), api_key)
@@ -638,6 +650,16 @@ async def analyze_repository(request: AnalyzeRequest):
     truncated_files = []
 
     async def process_batch(idx, batch):
+        try:
+            async with asyncio.timeout(BATCH_TIMEOUT_SECONDS):
+                return await _process_batch_body(idx, batch)
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail=f"Batch {idx + 1} timed out after {int(BATCH_TIMEOUT_SECONDS)}s. Please retry or reduce the number of files.",
+            )
+
+    async def _process_batch_body(idx, batch):
         is_first_batch = (idx == 0)
         local_truncated_files = []
         file_contents_summary = []
@@ -793,6 +815,8 @@ You must obey the JSON output format above."""
 
                 truncated_files.extend(local_truncated_files)
 
+        except asyncio.TimeoutError:
+            raise
         except Exception as e:
             print(f"❌ Groq API Call Failed for batch {idx + 1}: {sanitize_error(str(e), api_key)}")
             # If the first batch fails, we should probably fail the whole request since README/Mermaid are missing
@@ -803,7 +827,14 @@ You must obey the JSON output format above."""
                 return
 
     tasks = [process_batch(idx, batch) for idx, batch in enumerate(batches)]
-    await asyncio.gather(*tasks)
+    try:
+        async with asyncio.timeout(ANALYSIS_TIMEOUT_SECONDS):
+            await asyncio.gather(*tasks)
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Overall analysis timed out after {int(ANALYSIS_TIMEOUT_SECONDS)}s. Please retry with fewer files or a smaller batch size.",
+        )
 
     combined_result["truncatedFiles"] = truncated_files
     if diff_mode_header:
