@@ -1653,13 +1653,14 @@ app.post('/api/cache/invalidate', requireApiKey, async (req, res) => {
 
 // Webhook review queueing uses ReviewQueue from reviewQueue.js (per-key mutex)
 
-// ≡ƒƒó Helper to execute Webhook PR review logic
+// 🚀 Helper to execute Webhook PR review logic
 async function runWebhookReview(owner, repo, pullNumber, headSha) {
-  const token = process.env.GITHUB_PAT;
-  if (!token) {
-    console.warn("ΓÜá∩╕Å GITHUB_PAT not set in backend/.env. Cannot run webhook PR review.");
-    return;
-  }
+  try {
+    const token = process.env.GITHUB_PAT;
+    if (!token) {
+      console.warn("⚠️ GITHUB_PAT not set in backend/.env. Cannot run webhook PR review.");
+      return;
+    }
 
   const octokit = new Octokit({ auth: token });
   console.log(`≡ƒöì Fetching diff for PR #${pullNumber}...`);
@@ -1928,6 +1929,14 @@ The PR diff was too large to fully review by the AI engine. Some files were **no
 
   if (redisClient && postedReviewIds.length > 0) {
     await storeReviewIds(redisClient, owner, repo, pullNumber, postedReviewIds);
+  }
+  } catch (err) {
+    if (err.status === 401) {
+      console.error(`🚨 CRITICAL: GitHub Access Token is expired or invalid (401 Unauthorized) for PR #${pullNumber}.`);
+      console.error(`🚨 Please refresh the token in the backend/.env file and restart the server.`);
+    } else {
+      console.error(`❌ Unexpected error during webhook review for PR #${pullNumber}:`, err);
+    }
   }
 }
 
