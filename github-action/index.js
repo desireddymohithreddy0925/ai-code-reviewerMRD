@@ -106,6 +106,21 @@ async function run() {
       core.warning('⚠️ No diff content found for this Pull Request.');
       return;
     }
+    
+    // Fetch existing PR review comments to avoid duplicates
+    let existingComments = [];
+    try {
+      const response = await octokit.rest.pulls.listReviewComments({
+        owner,
+        repo,
+        pull_number: pullNumber,
+        per_page: 100
+      });
+      existingComments = response.data;
+      console.log(`💬 Found ${existingComments.length} existing review comments.`);
+    } catch (err) {
+      console.warn(`⚠️ Could not fetch existing comments: ${err.message}`);
+    }
 
     // 5. Parse Diff
     const parsedFiles = parseDiff(diff);
@@ -138,11 +153,16 @@ async function run() {
       // 1. Run local secrets scanner
       const { findings: localSecretIssues, truncated: scanTruncated, totalChanges: scanTotal, skippedReason: scanReason } = scanSecretsInChanges(file.changes);
       for (const issue of localSecretIssues) {
-        commentsToPost.push({
-          path: file.path,
-          line: issue.line,
-          body: `<!-- RepoSage Review Comment -->\n${issue.comment}`
-        });
+        const bodyString = `<!-- RepoSage Review Comment -->\n${issue.comment}`;
+        const alreadyPostedOnPR = existingComments.some(c => c.path === file.path && c.line === issue.line && c.body === bodyString);
+        
+        if (!alreadyPostedOnPR) {
+          commentsToPost.push({
+            path: file.path,
+            line: issue.line,
+            body: bodyString
+          });
+        }
       }
       if (scanTruncated) {
         console.warn(`⚠️ Secrets scan truncated for ${file.path}: ${scanReason} (total ${scanTotal} changes)`);
@@ -204,13 +224,18 @@ If no issues are found, reply with: { "reviews": [] }`;
           for (const issue of issues) {
             const changeExists = file.changes.some(c => c.line === issue.line);
             if (changeExists) {
+              const bodyString = `<!-- RepoSage Review Comment -->\n${issue.comment}`;
               const alreadyFlagged = commentsToPost.some(c => c.path === file.path && c.line === issue.line);
-              if (!alreadyFlagged) {
+              const alreadyPostedOnPR = existingComments.some(c => c.path === file.path && c.line === issue.line && c.body === bodyString);
+              
+              if (!alreadyFlagged && !alreadyPostedOnPR) {
                 commentsToPost.push({
                   path: file.path,
                   line: issue.line,
-                  body: `<!-- RepoSage Review Comment -->\n${issue.comment}`
+                  body: bodyString
                 });
+              } else if (alreadyPostedOnPR) {
+                console.log(`⏭️ Skipping duplicate AI comment for ${file.path} on line ${issue.line}.`);
               }
             } else {
               console.warn(`⚠️ AI suggested line ${issue.line} which is outside the PR changes for ${file.path}. Skipping.`);
