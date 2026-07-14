@@ -113,6 +113,7 @@ export interface BackendResponse {
   analysis: AnalysisData;
   sessionId?: string;
   sessionPersisted?: boolean;
+  sessionOwnerToken?: string;
   _mock?: boolean;
   partial_review?: boolean;
   warnings?: Array<{ file: string; warning: string }>;
