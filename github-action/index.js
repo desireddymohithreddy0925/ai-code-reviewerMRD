@@ -71,6 +71,28 @@ async function run() {
 
     console.log(`🚀 Starting RepoSage AI PR Review for PR #${pullNumber} in ${owner}/${repo}`);
 
+    const headSha = github.context.payload.pull_request?.head?.sha;
+    if (headSha) {
+      try {
+        const { data: ignoreFile } = await octokit.rest.repos.getContent({
+          owner,
+          repo,
+          path: '.ai-ignore',
+          ref: headSha
+        });
+        const ignoreContent = Buffer.from(ignoreFile.content, 'base64').toString('utf8');
+        const ignoreLines = ignoreContent.split('\n')
+          .map(l => l.trim())
+          .filter(l => l && !l.startsWith('#'));
+        for (const pattern of ignoreLines) {
+          excludePatterns.push(globToRegex(pattern));
+        }
+        console.log(`✅ Loaded ${ignoreLines.length} patterns from .ai-ignore`);
+      } catch (e) {
+        // file doesn't exist, ignore
+      }
+    }
+
     // 4. Fetch PR Diff
     const { data: diff } = await octokit.rest.pulls.get({
       owner,
