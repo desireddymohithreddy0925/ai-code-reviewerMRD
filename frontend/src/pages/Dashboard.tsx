@@ -951,6 +951,9 @@ export default function Dashboard() {
       setSessionId(
         data.sessionPersisted === true ? data.sessionId ?? null : null
       );
+      if (data.sessionPersisted === true && data.sessionOwnerToken) {
+        localStorage.setItem("sessionOwnerToken", data.sessionOwnerToken);
+      }
       persistAuditHistory(data);
       setChatHistory([]);
 
