@@ -1158,6 +1158,7 @@ Identify any logical bugs, security threats (API key leaks, hardcoded credential
 
 You must answer strictly based on the provided code additions. Do not use any external knowledge, assumptions, or information beyond the code changes shown above. If you cannot identify any issues in the provided code, return an empty array inside the reviews object.
 """
+                review_prompt += f"""
 Code additions with line numbers:
 {changes_text}
 
