@@ -1066,21 +1066,14 @@ async def delete_vectors(request: VectorDeleteRequest):
     removed = delete_chunks_for_file(request.file_path, repo_url=request.repo_url)
     return {"removed_count": removed, "file_path": request.file_path}
 
-<<<<<<< HEAD
 # 🟢 Route: Conversational AI Inline Chat
 @app.post("/chat-inline")
 async def chat_inline(request: ChatInlineRequest):
-=======
-# 🟢 Route: PR Summary Generator
-@app.post("/summarize-pr")
-async def summarize_pr(request: SummarizeRequest):
->>>>>>> upstream/main
     if not groq_client:
         raise HTTPException(status_code=500, detail="Groq API client is not configured on this engine.")
     
     groq_model = get_groq_model(request.model)
     
-<<<<<<< HEAD
     chat_prompt = f"""You are a helpful Senior Software Engineer acting as a Pull Request reviewer.
 A developer has asked a question or replied to an AI comment on a specific code snippet.
 
@@ -1095,7 +1088,34 @@ Developer's message:
 "{request.message}"
 
 Please respond directly to the developer's message, keeping your tone helpful, constructive, and concise. Provide code examples if appropriate. Output strictly your reply in JSON format with a single key "reply" containing your response text.
-=======
+"""
+    try:
+        completion = await _call_groq_with_timeout(
+            model=groq_model,
+            messages=[
+                {"role": "system", "content": "You are a code reviewer. Always output valid JSON matching the schema {'reply': 'string'}."},
+                {"role": "user", "content": chat_prompt}
+            ],
+            temperature=0.3,
+            response_format={"type": "json_object"}
+        )
+        content = completion.choices[0].message.content
+        if not content:
+            raise HTTPException(status_code=502, detail="Groq returned empty response.")
+        
+        data = json.loads(content)
+        return {"reply": data.get("reply", "I couldn't process that request.")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 🟢 Route: PR Summary Generator
+@app.post("/summarize-pr")
+async def summarize_pr(request: SummarizeRequest):
+    if not groq_client:
+        raise HTTPException(status_code=500, detail="Groq API client is not configured on this engine.")
+    
+    groq_model = get_groq_model(request.model)
+    
     summary_prompt = f"""You are a Senior Staff Engineer.
 Generate a concise, high-level summary of the architectural and functional changes in this Pull Request based on the following diff.
 Use a bulleted list. Limit to 3-5 concise bullet points. Avoid extremely minor details unless they are critical.
@@ -1107,21 +1127,15 @@ Diff:
 
 Format your JSON precisely as:
 {{
-  "summary": "- Added new feature X\\n- Refactored component Y"
+  "summary": "- Added new feature X\n- Refactored component Y"
 }}
->>>>>>> upstream/main
 """
     try:
         completion = await _call_groq_with_timeout(
             model=groq_model,
             messages=[
-<<<<<<< HEAD
-                {"role": "system", "content": "You are a code reviewer. Always output valid JSON matching the schema {'reply': 'string'}."},
-                {"role": "user", "content": chat_prompt}
-=======
                 {"role": "system", "content": "You are a code reviewer. Always output valid JSON matching the schema {'summary': 'string'}."},
                 {"role": "user", "content": summary_prompt}
->>>>>>> upstream/main
             ],
             temperature=0.3,
             response_format={"type": "json_object"}
@@ -1131,11 +1145,7 @@ Format your JSON precisely as:
             raise HTTPException(status_code=502, detail="Groq returned empty response.")
         
         data = json.loads(content)
-<<<<<<< HEAD
-        return {"reply": data.get("reply", "I couldn't process that request.")}
-=======
         return {"summary": data.get("summary", "")}
->>>>>>> upstream/main
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
