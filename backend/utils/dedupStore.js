@@ -6,6 +6,10 @@ class DedupStore {
     this._startSweeper();
   }
 
+  get size() {
+    return this.memoryStore.size;
+  }
+
   async set(key, value, ttlMs) {
     if (this.redisClient) {
       try {
@@ -57,7 +61,12 @@ class DedupStore {
       const entry = this.memoryStore.get(key);
       entry.expiresAt = Date.now() + ttlMs;
     }
-    this.memoryStore.get(key).value.add(member);
+    const entry = this.memoryStore.get(key);
+    if (Date.now() > entry.expiresAt) {
+      this.memoryStore.delete(key);
+      return;
+    }
+    entry.value.add(member);
   }
 
   async isMember(key, member) {
@@ -88,9 +97,12 @@ class DedupStore {
       }
     }
     const entry = this.memoryStore.get(key);
-    if (entry) {
-      entry.value.delete(member);
+    if (!entry) return;
+    if (Date.now() > entry.expiresAt) {
+      this.memoryStore.delete(key);
+      return;
     }
+    entry.value.delete(member);
   }
 
   async expire(key, ttlMs) {
