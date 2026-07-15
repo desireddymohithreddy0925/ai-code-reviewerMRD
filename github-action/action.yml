@@ -27,6 +27,10 @@ inputs:
     description: 'Whether to automatically approve PRs with no issues found.'
     required: false
     default: 'false'
+  auto-refactor:
+    description: 'Whether to automatically apply suggested code fixes directly to the branch and force push.'
+    required: false
+    default: 'false'
 runs:
   using: 'node20'
   main: 'dist/index.js'
