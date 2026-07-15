@@ -1883,12 +1883,17 @@ app.post('/api/cache/invalidate', requireApiKey, async (req, res) => {
 
 // 🚀 Helper to execute Webhook PR review logic
 async function runWebhookReview(owner, repo, pullNumber, headSha) {
+  const token = process.env.GITHUB_PAT;
+  if (!token) {
+    console.error(`[CRITICAL] GITHUB_PAT not configured. Webhook review for ${owner}/${repo}#${pullNumber} (SHA: ${headSha}) will fail. Dedup marker will be cleaned up for retry.`);
+    throw new Error(
+      `GITHUB_PAT environment variable is not set. ` +
+      `Cannot perform webhook PR review for ${owner}/${repo}#${pullNumber}. ` +
+      `Set GITHUB_PAT in your .env file to enable automated PR reviews.`
+    );
+  }
+
   try {
-    const token = process.env.GITHUB_PAT;
-    if (!token) {
-      console.warn("⚠️ GITHUB_PAT not set in backend/.env. Cannot run webhook PR review.");
-      return;
-    }
 
   const octokit = new Octokit({ auth: token });
   console.log(`≡ƒöì Fetching diff for PR #${pullNumber}...`);
@@ -2826,6 +2831,10 @@ async function startServer() {
   await connectDatabase();
   if (!isDatabaseConnected()) {
     console.log('Server started in degraded mode (no database). Analytics will use file-based storage.');
+  }
+  // Startup validation: warn if webhook reviews are enabled but GITHUB_PAT is missing
+  if (!process.env.GITHUB_PAT) {
+    console.warn('[WARN] Webhook reviews enabled but GITHUB_PAT is not set. Webhook-triggered PR reviews will fail.');
   }
   serverReady = true;
   app.listen(PORT, () => {
