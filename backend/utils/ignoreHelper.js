@@ -48,33 +48,58 @@ export function loadIgnorePatterns(dir) {
 export function isIgnored(filePath, patterns, baseDir) {
   if (!patterns || !Array.isArray(patterns)) return false;
   const relative = path.relative(baseDir, filePath).replace(/\\/g, '/');
+  if (relative.startsWith('../') || relative === '..') return false;
+  const segments = relative.split('/');
+
   for (const pattern of patterns) {
     if (typeof pattern !== 'string') continue;
-    if (pattern.endsWith('/')) {
-      if (relative === pattern.slice(0, -1) || relative.startsWith(pattern)) {
-        return true;
+    
+    const isDirPattern = pattern.endsWith('/');
+    const patClean = isDirPattern ? pattern.slice(0, -1) : pattern;
+    const patHasSlash = patClean.includes('/');
+
+    if (patHasSlash) {
+      if (isDirPattern) {
+        if (relative === patClean || relative.startsWith(pattern)) {
+          return true;
+        }
+      } else if (pattern.startsWith('*.')) {
+        if (relative.endsWith(pattern.slice(1))) {
+          return true;
+        }
+      } else if (pattern.includes('*')) {
+        const escaped = pattern
+          .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+          .split('**')
+          .map(part => part.split('*').join('[^/]*'))
+          .join('.*')
+          .replace(/^\.\*\//, '(?:.*/)?');
+        try {
+          if (new RegExp(`^${escaped}$`).test(relative)) return true;
+        } catch { /* skip invalid pattern */ }
+      } else {
+        if (relative === pattern || relative.startsWith(pattern + '/')) {
+          return true;
+        }
       }
-    } else if (pattern.startsWith('*.')) {
-      if (relative.endsWith(pattern.slice(1))) {
-        return true;
-      }
-    } else if (pattern.includes('*')) {
-      // Convert glob to regex. Handle `**` (matches across any number of
-      // directories, including `/`) correctly: split on `**` first, replace
-      // any single `*` within the segments with `[^/]*`, then join the
-      // segments with `.*` so globstar crosses directory boundaries.
-      const escaped = pattern
-        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-        .split('**')
-        .map(part => part.split('*').join('[^/]*'))
-        .join('.*')
-        .replace(/^\.\*\//, '(?:.*/)?');
-      try {
-        if (new RegExp(`^${escaped}$`).test(relative)) return true;
-      } catch { /* skip invalid pattern */ }
     } else {
-      if (relative === pattern || relative.startsWith(pattern + '/')) {
-        return true;
+      if (isDirPattern) {
+        if (segments.includes(patClean)) return true;
+      } else if (pattern.startsWith('*.')) {
+        if (relative.endsWith(pattern.slice(1))) return true;
+      } else if (pattern.includes('*')) {
+        const escaped = pattern
+          .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+          .split('**')
+          .map(part => part.split('*').join('[^/]*'))
+          .join('.*')
+          .replace(/^\.\*\//, '(?:.*/)?');
+        try {
+          if (new RegExp(`^${escaped}$`).test(relative)) return true;
+          if (new RegExp(`(?:^|/)${escaped}$`).test(relative)) return true;
+        } catch { /* skip invalid pattern */ }
+      } else {
+        if (segments.includes(pattern)) return true;
       }
     }
   }
