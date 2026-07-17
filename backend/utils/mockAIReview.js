@@ -10,11 +10,14 @@ export function mockAIReview(files, model = 'llama-3.3-70b-versatile') {
   }
 
   files.forEach(file => {
+    const totalLines = file.content ? file.content.split('\n').length : 50;
+    const getRandomLine = () => null;
+
     reviews[file.name] = {
       bugs: [
         {
           type: "Null Pointer Risk",
-          line: 12,
+          line: getRandomLine(),
           description: `Variables should be validated before use to prevent potential runtime crashes in ${file.name}.`,
           suggestion: "Add a standard null-check check (e.g. `if (!variable)` or `if variable is None`)."
         }
@@ -22,7 +25,7 @@ export function mockAIReview(files, model = 'llama-3.3-70b-versatile') {
       security: [
         {
           type: "Hardcoded API Key Check",
-          line: 5,
+          line: getRandomLine(),
           description: "Potential hardcoded credentials detected. API keys should always be loaded from environment variables (.env).",
           suggestion: "Move the key to a `.env` file and load using standard environment managers."
         }
@@ -30,7 +33,7 @@ export function mockAIReview(files, model = 'llama-3.3-70b-versatile') {
       optimization: [
         {
           type: "Complexity Reduction",
-          line: 25,
+          line: getRandomLine(),
           description: "Avoid using nested iterations if time complexity grows quadratically. Consider using a Map/Dictionary lookup.",
           suggestion: "Implement a mapping cache instead of performing dual-nested loops."
         }
@@ -38,7 +41,7 @@ export function mockAIReview(files, model = 'llama-3.3-70b-versatile') {
       styling: [
         {
           type: "Naming Convention",
-          line: 8,
+          line: getRandomLine(),
           description: "CamelCase or snake_case format mismatch detected on function declaration.",
           suggestion: "Reformat variable or function definitions to conform to standard styling rules."
         }
@@ -46,8 +49,12 @@ export function mockAIReview(files, model = 'llama-3.3-70b-versatile') {
     };
   });
 
+  // Derive repo name from first file's path; use fallback for root-level files
+  const repoParts = files[0].name.split('/');
+  const repoName = repoParts.length > 1 ? repoParts[0] : 'Repository';
+
   // Mock generated README
-  const mockReadme = `# 🚀 ${files[0].name.split('/')[0] || 'My Repository'}
+  const mockReadme = `# 🚀 ${repoName}
 
 This repository is powered by RepoSage AI Copilot (Audited using **${model}**). 
 
@@ -60,7 +67,7 @@ ${files.map(f => `- 📄 **${f.name}**`).join('\n')}
 Generated automatically by **RepoSage AI Generator**.`;
 
   // Mock generated Mermaid flowchart
-  const mockMermaid = `graph TD\n  Root["📦 ${files[0].name.split('/')[0] || 'Repository'}"]\n  ${files.slice(0, 5).map((f, i) => `  Root --> File_${i}["📄 ${f.name.split('/').pop()}"]`).join('\n')}`;
+  const mockMermaid = `graph TD\n  Root["📦 ${repoName}"]\n  ${files.slice(0, 5).map((f, i) => `  Root --> File_${i}["📄 ${f.name.split('/').pop()}"]`).join('\n')}`;
 
   return {
     fileReviews: reviews,

@@ -1,19 +1,61 @@
 import * as vscode from "vscode";
 
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
-function renderMarkdown(md: string): string {
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/javascript\s*:/gi, "blocked:")
+    .replace(/on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "data-blocked")
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(/<iframe\b[^>]*>/gi, "")
+    .replace(/<\/iframe>/gi, "")
+    .replace(/<embed\b[^>]*>/gi, "")
+    .replace(/<\/embed>/gi, "")
+    .replace(/<object\b[^>]*>/gi, "")
+    .replace(/<\/object>/gi, "");
+
+function escapeHtmlPreserveBackticks(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;")
+    .replace(/`/g, "&#96;");
+}
+
+function formatInline(text: string): string {
+  let escaped = escapeHtmlPreserveBackticks(text);
+  
+  // bold
+  escaped = escaped.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+  
+  // italic
+  escaped = escaped.replace(/(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)/g, "<em>$1</em>");
+  
+  // links
+  escaped = escaped.replace(/\[(.*?)\]\((.*?)\)/g, "<a href=\"$2\">$1</a>");
+  
+  // code
+  escaped = escaped.replace(/&#96;([^&#96;]+)&#96;/g, "<code>$1</code>");
+  
+  return escaped;
+}
+
+export function renderMarkdown(md: string): string {
   const lines = md.split("\n");
   let html = "";
   let inCodeBlock = false;
   let codeBuffer: string[] = [];
   let codeLang = "";
+  let inTable = false;
 
   for (const line of lines) {
     if (line.trimStart().startsWith("```")) {
@@ -34,23 +76,43 @@ function renderMarkdown(md: string): string {
       continue;
     }
 
+    const trimmed = line.trim();
+
+    if (inTable && !trimmed.startsWith("|")) {
+      html += "</table>";
+      inTable = false;
+    }
+
     if (line.startsWith("# ")) {
-      html += `<h1>${escapeHtml(line.slice(2))}</h1>`;
+      html += `<h1>${formatInline(line.slice(2))}</h1>`;
     } else if (line.startsWith("## ")) {
-      html += `<h2>${escapeHtml(line.slice(3))}</h2>`;
+      html += `<h2>${formatInline(line.slice(3))}</h2>`;
     } else if (line.startsWith("### ")) {
-      html += `<h3>${escapeHtml(line.slice(4))}</h3>`;
-    } else if (line.trim().startsWith("- ")) {
-      html += `<li>${escapeHtml(line.trim().slice(2))}</li>`;
-    } else if (line.trim() === "") {
+      html += `<h3>${formatInline(line.slice(4))}</h3>`;
+    } else if (trimmed.startsWith("- ")) {
+      html += `<li>${formatInline(trimmed.slice(2))}</li>`;
+    } else if (/^\d+\.\s+/.test(trimmed)) {
+      const match = trimmed.match(/^\d+\.\s+(.*)/);
+      html += `<li>${formatInline(match ? match[1] : "")}</li>`;
+    } else if (trimmed.startsWith("|")) {
+      if (!inTable) {
+        html += `<table>`;
+        inTable = true;
+      }
+      if (trimmed.includes("---")) {
+        continue;
+      }
+      const cells = trimmed.split("|").map(c => c.trim()).filter((c, i, arr) => !(c === "" && (i === 0 || i === arr.length - 1)));
+      html += `<tr>${cells.map(c => `<td>${formatInline(c)}</td>`).join("")}</tr>`;
+    } else if (trimmed === "") {
       html += `<div class="spacer"></div>`;
     } else {
-      const formatted = escapeHtml(line).replace(
-        /`([^`]+)`/g,
-        "<code>$1</code>"
-      );
-      html += `<p>${formatted}</p>`;
+      html += `<p>${formatInline(line)}</p>`;
     }
+  }
+
+  if (inTable) {
+    html += "</table>";
   }
 
   if (codeBuffer.length > 0) {
@@ -62,57 +124,45 @@ function renderMarkdown(md: string): string {
 }
 
 function getWebviewContent(markdown: string, isLoading: boolean, error: string | null): string {
-  const bodyContent = error
+  const bodyContent = sanitizeHtml(error
     ? `<div class="error-message">${escapeHtml(error)}</div>`
     : isLoading
     ? `<div class="loading"><div class="spinner"></div><span>Reviewing your code...</span></div>`
     : markdown
     ? renderMarkdown(markdown)
-    : `<div class="empty-state"><span class="empty-icon">🔍</span><p>Open a file and run <strong>RepoSage: Review Current File</strong> to see results here.</p></div>`;
+    : `<div class="empty-state"><span class="empty-icon">🔍</span><p>Open a file and run <strong>RepoSage: Review Current File</strong> to see results here.</p></div>`);
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${vscode.webview.cspSource}; img-src data: https:; font-src 'none'; script-src 'none';">
 <style>
-:root {
-  --bg: #1e1e1e;
-  --card: #2d2d2d;
-  --text: #d4d4d4;
-  --heading: #e0e0e0;
-  --accent: #569cd6;
-  --code-bg: #1e1e1e;
-  --code-text: #ce9178;
-  --border: #3c3c3c;
-  --error-bg: #3a1d1d;
-  --error-text: #f48771;
-  --error-border: #6b2a2a;
-}
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   padding: 16px;
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
   font-size: 13px;
   line-height: 1.6;
 }
-h1 { font-size: 16px; font-weight: 700; color: var(--heading); margin: 16px 0 8px 0; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
-h2 { font-size: 14px; font-weight: 600; color: var(--heading); margin: 12px 0 6px 0; }
-h3 { font-size: 13px; font-weight: 600; color: var(--heading); margin: 10px 0 4px 0; }
+h1 { font-size: 16px; font-weight: 700; color: var(--vscode-editor-foreground); margin: 16px 0 8px 0; padding-bottom: 4px; border-bottom: 1px solid var(--vscode-widget-border); }
+h2 { font-size: 14px; font-weight: 600; color: var(--vscode-editor-foreground); margin: 12px 0 6px 0; }
+h3 { font-size: 13px; font-weight: 600; color: var(--vscode-editor-foreground); margin: 10px 0 4px 0; }
 p { margin: 0 0 6px 0; }
 code {
-  background: var(--code-bg);
-  color: var(--code-text);
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editor-background));
+  color: var(--vscode-textPreformat-foreground, #ce9178);
   padding: 1px 4px;
   border-radius: 3px;
-  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-family: var(--vscode-editor-font-family, 'Cascadia Code', 'Fira Code', monospace);
   font-size: 12px;
 }
 pre {
-  background: var(--code-bg);
-  border: 1px solid var(--border);
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-widget-border);
   border-radius: 6px;
   padding: 12px;
   overflow-x: auto;
@@ -121,10 +171,14 @@ pre {
 pre code {
   background: none;
   padding: 0;
-  color: var(--code-text);
+  color: var(--vscode-textPreformat-foreground, #ce9178);
   line-height: 1.5;
 }
 li { margin-left: 16px; margin-bottom: 4px; }
+table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+th, td { border: 1px solid var(--vscode-widget-border); padding: 4px 8px; text-align: left; }
+a { color: var(--vscode-textLink-foreground); text-decoration: none; }
+a:hover { text-decoration: underline; }
 .spacer { height: 6px; }
 .loading {
   display: flex;
@@ -133,21 +187,21 @@ li { margin-left: 16px; margin-bottom: 4px; }
   justify-content: center;
   padding: 40px 16px;
   gap: 12px;
-  color: var(--text);
+  color: var(--vscode-editor-foreground);
 }
 .spinner {
   width: 24px;
   height: 24px;
-  border: 3px solid var(--border);
-  border-top-color: var(--accent);
+  border: 3px solid var(--vscode-widget-border);
+  border-top-color: var(--vscode-textLink-foreground);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .error-message {
-  background: var(--error-bg);
-  border: 1px solid var(--error-border);
-  color: var(--error-text);
+  background: var(--vscode-inputValidation-errorBackground, #3a1d1d);
+  border: 1px solid var(--vscode-inputValidation-errorBorder, #6b2a2a);
+  color: var(--vscode-errorForeground, #f48771);
   padding: 12px;
   border-radius: 6px;
   font-size: 12px;
@@ -160,7 +214,7 @@ li { margin-left: 16px; margin-bottom: 4px; }
   justify-content: center;
   padding: 48px 16px;
   text-align: center;
-  color: #808080;
+  color: var(--vscode-descriptionForeground, #808080);
 }
 .empty-icon { font-size: 32px; margin-bottom: 12px; }
 .empty-state p { font-size: 12px; line-height: 1.5; }

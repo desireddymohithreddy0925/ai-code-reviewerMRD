@@ -1,3 +1,7 @@
+// Prepared for future use — not yet wired into the backend pipeline.
+// Tests exist at backend/tests/repoReader*.test.js.
+// Remove this notice when the first consumer import is added.
+
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -5,7 +9,8 @@ import { fileURLToPath } from 'url';
 import simpleGit from 'simple-git';
 import { isValidRepoUrl } from './urlValidator.js';
 import { loadIgnorePatterns, isIgnored } from './ignoreHelper.js';
-import { deleteFolderRecursive } from './fileHelper.js';
+import { HARD_SKIP_DIRS } from './skipConstants.js';
+import { deleteFolderRecursive, resolveSafePath } from './fileHelper.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,8 +25,7 @@ const DEFAULT_MAX_DEPTH = 10;
 const DEFAULT_MAX_BYTES = 1024 * 1024; // 1 MB per file
 const DEFAULT_CLONE_TIMEOUT_MS = 120000;
 
-// Directories always skipped (same as ignoreHelper.js#readFilesRecursively).
-const HARD_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.venv', '__pycache__']);
+// Directories always skipped (shared with ignoreHelper.js#readFilesRecursively).
 
 // Map file extension → language label, used by downstream chunkers.
 // Mirrors the language map in ai-engine/text_splitter.py:20-33.
@@ -103,7 +107,8 @@ function walkForExtensions(rootDir, extensionSet, ignorePatterns, maxFiles, maxD
 
       let content;
       try {
-        content = fs.readFileSync(full, 'utf-8');
+        const safePath = resolveSafePath(rootDir, full);
+        content = fs.readFileSync(safePath, 'utf-8');
       } catch {
         continue;
       }
@@ -122,7 +127,7 @@ function walkForExtensions(rootDir, extensionSet, ignorePatterns, maxFiles, maxD
  * Normalize an extensions array to lowercase, dot-prefixed.
  */
 function normalizeExtensions(input) {
-  const list = input ?? DEFAULT_EXTENSIONS;
+  const list = Array.isArray(input) ? input : DEFAULT_EXTENSIONS;
   return list.map((e) => {
     const lower = String(e).toLowerCase();
     return lower.startsWith('.') ? lower : `.${lower}`;
@@ -191,8 +196,19 @@ export async function readCodeFilesFromRepo(repoUrl, options = {}) {
   const clonePath = path.join(tempReposDir, `rag_${uniqueId}`);
 
   try {
-    const git = simpleGit({ timeout: { block: cloneTimeoutMs } });
-    await git.clone(repoUrl, clonePath, ['--depth', '1']);
+    const git = simpleGit({
+      timeout: { block: cloneTimeoutMs },
+      unsafe: {
+        allowUnsafeHooksPath: true
+      }
+    });
+    await git.clone(repoUrl, clonePath, [
+      '--config', 'core.hooksPath=/dev/null',
+      '--depth', '1',
+      '--single-branch',
+      '--no-checkout'
+    ]);
+    await git.cwd(clonePath).checkout(['HEAD']);
 
     const ignorePatterns = loadIgnorePatterns(clonePath);
     return walkForExtensions(

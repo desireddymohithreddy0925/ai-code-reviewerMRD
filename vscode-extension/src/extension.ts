@@ -119,6 +119,9 @@ export async function activate(context: vscode.ExtensionContext) {
         if (result.success) {
           console.log("RepoSage review result:", result.response);
           provider.setContent(result.response || "");
+          if (result.data) {
+            diagnostics.updateFromResponse(result.data, fileName);
+          }
           vscode.window.showInformationMessage(
             "RepoSage review complete! Check the sidebar for details."
           );
