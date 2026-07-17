@@ -26,7 +26,7 @@ function computeHealthScore(fileReviews: Record<string, FileReview>): number {
     totalOptimizations += review.optimization?.length || 0;
     totalStylingIssues += review.styling?.length || 0;
   }
-  return Math.max(0, Math.round(100 - totalBugs * 5 - totalSecurityIssues * 3 - totalOptimizations * 1 - totalStylingIssues * 0.5));
+  return Math.max(0, Math.round(100 - totalBugs * 3 - totalSecurityIssues * 15 - totalOptimizations * 1 - totalStylingIssues * 0.5));
 }
 
 function getScoreColor(score: number): { text: string; bg: string; border: string; label: string } {
@@ -47,7 +47,7 @@ function GaugeSvg({ score, size = 140, theme = 'dark' }: { score: number; size?:
   const trackStroke = theme === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.08)';
 
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`Health score: ${score} out of 100`}>
       <defs>
         <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
           <stop offset="0%" stopColor="#ef4444" />
@@ -74,7 +74,7 @@ function GaugeSvg({ score, size = 140, theme = 'dark' }: { score: number; size?:
         strokeDashoffset={offset}
         strokeLinecap="round"
         transform={`rotate(-90 ${center} ${center})`}
-        style={{ transition: 'stroke-dashoffset 1s ease-in-out' }}
+        className="gauge-circle"
       />
       <text
         x={center}

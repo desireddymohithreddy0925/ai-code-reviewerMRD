@@ -9,11 +9,12 @@ test('scanSecrets returns empty array for invalid inputs', () => {
   assert.deepEqual(scanSecrets({}), []);
 });
 
-test('scanSecretsInChanges returns empty array for invalid inputs', () => {
-  assert.deepEqual(scanSecretsInChanges(null), []);
-  assert.deepEqual(scanSecretsInChanges(undefined), []);
-  assert.deepEqual(scanSecretsInChanges("invalid_string"), []);
-  assert.deepEqual(scanSecretsInChanges({}), []);
+test('scanSecretsInChanges returns empty results for invalid inputs', () => {
+  const expected = { findings: [], truncated: false, totalChanges: 0, skippedReason: null };
+  assert.deepEqual(scanSecretsInChanges(null), expected);
+  assert.deepEqual(scanSecretsInChanges(undefined), expected);
+  assert.deepEqual(scanSecretsInChanges("invalid_string"), expected);
+  assert.deepEqual(scanSecretsInChanges({}), expected);
 });
 
 test('scanSecretsInChanges handles invalid change objects gracefully', () => {
@@ -24,5 +25,5 @@ test('scanSecretsInChanges handles invalid change objects gracefully', () => {
     { line: 12, content: 'clean content' }
   ];
   const results = scanSecretsInChanges(changes);
-  assert.deepEqual(results, []);
+  assert.deepEqual(results.findings, []);
 });

@@ -45,9 +45,10 @@ class TestSanitizeOutputEdgeCases:
         result = sanitize_ai_output('<div style="background: url(javascript:alert(1))">test</div>')
         assert 'javascript:' not in result
 
-    def test_preserves_safe_style_properties(self):
+    def test_strips_style_attribute_from_non_svg_elements(self):
         result = sanitize_ai_output('<div style="color: red; font-size: 14px; background: #f0f0f0">text</div>')
-        assert 'color: red' in result or 'color:red' in result.replace(' ', '')
+        assert 'style=' not in result
+        assert '<div>' in result or '<div ' in result
 
     def test_strips_css_import(self):
         # Bleach strips the <style> tag but preserves inner content including @import.
