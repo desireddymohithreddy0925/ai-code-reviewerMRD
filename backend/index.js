@@ -22,6 +22,7 @@ import { deleteFolderRecursive, getFolderSize } from './utils/fileHelper.js';
 import { verifyWebhookSignature } from './utils/signatureVerifier.js';
 import { verifyPort } from './utils/envVerifier.js';
 import { mockAIReview } from './utils/mockAIReview.js';
+import { buildRepositoryContext } from './utils/repositoryAnalyzer.js';
 import Analytics from './models/Analytics.js';
 import Session from './models/Session.js';
 import { connectDatabase } from './config/db.js';
@@ -294,6 +295,8 @@ app.post('/api/analyze', requireApiKey, analyzeLimiter, async (req, res) => {
       }
 
       console.log(`📁 Found ${files.length} valid source files. Sending to AI engine...`);
+      
+      const repositoryContext = buildRepositoryContext(files);
 
       // 2. Mocking AI Response for initial setup (or forward to FastAPI AI Engine)
       // This is a perfect placeholder where contributors can connect the FastAPI server!
@@ -305,7 +308,7 @@ app.post('/api/analyze', requireApiKey, analyzeLimiter, async (req, res) => {
         const aiResponse = await fetch(`${baseUrl}/analyze`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ files, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt, batchSize })
+          body: JSON.stringify({ files, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt, batchSize, repositoryContext })
         });
         
         if (aiResponse.ok) {

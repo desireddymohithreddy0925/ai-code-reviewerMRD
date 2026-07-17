@@ -200,7 +200,7 @@ class AnalyzeRequest(BaseModel):
     maxTokens: Optional[int] = 2048
     systemPrompt: Optional[str] = ""
     batchSize: Optional[int] = Field(5, ge=1, le=20)
-    
+    repositoryContext: Optional[dict] = None
 
 class ChatRequest(BaseModel):
     files: List[FileItem]
@@ -226,6 +226,7 @@ async def analyze_repository(request: AnalyzeRequest):
     temperature = request.temperature or 0.7
     max_tokens = request.maxTokens or 2048
     batch_size = request.batchSize or 5
+    repository_context = request.repositoryContext
     custom_system_prompt = validate_system_prompt(request.systemPrompt or "")
     
     # 1. Prepare global repository structure
@@ -241,6 +242,29 @@ async def analyze_repository(request: AnalyzeRequest):
         "context alone, state that clearly and do not speculate. "
         "You MUST follow the JSON output format specified below."
     )
+
+    if repository_context:
+        context_str = "Detected Repository Context:\n"
+        if repository_context.get("frameworks"):
+            context_str += f"- Frameworks: {', '.join(repository_context['frameworks'])}\n"
+        if repository_context.get("codingStyles"):
+            context_str += f"- Coding Styles: {', '.join(repository_context['codingStyles'])}\n"
+        if repository_context.get("configs"):
+            context_str += f"- Configs: {', '.join(repository_context['configs'])}\n"
+        
+        arch = repository_context.get("architecture", {})
+        arch_features = []
+        if arch.get("hasFrontend"): arch_features.append("Frontend")
+        if arch.get("hasBackend"): arch_features.append("Backend")
+        if arch.get("hasDatabase"): arch_features.append("Database")
+        if arch_features:
+            context_str += f"- Architecture: {', '.join(arch_features)}\n"
+        
+        base_prompt = (
+            base_prompt
+            + "\n\n" + context_str
+            + "\nEnsure your review suggestions adhere to these detected frameworks and coding styles."
+        )
 
     if custom_system_prompt:
         # Append custom content AFTER safety instructions with reinforcement
