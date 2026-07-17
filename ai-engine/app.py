@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import bleach
 from bleach.css_sanitizer import CSSSanitizer
 import vectorstore
+import extractor
 
 # Load environment variables: prefer local .env, fall back to backend/.env
 env_paths = [
@@ -649,6 +650,27 @@ async def query_rag_chunks(request: RagQueryRequest):
         chunks=chunks,
         total_chunks=len(chunks),
     )
+
+
+class ExtractRequest(BaseModel):
+    files: List[FileItem]
+
+
+class ExtractResponse(BaseModel):
+    chunks: List[dict]
+
+
+# 🟢 Route: Extract code chunks (classes, functions, methods) for Python, JS, Java
+@app.post("/api/extract", response_model=ExtractResponse)
+@app.post("/extract", response_model=ExtractResponse)
+async def extract_code_chunks(request: ExtractRequest):
+    all_chunks = []
+    for file_item in request.files:
+        chunks = extractor.extract_chunks(file_item.name, file_item.content)
+        all_chunks.extend(chunks)
+    return ExtractResponse(chunks=all_chunks)
+
+
 
 
 if __name__ == "__main__":
