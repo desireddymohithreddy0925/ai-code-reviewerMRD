@@ -202,3 +202,22 @@ test('parseDiff handles diff with no trailing newline', () => {
   assert.equal(result[0].path, 'test.js');
   assert.equal(result[0].changes.length, 1);
 });
+
+test('parseDiff handles file paths containing "b/" folder name and quoted file paths', () => {
+  const diff = `
+diff --git a/sub/dir/b/file.js b/sub/dir/b/file.js
+--- a/sub/dir/b/file.js
++++ b/sub/dir/b/file.js
+@@ -1 +1 @@
++hello
+diff --git "a/space b/quoted.js" "b/space b/quoted.js"
+--- "a/space b/quoted.js"
++++ "b/space b/quoted.js"
+@@ -1 +1 @@
++world
+  `;
+  const { files: result } = parseDiff(diff);
+  assert.equal(result.length, 2);
+  assert.equal(result[0].path, 'sub/dir/b/file.js');
+  assert.equal(result[1].path, 'space b/quoted.js');
+});
