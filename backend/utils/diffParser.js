@@ -17,6 +17,9 @@ export function parseDiff(diffStr) {
       }
       if (match) {
         const cleanPath = match[2];
+      const match = line.match(/(?:^| )"?b\/(.+?)"?$/);
+      if (match) {
+        const cleanPath = match[1];
         currentFile = {
           path: cleanPath,
           changes: [],
