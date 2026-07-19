@@ -141,10 +141,14 @@ async function run() {
         continue;
       }
 
-      const ext = file.path.split('.').pop()?.toLowerCase();
-      if (!ext || !validExtensions.includes(ext)) {
-        console.log(`skip non-code file: ${file.path}`);
-        continue;
+      const fileName = file.path.split('/').pop() || file.path;
+      const hasExt = fileName.includes('.');
+      if (hasExt) {
+        const ext = fileName.split('.').pop()?.toLowerCase() || '';
+        if (!validExtensions.includes(ext)) {
+          console.log(`skip non-code file: ${file.path}`);
+          continue;
+        }
       }
 
       if (file.changes.length === 0) continue;
