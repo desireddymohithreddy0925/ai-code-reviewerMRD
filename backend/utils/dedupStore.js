@@ -48,7 +48,7 @@ class DedupStore {
         console.warn(`⚠️ Redis sadd failed for ${key}, falling back to memory:`, err.message);
       }
     }
-    if (!this.memoryStore.has(key)) {
+    if (!this.memoryStore.has(key) || !(this.memoryStore.get(key).value instanceof Set)) {
       this.memoryStore.set(key, { value: new Set(), expiresAt: Infinity });
     }
     this.memoryStore.get(key).value.add(member);
@@ -64,7 +64,7 @@ class DedupStore {
       }
     }
     const entry = this.memoryStore.get(key);
-    if (!entry) return false;
+    if (!entry || !(entry.value instanceof Set)) return false;
     return entry.value.has(member);
   }
 
@@ -78,7 +78,7 @@ class DedupStore {
       }
     }
     const entry = this.memoryStore.get(key);
-    if (entry) {
+    if (entry && entry.value instanceof Set) {
       entry.value.delete(member);
     }
   }
