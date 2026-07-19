@@ -114,7 +114,7 @@ class AnalysisCache {
 
     // Cache hit — promote to MRU position and extend TTL
     this.cache.delete(key);
-    entry.expiresAt = now + this.ttlMs;
+    entry.expiresAt = now + (entry.isMock ? this.mockTtlMs : this.ttlMs);
     this.cache.set(key, entry);
     this.stats.hits++;
     const qualityLabel = entry.isMock ? '⚠️ MOCK' : '✅';
