@@ -24,17 +24,18 @@ function generateJSONReport(repoName, files, reviewResult, outputPath) {
       const processIssues = (issues, severity) => {
         if (Array.isArray(issues)) {
           issues.forEach(issue => {
+            const finalSeverity = issue.severity || severity;
             const category = categorizeFinding(issue);
             const finding = {
               file: filePath,
               line: issue.line || 1,
-              severity,
+              severity: finalSeverity,
               category,
               message: issue.description || issue.message || '',
               rule_id: issue.rule || 'unknown',
             };
             allFindings.push(finding);
-            severityCount[severity] = (severityCount[severity] || 0) + 1;
+            severityCount[finalSeverity] = (severityCount[finalSeverity] || 0) + 1;
             categoryCount[category] = (categoryCount[category] || 0) + 1;
           });
         }
@@ -80,16 +81,17 @@ function generateHTMLReport(repoName, files, reviewResult, outputPath) {
       const processIssues = (issues, severity) => {
         if (Array.isArray(issues)) {
           issues.forEach(issue => {
+            const finalSeverity = issue.severity || severity;
             const category = categorizeFinding(issue);
             allFindings.push({
               file: filePath,
               line: issue.line || 1,
-              severity,
+              severity: finalSeverity,
               category,
               message: issue.description || issue.message || '',
               rule_id: issue.rule || 'unknown',
             });
-            severityCount[severity] = (severityCount[severity] || 0) + 1;
+            severityCount[finalSeverity] = (severityCount[finalSeverity] || 0) + 1;
           });
         }
       };
@@ -109,7 +111,9 @@ function generateHTMLReport(repoName, files, reviewResult, outputPath) {
 
   const sortedFindings = allFindings.sort((a, b) => {
     const severityOrder = { error: 0, warning: 1, info: 2 };
-    return severityOrder[a.severity] - severityOrder[b.severity];
+    const rankA = severityOrder[a.severity] ?? 3;
+    const rankB = severityOrder[b.severity] ?? 3;
+    return rankA - rankB;
   });
 
   const findingRows = sortedFindings.map(f => `
