@@ -56,6 +56,7 @@ export function formatNetworkError(apiUrl: string, message: string): string {
 }
 
 export function clampLine(line: number): number {
+  if (typeof line !== "number" || !Number.isFinite(line)) return 0;
   return Math.max(0, line - 1);
 }
 
