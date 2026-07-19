@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isValidRepoUrl, parseRepoUrl } from '../utils/urlValidator.js';
+import { isValidRepoUrl, parseRepoUrl, isSafeUrl } from '../utils/urlValidator.js';
 
 test('isValidRepoUrl should accept valid GitHub URLs', () => {
   assert.equal(isValidRepoUrl('https://github.com/owner/repo'), true);
@@ -74,4 +74,36 @@ test('parseRepoUrl returns null for URLs with multiple trailing slashes', () => 
 test('parseRepoUrl should return null for URLs with extra path segments', () => {
   assert.equal(parseRepoUrl('https://github.com/owner/repo/pull/1'), null);
   assert.equal(parseRepoUrl('https://github.com/owner/repo/tree/main/src'), null);
+});
+
+test('isSafeUrl validates basic URL safety', async () => {
+  const localResult = await isSafeUrl('https://127.0.0.1/');
+  assert.equal(localResult.valid, false);
+  assert.ok(localResult.reason.includes('private or restricted IP'));
+
+  const publicResult = await isSafeUrl('https://github.com/');
+  assert.equal(publicResult.valid, true);
+});
+
+test('isSafeUrl rejects domains resolving to at least one private IP (DNS round-robin / multi-IP)', async (t) => {
+  const dns = await import('node:dns');
+  
+  t.mock.method(dns.default, 'lookup', (hostname, options, callback) => {
+    const cb = typeof options === 'function' ? options : callback;
+    const opts = typeof options === 'object' ? options : {};
+    if (opts.all) {
+      cb(null, [
+        { address: '8.8.8.8', family: 4 },
+        { address: '127.0.0.1', family: 4 }
+      ]);
+    } else {
+      cb(null, '8.8.8.8', 4);
+    }
+  });
+
+  const { isSafeUrl: freshIsSafeUrl } = await import(`../utils/urlValidator.js?test-mock=${Date.now()}`);
+  const result = await freshIsSafeUrl('https://mixed-ip-domain.com');
+
+  assert.equal(result.valid, false);
+  assert.ok(result.reason.includes('private or restricted IP'));
 });
