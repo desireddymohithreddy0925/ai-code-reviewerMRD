@@ -14,6 +14,7 @@ import rateLimit from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
 import Redis from 'ioredis';
 import { scanSecrets, scanSecretsInChanges } from './utils/secretsScanner.js';
+import { llmAnalysisLimiter } from './middleware/rateLimiter.js';
 import { scrubRepositoryPayload } from './utils/secretScrubber.js';
 import { recordAnalysis as recordFileAnalytics } from './utils/analyticsStore.js';
 import { loadIgnorePatterns, readFilesRecursively } from './utils/ignoreHelper.js';
@@ -97,18 +98,7 @@ if (process.env.REDIS_URL) {
 }
 const dedupStore = new DedupStore(redisClient);
 
-// Per-IP rate limiting for expensive endpoints
-const analyzeLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  // No keyGenerator: express-rate-limit defaults to req.ip, which Express has already
-  // resolved correctly via the `trust proxy` setting above. Using req.ip prevents
-  // clients from bypassing the limit by rotating fake X-Forwarded-For values.
-  store: redisClient ? new RedisStore({ sendCommand: (...args) => redisClient.call(...args) }) : undefined,
-  message: { error: 'Too many analyze requests. Please slow down and retry after 5 minutes.' }
-});
+// Per-IP rate limiting for expensive endpoints (analyzeLimiter replaced by llmAnalysisLimiter)
 const issueLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
@@ -686,7 +676,7 @@ function requireJsonContentType(req, res, next) {
 }
 
 // ≡ƒƒó Route: GitHub Import & AI Review
-app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, async (req, res) => {
+app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimiter, async (req, res) => {
   let { repoUrl, company = 'General', language = 'English', model = 'llama-3.3-70b-versatile',temperature = 0.7,
      maxTokens = 2048, systemPrompt = '', batchSize = 5, githubToken
    } = req.body;
