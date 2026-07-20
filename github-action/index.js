@@ -283,7 +283,8 @@ If no issues are found, reply with: { "reviews": [] }`;
           }
           let parsed = cleanAndParseJSON(content);
           successfulReviewsCount++;
-          
+          reviewedFilesCount++;
+
           let issues = [];
           if (Array.isArray(parsed)) {
             issues = parsed;
@@ -334,7 +335,6 @@ If no issues are found, reply with: { "reviews": [] }`;
         }
       }));
 
-      reviewedFilesCount += batch.length;
       totalIssuesFound += batchComments.length;
 
       if (batchComments.length > 0) {
