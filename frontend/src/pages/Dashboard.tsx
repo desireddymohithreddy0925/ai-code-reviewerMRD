@@ -46,6 +46,7 @@ import { handleMarkdownExport, handleHtmlExport, handlePdfExport } from "../util
 import { sanitizeAuditEntry } from "../utils/sanitize";
 // Path resolves correctly: pages/ -> ../utils/api -> frontend/src/utils/api
 import { apiFetch } from "../utils/api";
+import { useStreamingReview } from "../hooks/useStreamingReview";
 
 const LazyMetricsChart = React.lazy(() =>
   import('../components/MetricsChart').then((module) => ({ default: module.MetricsChart }))
@@ -135,6 +136,7 @@ export interface AuditHistoryEntry {
 }
 
 export default function Dashboard() {
+  const { reviewText, isStreaming, error: streamError, startStream } = useStreamingReview();
   const [showSettings, setShowSettings] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
@@ -859,34 +861,15 @@ export default function Dashboard() {
     e.preventDefault();
     if (!repoUrl.trim()) return;
 
-    setIsLoading(true);
     setApiError(null);
     setAnalysisResult(null);
     setSelectedFile(null);
     setChatHistory([]);
     try { localStorage.removeItem('reposage_chat_history'); } catch {};
 
-    // Simulate structured loading steps for GSSoC wow factor
-    const steps = [
-      "🔍 Authenticating connection...",
-      "📥 Cloning GitHub repository locally...",
-      "📁 Traversing directory tree & parsing modules...",
-      "🧠 Running LLM analysis using selected AI Model...",
-      "📜 Generating custom repository README.md...",
-      "🎉 Formatting reports...",
-    ];
-
-    let currentStep = 0;
-    setLoadingStep(steps[0]);
-    const stepInterval = setInterval(() => {
-      currentStep++;
-      if (currentStep < steps.length) {
-        setLoadingStep(steps[currentStep]);
-      }
-    }, 1200);
     try {
       const aiSettings = getSavedAiSettings();
-      const response = await apiFetch("/api/analyze", {
+      await startStream({
         method: "POST",
         body: JSON.stringify({
           repoUrl,
@@ -900,28 +883,6 @@ export default function Dashboard() {
         }),
       });
 
-      clearInterval(stepInterval);
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.error || "Server error occurred during analysis.",
-        );
-      }
-
-      const data: BackendResponse = await response.json();
-      setAnalysisResult(data);
-      setSessionId(
-        data.sessionPersisted === true ? data.sessionId ?? null : null
-      );
-      persistAuditHistory(data);
-      setChatHistory([]);
-
-      // Select the first file reviewed automatically
-      const filesList = Object.keys(data.analysis?.fileReviews || {});
-      if (filesList.length > 0) {
-        setSelectedFile(filesList[0]);
-      }
     } catch (err: unknown) {
       console.error(err);
       let errMsg = (err instanceof Error ? err.message : String(err)) || "Could not connect to the backend server. Make sure node backend is running on port 5000.";
@@ -932,9 +893,6 @@ export default function Dashboard() {
         setShowSettings(true);
       }
       setApiError(errMsg);
-    } finally {
-      clearInterval(stepInterval);
-      setIsLoading(false);
     }
   };
 
@@ -1234,8 +1192,90 @@ export default function Dashboard() {
             </div>
           )}
 
+          {streamError && (
+            <div
+              style={{
+                background: "rgba(239, 68, 68, 0.1)",
+                border: "1px solid rgba(239, 68, 68, 0.3)",
+                borderRadius: "8px",
+                padding: "14px 20px",
+                color: "#fca5a5",
+                fontSize: "13px",
+                display: "flex",
+                alignItems: "center",
+                gap: "12px",
+                marginBottom: "20px",
+              }}
+            >
+              <AlertOctagon size={20} style={{ color: "#ef4444" }} />
+              <div>
+                <strong style={{ display: "block" }}>Streaming Error</strong>
+                <span>{streamError}</span>
+              </div>
+            </div>
+          )}
+
+          {(isStreaming || reviewText) && (
+            <div
+              ref={reportRef}
+              className="glass-panel"
+              style={{
+                flexGrow: 1,
+                display: "flex",
+                flexDirection: "column",
+                padding: "24px",
+                boxSizing: "border-box",
+                overflowY: "auto",
+                maxHeight: "80vh",
+              }}
+            >
+              <h2 style={{ color: "#f3f4f6", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "12px" }}>
+                {isStreaming ? "Streaming AI Review..." : "AI Code Review Complete"}
+              </h2>
+              {isStreaming && <div className="spin-slow" style={{ width: "24px", height: "24px", border: "2px solid rgba(168,85,247,0.1)", borderTopColor: "#a855f7", borderRadius: "50%", margin: "12px 0" }}></div>}
+              <ReactMarkdown
+                components={{
+                  code({ node, inline, className, children, ...props }: any) {
+                    const match = /language-(\w+)/.exec(className || "");
+                    return !inline && match ? (
+                      <SyntaxHighlighter
+                        style={vscDarkPlus as any}
+                        language={match[1]}
+                        PreTag="div"
+                        customStyle={{
+                          margin: 0,
+                          borderRadius: "6px",
+                          background: "#1e1e1e",
+                          fontSize: "12px",
+                        }}
+                        {...props}
+                      >
+                        {String(children).replace(/\n$/, "")}
+                      </SyntaxHighlighter>
+                    ) : (
+                      <code
+                        style={{
+                          background: "rgba(255,255,255,0.1)",
+                          padding: "2px 4px",
+                          borderRadius: "4px",
+                          fontSize: "12px",
+                          color: "#d8b4fe",
+                        }}
+                        {...props}
+                      >
+                        {children}
+                      </code>
+                    );
+                  },
+                }}
+              >
+                {reviewText}
+              </ReactMarkdown>
+            </div>
+          )}
+
           {/* 4. The Complete Analysis Dashboard (Split Audit View) */}
-          {!isLoading && analysisResult && (
+          {!isLoading && analysisResult && !isStreaming && !reviewText && (
             <div
               ref={reportRef}
               style={{
