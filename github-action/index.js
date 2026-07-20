@@ -6,8 +6,23 @@ import { scanSecretsInChanges } from './utils/secretsScanner.js';
 import { globToRegex } from './utils/globToRegex.js';
 import { cleanAndParseJSON, normalizeReviewLineNumber } from './utils/actionUtils.js';
 
-import { GitHubProvider } from './providers/GitHubProvider.js';
-import { GitLabProvider } from './providers/GitLabProvider.js';
+const PARSE_FAILED = { reviews: [], _parseFailed: true };
+
+function cleanAndParseJSON(responseText) {
+  try {
+    const jsonMatch = responseText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    let jsonStr = jsonMatch ? jsonMatch[1].trim() : responseText.trim();
+    if (!jsonMatch) {
+      const objMatch = jsonStr.match(/\{[\s\S]*\}/);
+      const arrMatch = jsonStr.match(/\[[\s\S]*\]/);
+      jsonStr = (arrMatch && (!objMatch || objMatch[0].length >= arrMatch[0].length) ? arrMatch[0] : objMatch ? objMatch[0] : jsonStr);
+    }
+    return JSON.parse(jsonStr);
+  } catch (err) {
+    core.warning(`Failed to parse LLM JSON response: ${err.message}`);
+    return PARSE_FAILED;
+  }
+}
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -245,9 +260,26 @@ If no issues are found, reply with: { "reviews": [] }`;
             response_format: { type: 'json_object' },
           });
 
-          const content = completion.choices[0].message.content;
-          if (!content || typeof content !== 'string' || !content.trim()) {
-            emptyOrUnparseable = true;
+        const content = completion.choices[0].message.content;
+        let parsed = cleanAndParseJSON(content);
+        successfulReviewsCount++;
+        
+        if (parsed?._parseFailed) {
+          failedReviewsCount++;
+          successfulReviewsCount--;
+          core.error(`❌ LLM response for ${file.path} could not be parsed. Skipping file. Raw response logged.`);
+          continue;
+        }
+
+        let issues = [];
+        if (Array.isArray(parsed)) {
+          issues = parsed;
+        } else if (parsed && typeof parsed === 'object') {
+          for (const key of Object.keys(parsed)) {
+            if (Array.isArray(parsed[key])) {
+              issues = parsed[key];
+              break;
+            }
           }
           let parsed = cleanAndParseJSON(content);
           successfulReviewsCount++;
