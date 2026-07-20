@@ -575,6 +575,37 @@ def health_check():
     }
 
 # 🟢 Route: Analyze Code Files and Generate Reviews & README
+def _merge_review(combined, file_path, review, batch_idx, review_config=None):
+    for category in ["bugs", "security", "optimization", "styling"]:
+        kept_items = []
+        for item in review.get(category, []):
+            if "suggestion" in item:
+                item["suggestion"] = sanitize_ai_output(item["suggestion"])
+            if "description" in item:
+                item["description"] = sanitize_ai_output(item["description"])
+            if review_config and item.get("type") and review_config.is_rule_off(_rule_key(item["type"])):
+                continue
+            kept_items.append(item)
+        review[category] = kept_items
+    if file_path in combined["fileReviews"]:
+        print(f"WARNING: Merging findings for {file_path} from batch {batch_idx + 1} (already exists from a previous batch)")
+        existing = combined["fileReviews"][file_path]
+        for category in ["bugs", "security", "optimization", "styling"]:
+            existing_items = existing.get(category, [])
+            new_items = review.get(category, [])
+            seen = set()
+            for item in existing_items:
+                key = (item.get("type", ""), item.get("line", ""), item.get("description", ""))
+                seen.add(key)
+            for item in new_items:
+                key = (item.get("type", ""), item.get("line", ""), item.get("description", ""))
+                if key not in seen:
+                    existing_items.append(item)
+                    seen.add(key)
+            existing[category] = existing_items
+    else:
+        combined["fileReviews"][file_path] = review
+
 @app.post("/analyze")
 async def analyze_repository(request: AnalyzeRequest):
     if not groq_client:
@@ -716,8 +747,9 @@ Here is the contents of files for this batch:
 You MUST reply ONLY in a valid JSON format. Do not write markdown wrapping, do not write explanations before or after.
 Format your JSON precisely as:
 {{
-  "fileReviews": {{
-    "file_path_1": {{
+  "fileReviews": [
+    {{
+      "filePath": "actual_file_path_here",
       "bugs": [
         {{ "type": "bug name", "line": 12, "description": "...", "suggestion": "..." }}
       ],
@@ -731,7 +763,7 @@ Format your JSON precisely as:
         {{ "type": "convention issue", "line": 15, "description": "...", "suggestion": "..." }}
       ]
     }}
-  }},
+  ],
   "generatedReadme": "Write a highly detailed, professional README.md markdown for the entire repository, outlining installation, folder structure, features, tech stack, and usage guidelines.",
   "mermaidDiagram": "graph TD\\n  A[\\\"Entry Point\\\"] --> B[\\\"Module\\\"]"
 }}
@@ -752,8 +784,9 @@ Here is the contents of files for this batch:
 You MUST reply ONLY in a valid JSON format. Do not write markdown wrapping, do not write explanations before or after.
 Format your JSON precisely as:
 {{
-  "fileReviews": {{
-    "file_path_1": {{
+  "fileReviews": [
+    {{
+      "filePath": "actual_file_path_here",
       "bugs": [
         {{ "type": "bug name", "line": 12, "description": "...", "suggestion": "..." }}
       ],
@@ -767,7 +800,7 @@ Format your JSON precisely as:
         {{ "type": "convention issue", "line": 15, "description": "...", "suggestion": "..." }}
       ]
     }}
-  }}
+  ]
 }}
 
 You must obey the JSON output format above."""
@@ -791,7 +824,6 @@ You must obey the JSON output format above."""
                     raise HTTPException(status_code=502, detail="Groq returned an empty or filtered response. The input may have been blocked by safety filters.")
                 batch_result = json.loads(response_content)
                 
-                # Merge results
                 if is_first_batch:
                     if "mermaidDiagram" in batch_result:
                         sanitized = sanitize_ai_output(batch_result["mermaidDiagram"])
@@ -800,41 +832,15 @@ You must obey the JSON output format above."""
                         combined_result["generatedReadme"] = sanitize_ai_output(batch_result["generatedReadme"])
                 
                 if "fileReviews" in batch_result:
-                    for file_path, review in batch_result["fileReviews"].items():
-                        # Sanitize review items, and drop any finding whose type
-                        # (used as the rule name) is configured `off` in
-                        # .codereviewer.yml.
-                        for category in ["bugs", "security", "optimization", "styling"]:
-                            kept_items = []
-                            for item in review.get(category, []):
-                                if "suggestion" in item:
-                                    item["suggestion"] = sanitize_ai_output(item["suggestion"])
-                                if "description" in item:
-                                    item["description"] = sanitize_ai_output(item["description"])
-                                if review_config and item.get("type") and review_config.is_rule_off(_rule_key(item["type"])):
-                                    continue
-                                kept_items.append(item)
-                            review[category] = kept_items
-                        
-                        # Merge findings instead of overwriting
-                        if file_path in combined_result["fileReviews"]:
-                            print(f"WARNING: Merging findings for {file_path} from batch {idx + 1} (already exists from a previous batch)")
-                            existing = combined_result["fileReviews"][file_path]
-                            for category in ["bugs", "security", "optimization", "styling"]:
-                                existing_items = existing.get(category, [])
-                                new_items = review.get(category, [])
-                                seen = set()
-                                for item in existing_items:
-                                    key = (item.get("type", ""), item.get("line", ""), item.get("description", ""))
-                                    seen.add(key)
-                                for item in new_items:
-                                    key = (item.get("type", ""), item.get("line", ""), item.get("description", ""))
-                                    if key not in seen:
-                                        existing_items.append(item)
-                                        seen.add(key)
-                                existing[category] = existing_items
-                        else:
-                            combined_result["fileReviews"][file_path] = review
+                    reviews = batch_result["fileReviews"]
+                    if isinstance(reviews, list):
+                        for entry in reviews:
+                            file_path = entry.get("filePath", "unknown")
+                            review = {k: entry.get(k, []) for k in ("bugs", "security", "optimization", "styling")}
+                            _merge_review(combined_result, file_path, review, idx, review_config)
+                    elif isinstance(reviews, dict):
+                        for file_path, review in reviews.items():
+                            _merge_review(combined_result, file_path, review, idx, review_config)
 
                 truncated_files.extend(local_truncated_files)
 
