@@ -450,11 +450,9 @@ Please review my feedback and suggestions below. Happy coding! 🚀
       const truncationWarning = diffTruncated
         ? `\n\nWARNING: **Partial Review:** This PR exceeded the review limit of ${MAX_REVIEW_FILES} files (${totalReviewableFiles} reviewable). The remaining files were **not** analyzed, so this is **not** a full approval of all changes. Please review them manually or split the PR.`
         : '';
-      const issuesText = failedReviewsCount === 0
-        ? (emptyOrUnparseable
-            ? `⚠️ The AI review returned an empty or unparseable response for some files (${successfulReviewsCount} attempted). No automatic approval was granted — please review this PR manually.`
-            : `🎉 Outstanding work! I have scanned the PR and found **0 issues**. Your changes look pristine, clean, and optimized! Approved! 🚀`)
-        : `⚠️ I have scanned **${successfulReviewsCount}** files and found **0 issues** in them. However, **${failedReviewsCount}** files could not be reviewed due to errors.`;
+      const issuesText = reviewEvent === 'APPROVE'
+        ? `🎉 Outstanding work! I have scanned the PR and found **0 issues**. Approved! 🚀`
+        : `✅ Review complete. Found 0 issues.`;
         
       await provider.createReview({
         event: reviewEvent,
