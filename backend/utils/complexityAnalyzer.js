@@ -113,9 +113,19 @@ export function analyzeComplexity(fileContent, filePath) {
         return;
       }
     } else if (usesHtmlBlocks) {
+      if (inBlockComment) {
+        commentLines++;
+        if (trimmed.includes('-->')) {
+          inBlockComment = false;
+        }
+        return;
+      }
       if (trimmed.startsWith('<!--')) {
         commentLines++;
-        return;
+        if (trimmed.includes('-->')) {
+          return;
+        }
+        inBlockComment = true;
       }
     }
 
