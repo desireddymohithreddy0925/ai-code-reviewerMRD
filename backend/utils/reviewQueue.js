@@ -47,11 +47,13 @@ class ReviewQueue {
   }
 
   async enqueue(key, item, processor) {
+    let dropped = false;
     const prev = this._queueLocks.get(key) || Promise.resolve();
     const next = prev.then(async () => {
       if (!this._queues.has(key)) {
         if (this._queues.size >= this._maxQueues) {
           console.warn(`ReviewQueue: dropping item for "${key}" — queue limit (${this._maxQueues}) reached`);
+          dropped = true;
           return;
         }
         this._queues.set(key, []);
@@ -59,6 +61,7 @@ class ReviewQueue {
       const queue = this._queues.get(key);
       if (queue.length >= this._maxItemsPerQueue) {
         console.warn(`ReviewQueue: dropping item for "${key}" — per-queue limit (${this._maxItemsPerQueue}) reached`);
+        dropped = true;
         return;
       }
       queue.push(item);
@@ -66,7 +69,7 @@ class ReviewQueue {
     this._queueLocks.set(key, next.catch(err => {
       console.error(`ReviewQueue enqueue error for "${key}":`, err);
     }));
-    return next.then(() => this._processNext(key, processor));
+    return next.then(() => dropped ? false : this._processNext(key, processor));
   }
 
   async _processNext(key, processor) {

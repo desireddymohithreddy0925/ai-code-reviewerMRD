@@ -1763,25 +1763,27 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
         return res.status(429).json({ error: 'Too many requests for this repository. Try again later.' });
       }
 
-      const enqueuePromise = reviewQueue.enqueue(reviewKey, { owner, repo, pullNumber, headSha }, async (item) => {
+      const enqueueResult = await reviewQueue.enqueue(reviewKey, { owner, repo, pullNumber, headSha, shaDedupKey }, async (item) => {
         try {
           await runWebhookReview(item.owner, item.repo, item.pullNumber, item.headSha);
-        } catch (error) {
-          console.error(`Γ¥î Webhook review failed for ${headSha}:`, error.message);
           if (redisClient) {
-            await redisClient.srem(shaDedupKey, headSha);
+            await redisClient.sadd(shaDedupKey, headSha);
+            await redisClient.expire(shaDedupKey, DELIVERY_REDIS_TTL);
           } else {
-            shaDedupMemoryMap.delete(`${shaDedupKey}:${headSha}`);
+            const mapKey = `${shaDedupKey}:${headSha}`;
+            if (shaDedupMemoryMap.size >= SHA_DEDUP_MAX_SIZE) {
+              const oldestKey = shaDedupMemoryMap.keys().next().value;
+              if (oldestKey !== undefined) {
+                shaDedupMemoryMap.delete(oldestKey);
+              }
+            }
+            shaDedupMemoryMap.set(mapKey, Date.now());
           }
+        } catch (error) {
+          console.error(`❌ Webhook review failed for ${headSha}:`, error.message);
         }
       });
-      if (!enqueuePromise) {
-        // Revert dedup if enqueue failed synchronously
-        if (redisClient) {
-          await redisClient.srem(shaDedupKey, headSha);
-        } else {
-          shaDedupMemoryMap.delete(`${shaDedupKey}:${headSha}`);
-        }
+      if (enqueueResult === false) {
         return res.status(429).json({ error: 'Review queue full. Try again later.' });
       }
     } else if (action === 'closed') {
