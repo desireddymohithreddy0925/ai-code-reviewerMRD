@@ -888,12 +888,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
         }
       }, repoUrl);
 
-      // Propagate AI Engine validation errors instead of silently serving mock data
-      if (reviewResult?._mockWarning && !process.env.USE_MOCK_FALLBACK) {
-        return res.status(502).json({ error: 'AI Engine rejected request parameters', details: reviewResult?._mockError || 'The AI Engine is unavailable or rejected the request. Set USE_MOCK_FALLBACK=true to allow mock reviews.' });
-      }
-
-      // 3. Inject Regex-based Secret Detections & Complexity Metrics into the analysis result
+      // 3. Inject Regex-based Secret Detections & Complexity Metrics into the analysis result (always run)
       if (reviewResult && reviewResult.fileReviews) {
         if (!reviewResult.metrics) reviewResult.metrics = {};
         
@@ -945,8 +940,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
       let sessionId = null;
       let sessionOwnerToken = null;
       let sessionPersisted = false;
-      let csrfToken = null;
-      if (estimatedSize <= MAX_SESSION_DOC_SIZE) {
+      if (!cacheHit && estimatedSize <= MAX_SESSION_DOC_SIZE) {
         sessionId = crypto.randomUUID();
         sessionOwnerToken = crypto.randomUUID();
         csrfToken = generateCsrfToken();
@@ -970,8 +964,9 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
 
       // 4. Ingest files into RAG vector store for semantic search (non-fatal)
       let ragStatus = 'skipped';
-      try {
-        const baseUrl = (process.env.AI_ENGINE_URL || 'http://localhost:8000').replace(/\/+$/, '');
+      if (!cacheHit) {
+        try {
+          const baseUrl = (process.env.AI_ENGINE_URL || 'http://localhost:8000').replace(/\/+$/, '');
         const splitResp = await fetchWithTimeout(`${baseUrl}/api/rag/split`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
@@ -1034,6 +1029,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, analyzeLimiter, 
         console.warn('ΓÜá∩╕Å RAG ingestion failed (non-fatal):', ragErr.message);
         ragStatus = 'failed';
         fileWarnings.push({ file: '(global)', warning: 'RAG code context ingestion failed ΓÇö review may have limited accuracy' });
+      }
       }
 
       // 5. Compute and persist analytics
@@ -1108,7 +1104,7 @@ const prSummary = {
   ],
 };
 
-      if (!reviewResult?._mock) {
+      if (!reviewResult?._mock && !cacheHit) {
         if (isDatabaseConnected()) {
           try {
             await Analytics.create({
