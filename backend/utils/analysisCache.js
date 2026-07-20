@@ -119,7 +119,7 @@ class AnalysisCache {
     this.stats.hits++;
     const qualityLabel = entry.isMock ? '⚠️ MOCK' : '✅';
     console.log(`${qualityLabel} Analysis cache hit for key ${key.slice(0, 8)}... (${this.cache.size} entries, ${this.stats.hits} hits, ${this.stats.misses} misses)`);
-    return entry.result;
+    return JSON.parse(JSON.stringify(entry.result));
   }
 
   /**
