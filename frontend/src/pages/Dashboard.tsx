@@ -134,6 +134,7 @@ export interface AuditHistoryEntry {
   response: BackendResponse;
 }
 
+
 export default function Dashboard() {
   const [showSettings, setShowSettings] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
