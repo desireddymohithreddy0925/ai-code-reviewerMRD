@@ -1624,7 +1624,17 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
       }
       return res.status(500).json({ error: "Failed to process conversational comment" });
     }
-    return res.json({ message: "Ignored pull_request_review_comment event" });
+    
+    // Track resolved comments for ROI metrics
+    if (payload.action === 'resolved') {
+      const repoName = payload.repository?.full_name;
+      if (repoName) {
+        console.log(`Tracking resolved AI comment for ROI on ${repoName}`);
+        await RoiMetrics.recordAcceptedSuggestion(repoName).catch(e => console.error("ROI tracking error", e));
+      }
+    }
+    
+    return res.json({ message: 'Review comment event processed' });
   }
 
   if (event === 'push') {
@@ -1637,18 +1647,6 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
         console.log(`🗑️ Push event invalidated ${removed} cache entries for ${repoUrl}`);
       }
     }
-  }
-
-  if (event === 'pull_request_review_comment') {
-    if (payload.action === 'resolved') {
-      const repoName = payload.repository?.full_name;
-      if (repoName) {
-        console.log(`Tracking resolved AI comment for ROI on ${repoName}`);
-        await RoiMetrics.recordAcceptedSuggestion(repoName).catch(e => console.error("ROI tracking error", e));
-      }
-    }
-    // We only care about resolved comments for ROI metrics right now
-    return res.status(200).json({ message: 'Review comment event processed' });
   }
 
   if (event === 'pull_request') {
