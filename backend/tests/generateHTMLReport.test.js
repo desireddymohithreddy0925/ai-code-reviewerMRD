@@ -328,7 +328,7 @@ test('generateHTMLReport shows "No findings" message when all categories are emp
 });
 
 test('generateHTMLReport returns error result on invalid output path', async () => {
-  const result = generateHTMLReport('test-repo', [], {}, '/invalid/read-only/path/report.html');
+  const result = generateHTMLReport('test-repo', [], {}, '\0invalid/read-only/path/report.html');
   assert.equal(result.success, false);
   assert.ok(result.error !== undefined);
 });

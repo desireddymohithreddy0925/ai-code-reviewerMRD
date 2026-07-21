@@ -105,7 +105,7 @@ test('AnalysisCache: expires entries after TTL', async () => {
 
   cache.set(key, result);
   const retrieved1 = cache.get(key);
-  assert.equal(retrieved1, result, 'Should retrieve result immediately after storage');
+  assert.deepEqual(retrieved1, result, 'Should retrieve result immediately after storage');
 
   // Wait for expiration (longer than TTL)
   await new Promise((resolve) => setTimeout(resolve, shortTtl + 50));

@@ -8,21 +8,7 @@ import { cleanAndParseJSON, normalizeReviewLineNumber } from './utils/actionUtil
 
 const PARSE_FAILED = { reviews: [], _parseFailed: true };
 
-function cleanAndParseJSON(responseText) {
-  try {
-    const jsonMatch = responseText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-    let jsonStr = jsonMatch ? jsonMatch[1].trim() : responseText.trim();
-    if (!jsonMatch) {
-      const objMatch = jsonStr.match(/\{[\s\S]*\}/);
-      const arrMatch = jsonStr.match(/\[[\s\S]*\]/);
-      jsonStr = (arrMatch && (!objMatch || objMatch[0].length >= arrMatch[0].length) ? arrMatch[0] : objMatch ? objMatch[0] : jsonStr);
-    }
-    return JSON.parse(jsonStr);
-  } catch (err) {
-    core.warning(`Failed to parse LLM JSON response: ${err.message}`);
-    return PARSE_FAILED;
-  }
-}
+
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
