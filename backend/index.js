@@ -43,6 +43,7 @@ import Analytics from './models/Analytics.js';
 import Session, { estimateSessionSize } from './models/Session.js';
 import { RoiMetrics } from './models/RoiMetrics.js';
 import { connectDatabase, isDatabaseConnected, ensureConnection, closeDatabase } from './config/db.js';
+import { streamReview } from './controllers/streamController.js';
 
 dotenv.config();
 
@@ -680,6 +681,8 @@ function requireJsonContentType(req, res, next) {
   next();
 }
 
+// 🚀 Route: Stream AI Review (SSE)
+app.post('/api/review/stream', requireApiKey, requireJsonContentType, analyzeLimiter, streamReview);
 // ≡ƒƒó Route: GitHub Import & AI Review
 app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimiter, async (req, res) => {
   let { repoUrl, company = 'General', language = 'English', model = 'llama-3.3-70b-versatile',temperature = 0.7,
