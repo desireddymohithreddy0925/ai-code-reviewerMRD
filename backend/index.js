@@ -429,7 +429,7 @@ function cleanupTempRepos() {
 async function onShutdown() {
   cleanupTempRepos();
   cleanupTimers();
-  if (redisClient) redisClient.quit();
+  if (redisClient) await redisClient.quit();
   await closeDatabase();
   process.exit(0);
 }
