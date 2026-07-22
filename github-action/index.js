@@ -254,7 +254,7 @@ If no issues are found, reply with: { "reviews": [] }`;
           failedReviewsCount++;
           successfulReviewsCount--;
           core.error(`❌ LLM response for ${file.path} could not be parsed. Skipping file. Raw response logged.`);
-          continue;
+          return;
         }
 
         let issues = [];

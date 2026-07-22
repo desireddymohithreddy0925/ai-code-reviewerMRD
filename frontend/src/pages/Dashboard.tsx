@@ -151,7 +151,7 @@ export default function Dashboard() {
 
   // Loading & Flow State
   const [isLoading, setIsLoading] = useState(false);
-  const [loadingStep, setLoadingStep] = useState("");
+  const [loadingStep, _setLoadingStep] = useState("");
 
   // Response & View State
   const { analysisResult, setAnalysisResult, selectedFile, setSelectedFile, chatHistory, setChatHistory } = useStore();
@@ -838,6 +838,12 @@ export default function Dashboard() {
     });
   };
 
+  useEffect(() => {
+    if (analysisResult) {
+      persistAuditHistory(analysisResult);
+    }
+  }, [analysisResult]);
+
   const loadAuditFromHistory = (entry: AuditHistoryEntry) => {
     setRepoUrl(entry.repoUrl);
     setAnalysisResult(entry.response);
@@ -883,35 +889,6 @@ export default function Dashboard() {
           batchSize: aiSettings.batchSize ?? 5,
         }),
       });
-
-<<<<<<< HEAD
-=======
-      clearInterval(stepInterval);
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.error || "Server error occurred during analysis.",
-        );
-      }
-
-      const data: BackendResponse = await response.json();
-      setAnalysisResult(data);
-      setSessionId(
-        data.sessionPersisted === true ? data.sessionId ?? null : null
-      );
-      if (data.sessionPersisted && data.sessionOwnerToken) {
-        localStorage.setItem("sessionOwnerToken", data.sessionOwnerToken);
-      }
-      persistAuditHistory(data);
-      setChatHistory([]);
-
-      // Select the first file reviewed automatically
-      const filesList = Object.keys(data.analysis?.fileReviews || {});
-      if (filesList.length > 0) {
-        setSelectedFile(filesList[0]);
-      }
->>>>>>> upstream/main
     } catch (err: unknown) {
       console.error(err);
       let errMsg = (err instanceof Error ? err.message : String(err)) || "Could not connect to the backend server. Make sure node backend is running on port 5000.";

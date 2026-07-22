@@ -1,25 +1,24 @@
 import { useState, useCallback } from 'react';
 
 export const useStreamingReview = () => {
-  const [reviewText, setReviewText] = useState('');
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [error, setError] = useState(null);
+  const [reviewText, setReviewText] = useState<string>('');
+  const [isStreaming, setIsStreaming] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const startStream = useCallback(async (payload) => {
+  const startStream = useCallback(async (payload: Record<string, unknown> | RequestInit) => {
     setReviewText('');
     setIsStreaming(true);
     setError(null);
 
     try {
+      const isRequestInit = 'method' in payload || 'body' in payload;
       const response = await fetch('/api/review/stream', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          // Assuming the standard API requires x-api-key if needed.
-          // Add auth headers if necessary for the specific environment.
           'x-api-key': localStorage.getItem('reposage_api_key') || '',
         },
-        body: JSON.stringify(payload),
+        body: isRequestInit ? (payload as RequestInit).body : JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -70,8 +69,8 @@ export const useStreamingReview = () => {
           }
         }
       }
-    } catch (err) {
-      setError(err.message || 'An error occurred while streaming.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'An error occurred while streaming.');
     } finally {
       setIsStreaming(false);
     }
