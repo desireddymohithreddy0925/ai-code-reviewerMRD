@@ -57,9 +57,6 @@ class DedupStore {
     }
     if (!this.memoryStore.has(key)) {
       this.memoryStore.set(key, { value: new Set(), expiresAt: Date.now() + ttlMs });
-    } else {
-      const entry = this.memoryStore.get(key);
-      entry.expiresAt = Date.now() + ttlMs;
     }
     const entry = this.memoryStore.get(key);
     if (Date.now() > entry.expiresAt) {
