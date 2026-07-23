@@ -47,7 +47,7 @@ class AnalysisCache {
     this.pending = new Map();
     this._locks = new Map();
     this._repoUrlIndex = new Map();
-    this.stats = { hits: 0, misses: 0, dedupSaves: 0, absoluteExpiries: 0, slidingExpiries: 0 };
+    this.stats = { hits: 0, misses: 0, dedupSaves: 0, absoluteExpiries: 0, slidingExpiries: 0, evictions: 0 };
     this._startSweeper();
   }
 
@@ -324,7 +324,7 @@ class AnalysisCache {
       misses: this.stats.misses,
       mockCount,
       avgAgeMs: this.cache.size > 0 ? Math.round(totalAge / this.cache.size) : 0,
-      evictions: this.stats.evictions,
+      evictions: Number.isFinite(this.stats.evictions) ? this.stats.evictions : 0,
       absoluteExpiries: this.stats.absoluteExpiries,
       slidingExpiries: this.stats.slidingExpiries,
       hitRate: `${hitRate}%`,
