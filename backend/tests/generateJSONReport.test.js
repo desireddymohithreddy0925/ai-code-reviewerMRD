@@ -157,7 +157,7 @@ test('generateJSONReport handles missing fileReviews in reviewResult', async () 
 });
 
 test('generateJSONReport returns error result on invalid output path', async () => {
-  const result = generateJSONReport('test-repo', [], {}, '/invalid/read-only/path/report.json');
+  const result = generateJSONReport('test-repo', [], {}, '\0invalid/read-only/path/report.json');
   assert.equal(result.success, false);
   assert.ok(result.error !== undefined);
 });
