@@ -25,6 +25,14 @@ from embeddings import is_fallback_active
 from config_loader import load_config_from_files, ConfigValidationError, CONFIG_FILENAME
 from diff_helper import get_changed_files_from_git, filter_files_by_changes, format_diff_header
 
+try:
+    import redis
+    _redis_client = redis.Redis.from_url(os.getenv("REDIS_URL", ""), decode_responses=True) if os.getenv("REDIS_URL") else None
+    if _redis_client:
+        _redis_client.ping()
+except Exception:
+    _redis_client = None
+
 _EXTENSION_TO_LANGUAGE = {
     "go": "go",
     "py": "python",
@@ -412,26 +420,40 @@ async def rate_limit_middleware(request: Request, call_next):
     client_ip = _resolve_client_ip(request)
     now = time.time()
 
-    async with _rate_limit_lock:
-        if client_ip in _rate_limit_store:
-            _rate_limit_store.move_to_end(client_ip)
-            window = _rate_limit_store[client_ip]
-        else:
-            if len(_rate_limit_store) >= MAX_RATE_LIMIT_ENTRIES:
-                # Bulk-evict oldest entries in batches of 1000
-                evict_count = min(len(_rate_limit_store), BULK_EVICT_BATCH_SIZE)
-                for _ in range(evict_count):
-                    try:
-                        _rate_limit_store.popitem(last=False)
-                    except KeyError:
-                        break
-            window = []
-            _rate_limit_store[client_ip] = window
+    if _redis_client:
+        try:
+            key = f"ratelimit:{client_ip}"
+            pipe = _redis_client.pipeline()
+            pipe.zremrangebyscore(key, 0, now - RATE_LIMIT_WINDOW_SECONDS)
+            pipe.zadd(key, {str(now): now})
+            pipe.zcard(key)
+            pipe.expire(key, RATE_LIMIT_WINDOW_SECONDS)
+            results = pipe.execute()
+            request_count = results[2]
+            if request_count >= RATE_LIMIT_MAX_REQUESTS:
+                return JSONResponse(status_code=429, content={"error": "Rate limit exceeded. Try again later."})
+        except Exception:
+            pass
+    else:
+        async with _rate_limit_lock:
+            if client_ip in _rate_limit_store:
+                _rate_limit_store.move_to_end(client_ip)
+                window = _rate_limit_store[client_ip]
+            else:
+                if len(_rate_limit_store) >= MAX_RATE_LIMIT_ENTRIES:
+                    evict_count = min(len(_rate_limit_store), BULK_EVICT_BATCH_SIZE)
+                    for _ in range(evict_count):
+                        try:
+                            _rate_limit_store.popitem(last=False)
+                        except KeyError:
+                            break
+                window = []
+                _rate_limit_store[client_ip] = window
 
-        window[:] = [t for t in window if now - t < RATE_LIMIT_WINDOW_SECONDS]
-        if len(window) >= RATE_LIMIT_MAX_REQUESTS:
-            return JSONResponse(status_code=429, content={"error": "Rate limit exceeded. Try again later."})
-        window.append(now)
+            window[:] = [t for t in window if now - t < RATE_LIMIT_WINDOW_SECONDS]
+            if len(window) >= RATE_LIMIT_MAX_REQUESTS:
+                return JSONResponse(status_code=429, content={"error": "Rate limit exceeded. Try again later."})
+            window.append(now)
 
     response = await call_next(request)
     return response
@@ -553,6 +575,37 @@ def health_check():
     }
 
 # 🟢 Route: Analyze Code Files and Generate Reviews & README
+def _merge_review(combined, file_path, review, batch_idx, review_config=None):
+    for category in ["bugs", "security", "optimization", "styling"]:
+        kept_items = []
+        for item in review.get(category, []):
+            if "suggestion" in item:
+                item["suggestion"] = sanitize_ai_output(item["suggestion"])
+            if "description" in item:
+                item["description"] = sanitize_ai_output(item["description"])
+            if review_config and item.get("type") and review_config.is_rule_off(_rule_key(item["type"])):
+                continue
+            kept_items.append(item)
+        review[category] = kept_items
+    if file_path in combined["fileReviews"]:
+        print(f"WARNING: Merging findings for {file_path} from batch {batch_idx + 1} (already exists from a previous batch)")
+        existing = combined["fileReviews"][file_path]
+        for category in ["bugs", "security", "optimization", "styling"]:
+            existing_items = existing.get(category, [])
+            new_items = review.get(category, [])
+            seen = set()
+            for item in existing_items:
+                key = (item.get("type", ""), item.get("line", ""), item.get("description", ""))
+                seen.add(key)
+            for item in new_items:
+                key = (item.get("type", ""), item.get("line", ""), item.get("description", ""))
+                if key not in seen:
+                    existing_items.append(item)
+                    seen.add(key)
+            existing[category] = existing_items
+    else:
+        combined["fileReviews"][file_path] = review
+
 @app.post("/analyze")
 async def analyze_repository(request: AnalyzeRequest):
     if not groq_client:
@@ -694,8 +747,9 @@ Here is the contents of files for this batch:
 You MUST reply ONLY in a valid JSON format. Do not write markdown wrapping, do not write explanations before or after.
 Format your JSON precisely as:
 {{
-  "fileReviews": {{
-    "file_path_1": {{
+  "fileReviews": [
+    {{
+      "filePath": "actual_file_path_here",
       "bugs": [
         {{ "type": "bug name", "line": 12, "description": "...", "suggestion": "..." }}
       ],
@@ -709,7 +763,7 @@ Format your JSON precisely as:
         {{ "type": "convention issue", "line": 15, "description": "...", "suggestion": "..." }}
       ]
     }}
-  }},
+  ],
   "generatedReadme": "Write a highly detailed, professional README.md markdown for the entire repository, outlining installation, folder structure, features, tech stack, and usage guidelines.",
   "mermaidDiagram": "graph TD\\n  A[\\\"Entry Point\\\"] --> B[\\\"Module\\\"]"
 }}
@@ -730,8 +784,9 @@ Here is the contents of files for this batch:
 You MUST reply ONLY in a valid JSON format. Do not write markdown wrapping, do not write explanations before or after.
 Format your JSON precisely as:
 {{
-  "fileReviews": {{
-    "file_path_1": {{
+  "fileReviews": [
+    {{
+      "filePath": "actual_file_path_here",
       "bugs": [
         {{ "type": "bug name", "line": 12, "description": "...", "suggestion": "..." }}
       ],
@@ -745,7 +800,7 @@ Format your JSON precisely as:
         {{ "type": "convention issue", "line": 15, "description": "...", "suggestion": "..." }}
       ]
     }}
-  }}
+  ]
 }}
 
 You must obey the JSON output format above."""
@@ -769,7 +824,6 @@ You must obey the JSON output format above."""
                     raise HTTPException(status_code=502, detail="Groq returned an empty or filtered response. The input may have been blocked by safety filters.")
                 batch_result = json.loads(response_content)
                 
-                # Merge results
                 if is_first_batch:
                     if "mermaidDiagram" in batch_result:
                         sanitized = sanitize_ai_output(batch_result["mermaidDiagram"])
@@ -778,41 +832,15 @@ You must obey the JSON output format above."""
                         combined_result["generatedReadme"] = sanitize_ai_output(batch_result["generatedReadme"])
                 
                 if "fileReviews" in batch_result:
-                    for file_path, review in batch_result["fileReviews"].items():
-                        # Sanitize review items, and drop any finding whose type
-                        # (used as the rule name) is configured `off` in
-                        # .codereviewer.yml.
-                        for category in ["bugs", "security", "optimization", "styling"]:
-                            kept_items = []
-                            for item in review.get(category, []):
-                                if "suggestion" in item:
-                                    item["suggestion"] = sanitize_ai_output(item["suggestion"])
-                                if "description" in item:
-                                    item["description"] = sanitize_ai_output(item["description"])
-                                if review_config and item.get("type") and review_config.is_rule_off(_rule_key(item["type"])):
-                                    continue
-                                kept_items.append(item)
-                            review[category] = kept_items
-                        
-                        # Merge findings instead of overwriting
-                        if file_path in combined_result["fileReviews"]:
-                            print(f"WARNING: Merging findings for {file_path} from batch {idx + 1} (already exists from a previous batch)")
-                            existing = combined_result["fileReviews"][file_path]
-                            for category in ["bugs", "security", "optimization", "styling"]:
-                                existing_items = existing.get(category, [])
-                                new_items = review.get(category, [])
-                                seen = set()
-                                for item in existing_items:
-                                    key = (item.get("type", ""), item.get("line", ""), item.get("description", ""))
-                                    seen.add(key)
-                                for item in new_items:
-                                    key = (item.get("type", ""), item.get("line", ""), item.get("description", ""))
-                                    if key not in seen:
-                                        existing_items.append(item)
-                                        seen.add(key)
-                                existing[category] = existing_items
-                        else:
-                            combined_result["fileReviews"][file_path] = review
+                    reviews = batch_result["fileReviews"]
+                    if isinstance(reviews, list):
+                        for entry in reviews:
+                            file_path = entry.get("filePath", "unknown")
+                            review = {k: entry.get(k, []) for k in ("bugs", "security", "optimization", "styling")}
+                            _merge_review(combined_result, file_path, review, idx, review_config)
+                    elif isinstance(reviews, dict):
+                        for file_path, review in reviews.items():
+                            _merge_review(combined_result, file_path, review, idx, review_config)
 
                 truncated_files.extend(local_truncated_files)
 
@@ -1044,6 +1072,12 @@ class VectorDeleteRequest(BaseModel):
     file_path: str
     repo_url: Optional[str] = None
 
+class ChatInlineRequest(BaseModel):
+    file_path: str
+    diff_hunk: str
+    message: str
+    model: Optional[str] = "llama-3.3-70b-versatile"
+
 class SummarizeRequest(BaseModel):
     diff: str
     model: Optional[str] = "llama-3.3-70b-versatile"
@@ -1061,6 +1095,48 @@ async def delete_vectors(request: VectorDeleteRequest):
     from rag import delete_chunks_for_file
     removed = delete_chunks_for_file(request.file_path, repo_url=request.repo_url)
     return {"removed_count": removed, "file_path": request.file_path}
+
+# 🟢 Route: Conversational AI Inline Chat
+@app.post("/chat-inline")
+async def chat_inline(request: ChatInlineRequest, api_key: str = Depends(verify_api_key)):
+    if not groq_client:
+        raise HTTPException(status_code=500, detail="Groq API client is not configured on this engine.")
+    
+    groq_model = get_groq_model(request.model)
+    
+    chat_prompt = f"""You are a helpful Senior Software Engineer acting as a Pull Request reviewer.
+A developer has asked a question or replied to an AI comment on a specific code snippet.
+
+File: {request.file_path}
+
+Diff Hunk context:
+```
+{request.diff_hunk}
+```
+
+Developer's message:
+"{request.message}"
+
+Please respond directly to the developer's message, keeping your tone helpful, constructive, and concise. Provide code examples if appropriate. Output strictly your reply in JSON format with a single key "reply" containing your response text.
+"""
+    try:
+        completion = await _call_groq_with_timeout(
+            model=groq_model,
+            messages=[
+                {"role": "system", "content": "You are a code reviewer. Always output valid JSON matching the schema {'reply': 'string'}."},
+                {"role": "user", "content": chat_prompt}
+            ],
+            temperature=0.3,
+            response_format={"type": "json_object"}
+        )
+        content = completion.choices[0].message.content
+        if not content:
+            raise HTTPException(status_code=502, detail="Groq returned empty response.")
+        
+        data = json.loads(content)
+        return {"reply": data.get("reply", "I couldn't process that request.")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # 🟢 Route: PR Summary Generator
 @app.post("/summarize-pr")
@@ -1081,7 +1157,7 @@ Diff:
 
 Format your JSON precisely as:
 {{
-  "summary": "- Added new feature X\\n- Refactored component Y"
+  "summary": "- Added new feature X\n- Refactored component Y"
 }}
 """
     try:
