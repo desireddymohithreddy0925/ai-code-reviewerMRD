@@ -41,6 +41,7 @@ import DedupStore from './utils/dedupStore.js';
 import mongoose from 'mongoose';
 import Analytics from './models/Analytics.js';
 import Session, { estimateSessionSize } from './models/Session.js';
+import User from './models/User.js';
 import { RoiMetrics } from './models/RoiMetrics.js';
 import { connectDatabase, isDatabaseConnected, ensureConnection, closeDatabase } from './config/db.js';
 import { streamReview } from './controllers/streamController.js';
@@ -59,7 +60,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = verifyPort(process.env.PORT || 5000);
 
-const ALLOWED_ANALYSIS_MODELS = ["llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b", "llama-3.1-8b-instant", "gemma2-9b-it"];
+const ALLOWED_ANALYSIS_MODELS = ["llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b", "llama-3.1-8b-instant", "gemma2-9b-it", "gpt-3.5-turbo", "gemini-3.1-pro"];
 
 // Initialize analysis cache with configurable TTL (default: 1 hour, mock: 2 minutes)
 const ANALYSIS_CACHE_TTL_MS = ((n) => Number.isFinite(n) && n > 0 ? n : 60)(parseInt(process.env.ANALYSIS_CACHE_TTL_MINUTES || '60', 10)) * 60 * 1000;
@@ -681,11 +682,38 @@ function requireJsonContentType(req, res, next) {
   next();
 }
 
+// 🚀 Route: User Settings
+app.get('/api/user/settings', requireApiKey, async (req, res) => {
+  try {
+    const user = await User.findOne({ clientId: req.clientId });
+    res.json({ preferredModel: user?.preferredModel || 'llama-3.3-70b-versatile' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch settings' });
+  }
+});
+
+app.post('/api/user/settings', requireApiKey, express.json(), async (req, res) => {
+  const { preferredModel } = req.body;
+  if (!ALLOWED_ANALYSIS_MODELS.includes(preferredModel)) {
+    return res.status(400).json({ error: 'Invalid model selection' });
+  }
+  try {
+    const user = await User.findOneAndUpdate(
+      { clientId: req.clientId },
+      { preferredModel },
+      { upsert: true, new: true }
+    );
+    res.json({ success: true, preferredModel: user.preferredModel });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
 // 🚀 Route: Stream AI Review (SSE)
 app.post('/api/review/stream', requireApiKey, requireJsonContentType, analyzeLimiter, streamReview);
 // ≡ƒƒó Route: GitHub Import & AI Review
 app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimiter, async (req, res) => {
-  let { repoUrl, company = 'General', language = 'English', model = 'llama-3.3-70b-versatile',temperature = 0.7,
+  let { repoUrl, company = 'General', language = 'English', model, temperature = 0.7,
      maxTokens = 2048, systemPrompt = '', batchSize = 5, githubToken
    } = req.body;
 
@@ -697,9 +725,23 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
   const AI_ENGINE_MAX_TOKENS = parseInt(process.env.AI_ENGINE_MAX_TOKENS, 10) || 32768;
   maxTokens = Math.max(1, Math.min(AI_ENGINE_MAX_TOKENS, parseInt(maxTokens, 10) || 2048));
 
+  let fallbackModel = "llama-3.3-70b-versatile";
+  try {
+    const user = await User.findOne({ clientId: req.clientId });
+    if (user && user.preferredModel) {
+      fallbackModel = user.preferredModel;
+    }
+  } catch (err) {
+    console.warn("Failed to fetch user preferences", err);
+  }
+
+  if (!model) {
+    model = fallbackModel;
+  }
+
   const normalizedModel = ALLOWED_ANALYSIS_MODELS.find(m => m.toLowerCase() === model.toLowerCase());
   if (!normalizedModel) {
-    model = "llama-3.3-70b-versatile";
+    model = fallbackModel;
   } else {
     model = normalizedModel;
   }
@@ -1196,7 +1238,7 @@ if (reviewResult?.fileReviews) {
 // ≡ƒƒó Route: Direct File Analysis (for VS Code extension and single-file use cases)
 app.post('/api/analyze-file', requireApiKey, requireJsonContentType, llmAnalysisLimiter, async (req, res) => {
   try {
-    let { files, company = 'General', language = 'English', model = 'llama-3.3-70b-versatile', temperature = 0.7, maxTokens = 2048, systemPrompt = '', batchSize = 5 } = req.body;
+    let { files, company = 'General', language = 'English', model, temperature = 0.7, maxTokens = 2048, systemPrompt = '', batchSize = 5 } = req.body;
 
     if (!files || !Array.isArray(files) || files.length === 0) {
       return res.status(400).json({ error: 'At least one file is required.' });
@@ -1213,9 +1255,23 @@ app.post('/api/analyze-file', requireApiKey, requireJsonContentType, llmAnalysis
     const AI_ENGINE_MAX_TOKENS = parseInt(process.env.AI_ENGINE_MAX_TOKENS, 10) || 32768;
     maxTokens = Math.max(1, Math.min(AI_ENGINE_MAX_TOKENS, parseInt(maxTokens, 10) || 2048));
 
+    let fallbackModel = "llama-3.3-70b-versatile";
+    try {
+      const user = await User.findOne({ clientId: req.clientId });
+      if (user && user.preferredModel) {
+        fallbackModel = user.preferredModel;
+      }
+    } catch (err) {
+      console.warn("Failed to fetch user preferences", err);
+    }
+
+    if (!model) {
+      model = fallbackModel;
+    }
+
     const normalizedModel = ALLOWED_ANALYSIS_MODELS.find(m => m.toLowerCase() === model.toLowerCase());
     if (!normalizedModel) {
-      model = "llama-3.3-70b-versatile";
+      model = fallbackModel;
     } else {
       model = normalizedModel;
     }
