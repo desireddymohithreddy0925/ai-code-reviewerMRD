@@ -5,6 +5,8 @@ import { parseDiff } from './utils/diffParser.js';
 import { scanSecretsInChanges } from './utils/secretsScanner.js';
 import { globToRegex } from './utils/globToRegex.js';
 import { cleanAndParseJSON, normalizeReviewLineNumber } from './utils/actionUtils.js';
+import { GitHubProvider } from './providers/GitHubProvider.js';
+import { GitLabProvider } from './providers/GitLabProvider.js';
 
 const PARSE_FAILED = { reviews: [], _parseFailed: true };
 
