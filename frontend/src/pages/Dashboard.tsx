@@ -45,6 +45,7 @@ import { handleMarkdownExport, handleHtmlExport, handlePdfExport } from "../util
 import { sanitizeAuditEntry } from "../utils/sanitize";
 // Path resolves correctly: pages/ -> ../utils/api -> frontend/src/utils/api
 import { apiFetch } from "../utils/api";
+import { useStreamingReview } from "../hooks/useStreamingReview";
 
 const LazyMetricsChart = React.lazy(() =>
   import('../components/MetricsChart').then((module) => ({ default: module.MetricsChart }))
@@ -115,6 +116,7 @@ export interface BackendResponse {
   filesReviewedCount: number;
   analysis: AnalysisData;
   sessionId?: string;
+  sessionOwnerToken?: string;
   sessionPersisted?: boolean;
   _mock?: boolean;
   partial_review?: boolean;
@@ -133,9 +135,12 @@ export interface AuditHistoryEntry {
   response: BackendResponse;
 }
 
+
 export default function Dashboard() {
+  const { reviewText, isStreaming, error: streamError, startStream } = useStreamingReview();
   const [showSettings, setShowSettings] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const reportRef = useRef<HTMLDivElement>(null);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
 
   // Input State
@@ -146,7 +151,7 @@ export default function Dashboard() {
 
   // Loading & Flow State
   const [isLoading, setIsLoading] = useState(false);
-  const [loadingStep, setLoadingStep] = useState("");
+  const [loadingStep, _setLoadingStep] = useState("");
 
   // Response & View State
   const { analysisResult, setAnalysisResult, selectedFile, setSelectedFile, chatHistory, setChatHistory } = useStore();
@@ -307,29 +312,61 @@ export default function Dashboard() {
           searchInputRef.current?.blur();
         }
       }
-      
+
       // Ctrl+K to search files
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         searchInputRef.current?.focus();
       }
 
-      // J/K for navigating views (mocked logic - just toggling tabs)
-      if (e.target === document.body || document.activeElement === document.body) {
-        if (e.key.toLowerCase() === "j" || e.key.toLowerCase() === "k") {
-          // Simply show help or focus first clickable as a demo
-          setShowShortcutsHelp(true);
-        }
-        
-        // ? to show shortcuts
-        if (e.key === "?") {
-          setShowShortcutsHelp(true);
-        }
+      // / to focus search input
+      if (e.key === "/" && e.target !== searchInputRef.current &&
+          document.activeElement?.tagName !== "INPUT" &&
+          document.activeElement?.tagName !== "TEXTAREA") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+
+      // Ctrl+N to start a new analysis
+      if ((e.metaKey || e.ctrlKey) && e.key === "n") {
+        e.preventDefault();
+        const repoInput = document.querySelector<HTMLInputElement>("input[placeholder*='github.com']");
+        repoInput?.focus();
+      }
+
+      // Ctrl+L to clear chat history
+      if ((e.metaKey || e.ctrlKey) && e.key === "l") {
+        e.preventDefault();
+        setChatHistory([]);
+      }
+
+      // Ctrl+B to toggle sidebar (focus file list)
+      if ((e.metaKey || e.ctrlKey) && e.key === "b") {
+        e.preventDefault();
+        const fileTree = document.querySelector<HTMLElement>("[class*='file-tree'], [class*='FileTree']");
+        fileTree?.focus();
+      }
+
+      // Ctrl+E to export HTML report
+      if ((e.metaKey || e.ctrlKey) && e.key === "e") {
+        e.preventDefault();
+        downloadReadme();
+      }
+
+      // Ctrl+, to open settings
+      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        e.preventDefault();
+        setShowSettings(true);
+      }
+
+      // ? to show shortcuts
+      if (e.key === "?" && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
+        setShowShortcutsHelp(true);
       }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [apiError]);
+  }, [apiError, setChatHistory]);
 
   const isValidAuditEntry = (entry: unknown): entry is AuditHistoryEntry => {
     if (!entry || typeof entry !== 'object') return false;
@@ -595,6 +632,8 @@ export default function Dashboard() {
   const [useRag, setUseRag] = useState(false);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatHistoryRef = useRef<ChatMessage[]>(chatHistory);
+  chatHistoryRef.current = chatHistory;
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -609,7 +648,7 @@ export default function Dashboard() {
         const history = await response.json();
 
         if (history && !controller.signal.aborted) {
-          setAuditHistory(history);
+          setAuditHistory(history.history || []);
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -628,11 +667,10 @@ export default function Dashboard() {
     const userMessage = chatInput;
     setChatInput("");
 
-    // Build the updated history array locally FIRST so it includes the user's
-    // current message when sent to the API, rather than relying on the stale
-    // chatHistory closure value (which would be one message behind).
+    // Use chatHistoryRef to avoid stale closure — the ref always holds the latest
+    // Zustand state, so rapid successive sends never drop messages.
     const updatedHistory = truncateChatHistory([
-      ...(chatHistory || []),
+      ...(chatHistoryRef.current || []),
       { role: "user" as const, content: userMessage }
     ]);
     setChatHistory(updatedHistory);
@@ -667,7 +705,7 @@ export default function Dashboard() {
       setChatHistory((prev) => {
         const updated = truncateChatHistory([
           ...prev,
-          { role: "assistant" as const, content: data.response, sources: sources.length > 0 ? sources : undefined },
+          { role: "assistant" as const, content: data.response ?? data.message ?? "", sources: sources.length > 0 ? sources : undefined },
         ]);
         if (!safeSetItem(CHAT_HISTORY_KEY, JSON.stringify(updated))) setStorageWarning(true);
         return updated;
@@ -800,6 +838,12 @@ export default function Dashboard() {
     });
   };
 
+  useEffect(() => {
+    if (analysisResult) {
+      persistAuditHistory(analysisResult);
+    }
+  }, [analysisResult]);
+
   const loadAuditFromHistory = (entry: AuditHistoryEntry) => {
     setRepoUrl(entry.repoUrl);
     setAnalysisResult(entry.response);
@@ -824,34 +868,15 @@ export default function Dashboard() {
     e.preventDefault();
     if (!repoUrl.trim()) return;
 
-    setIsLoading(true);
     setApiError(null);
     setAnalysisResult(null);
     setSelectedFile(null);
     setChatHistory([]);
     try { localStorage.removeItem('reposage_chat_history'); } catch {};
 
-    // Simulate structured loading steps for GSSoC wow factor
-    const steps = [
-      "🔍 Authenticating connection...",
-      "📥 Cloning GitHub repository locally...",
-      "📁 Traversing directory tree & parsing modules...",
-      "🧠 Running LLM analysis using selected AI Model...",
-      "📜 Generating custom repository README.md...",
-      "🎉 Formatting reports...",
-    ];
-
-    let currentStep = 0;
-    setLoadingStep(steps[0]);
-    const stepInterval = setInterval(() => {
-      currentStep++;
-      if (currentStep < steps.length) {
-        setLoadingStep(steps[currentStep]);
-      }
-    }, 1200);
     try {
       const aiSettings = getSavedAiSettings();
-      const response = await apiFetch("/api/analyze", {
+      await startStream({
         method: "POST",
         body: JSON.stringify({
           repoUrl,
@@ -864,29 +889,6 @@ export default function Dashboard() {
           batchSize: aiSettings.batchSize ?? 5,
         }),
       });
-
-      clearInterval(stepInterval);
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.error || "Server error occurred during analysis.",
-        );
-      }
-
-      const data: BackendResponse = await response.json();
-      setAnalysisResult(data);
-      setSessionId(
-        data.sessionPersisted === true ? data.sessionId ?? null : null
-      );
-      persistAuditHistory(data);
-      setChatHistory([]);
-
-      // Select the first file reviewed automatically
-      const filesList = Object.keys(data.analysis?.fileReviews || {});
-      if (filesList.length > 0) {
-        setSelectedFile(filesList[0]);
-      }
     } catch (err: unknown) {
       console.error(err);
       let errMsg = (err instanceof Error ? err.message : String(err)) || "Could not connect to the backend server. Make sure node backend is running on port 5000.";
@@ -897,9 +899,6 @@ export default function Dashboard() {
         setShowSettings(true);
       }
       setApiError(errMsg);
-    } finally {
-      clearInterval(stepInterval);
-      setIsLoading(false);
     }
   };
 
@@ -1199,9 +1198,92 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* 4. The Complete Analysis Dashboard (Split Audit View) */}
-          {!isLoading && analysisResult && (
+          {streamError && (
             <div
+              style={{
+                background: "rgba(239, 68, 68, 0.1)",
+                border: "1px solid rgba(239, 68, 68, 0.3)",
+                borderRadius: "8px",
+                padding: "14px 20px",
+                color: "#fca5a5",
+                fontSize: "13px",
+                display: "flex",
+                alignItems: "center",
+                gap: "12px",
+                marginBottom: "20px",
+              }}
+            >
+              <AlertOctagon size={20} style={{ color: "#ef4444" }} />
+              <div>
+                <strong style={{ display: "block" }}>Streaming Error</strong>
+                <span>{streamError}</span>
+              </div>
+            </div>
+          )}
+
+          {(isStreaming || reviewText) && (
+            <div
+              ref={reportRef}
+              className="glass-panel"
+              style={{
+                flexGrow: 1,
+                display: "flex",
+                flexDirection: "column",
+                padding: "24px",
+                boxSizing: "border-box",
+                overflowY: "auto",
+                maxHeight: "80vh",
+              }}
+            >
+              <h2 style={{ color: "#f3f4f6", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "12px" }}>
+                {isStreaming ? "Streaming AI Review..." : "AI Code Review Complete"}
+              </h2>
+              {isStreaming && <div className="spin-slow" style={{ width: "24px", height: "24px", border: "2px solid rgba(168,85,247,0.1)", borderTopColor: "#a855f7", borderRadius: "50%", margin: "12px 0" }}></div>}
+              <ReactMarkdown
+                components={{
+                  code({ node, inline, className, children, ...props }: any) {
+                    const match = /language-(\w+)/.exec(className || "");
+                    return !inline && match ? (
+                      <SyntaxHighlighter
+                        style={vscDarkPlus as any}
+                        language={match[1]}
+                        PreTag="div"
+                        customStyle={{
+                          margin: 0,
+                          borderRadius: "6px",
+                          background: "#1e1e1e",
+                          fontSize: "12px",
+                        }}
+                        {...props}
+                      >
+                        {String(children).replace(/\n$/, "")}
+                      </SyntaxHighlighter>
+                    ) : (
+                      <code
+                        style={{
+                          background: "rgba(255,255,255,0.1)",
+                          padding: "2px 4px",
+                          borderRadius: "4px",
+                          fontSize: "12px",
+                          color: "#d8b4fe",
+                        }}
+                        {...props}
+                      >
+                        {children}
+                      </code>
+                    );
+                  },
+                }}
+              >
+                {reviewText}
+              </ReactMarkdown>
+            </div>
+          )}
+
+          {/* 4. The Complete Analysis Dashboard (Split Audit View) */}
+          {!isLoading && analysisResult && !isStreaming && !reviewText && (
+            <div
+              ref={reportRef}
               style={{
                 flexGrow: 1,
                 display: "flex",
@@ -1289,7 +1371,7 @@ export default function Dashboard() {
                 />
               </SectionErrorBoundary>
               {/* Dashboard View Selection Tabs & Export Controls */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", width: "100%" }}>
+              <div data-html2canvas-ignore="true" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", width: "100%" }}>
                 <div style={{ display: "flex", gap: "10px" }}>
                   <button
                     onClick={() => setActiveDashboardView("audit")}
@@ -1419,7 +1501,7 @@ export default function Dashboard() {
                     <FileDown size={14} /> Export Markdown
                   </button>
                   <button
-                    onClick={() => analysisResult && handlePdfExport(analysisResult.repoName, analysisResult.analysis, apiFetch)}
+                    onClick={() => analysisResult && handlePdfExport(analysisResult.repoName, reportRef.current)}
                     style={{
                       background: "rgba(220, 38, 38, 0.1)",
                       border: "1px solid rgba(220, 38, 38, 0.3)",
@@ -1443,6 +1525,7 @@ export default function Dashboard() {
               </div>
 
               <div
+                className="pdf-grid-container"
                 style={{
                   flexGrow: 1,
                   display: "grid",
@@ -1455,7 +1538,7 @@ export default function Dashboard() {
                 }}
               >
                 {/* File Tree List */}
-                <div className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', maxHeight: '72vh' }}>
+                <div data-html2canvas-ignore="true" className="glass-panel" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', maxHeight: '72vh' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
                     <h3 style={{ fontSize: '12px', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', margin: 0, letterSpacing: '0.5px' }}>File Navigator</h3>
                     <div style={{ display: 'flex', gap: '2px' }}>
