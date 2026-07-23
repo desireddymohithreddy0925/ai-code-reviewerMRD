@@ -1181,7 +1181,7 @@ if (reviewResult?.fileReviews) {
       };
 
       if (finalCacheKey && !reviewResult?._mock) {
-        responseCache.set(finalCacheKey, responseObject, repoUrl);
+        responseCache.set(finalCacheKey, responseObject, { repoUrl });
       }
 
       return res.json(responseObject);
