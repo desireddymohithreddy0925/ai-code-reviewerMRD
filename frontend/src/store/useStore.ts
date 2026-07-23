@@ -12,9 +12,11 @@ interface GlobalState {
   setChatHistory: (updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
 }
 
+const CHAT_HISTORY_KEY = 'reposage_chat_history';
+
 const loadChatHistory = (): ChatMessage[] => {
   try {
-    const saved = localStorage.getItem('reposage_chat_history');
+    const saved = localStorage.getItem(CHAT_HISTORY_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
       return Array.isArray(parsed) ? parsed : [];
@@ -23,24 +25,20 @@ const loadChatHistory = (): ChatMessage[] => {
   return [];
 };
 
-let chatHistoryLoaded = false;
-let chatHistoryCache: ChatMessage[] = [];
+const persistChatHistory = (history: ChatMessage[]) => {
+  try { localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(history)); } catch {}
+};
 
 export const useStore = create<GlobalState>((set) => ({
   analysisResult: null,
   setAnalysisResult: (result) => set({ analysisResult: result }),
   selectedFile: null,
   setSelectedFile: (file) => set({ selectedFile: file }),
-  chatHistory: [],
-  setChatHistory: (updater) => set((state) => {
-    if (!chatHistoryLoaded) {
-      chatHistoryCache = loadChatHistory();
-      chatHistoryLoaded = true;
-    }
-    const current = chatHistoryLoaded ? chatHistoryCache : state.chatHistory;
+  chatHistory: loadChatHistory(),
+  setChatHistory: (updater) => {
+    const current = useStore.getState().chatHistory;
     const updated = typeof updater === 'function' ? updater(current) : updater;
-    chatHistoryCache = updated;
-    try { localStorage.setItem("reposage_chat_history", JSON.stringify(updated)); } catch {}
-    return { chatHistory: updated };
-  }),
+    persistChatHistory(updated);
+    set({ chatHistory: updated });
+  },
 }));
