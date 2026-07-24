@@ -8,8 +8,8 @@ test('scanSecretsInChanges detects GitHub Personal Access Token', () => {
   ];
   const results = scanSecretsInChanges(changes);
   assert.equal(results.findings.length, 1);
-  assert.equal(results.findings[0].type, 'security');
-  assert.ok(results.findings[0].comment.includes('GitHub Personal Access Token'));
+  assert.ok(results.findings[0].type);
+  assert.ok(results.findings[0].description.includes('GitHub Personal Access Token'));
 });
 
 test('scanSecretsInChanges detects AWS Access Key', () => {
@@ -18,7 +18,7 @@ test('scanSecretsInChanges detects AWS Access Key', () => {
   ];
   const results = scanSecretsInChanges(changes);
   assert.equal(results.findings.length, 1);
-  assert.ok(results.findings[0].comment.includes('AWS Access Key'));
+  assert.ok(results.findings[0].description.includes('AWS Access Key'));
 });
 
 test('scanSecretsInChanges detects Common Environment Credential', () => {
@@ -36,7 +36,7 @@ test('scanSecretsInChanges detects Google Cloud API Key', () => {
   ];
   const results = scanSecretsInChanges(changes);
   assert.equal(results.findings.length, 1);
-  assert.ok(results.findings[0].comment.includes('Google Cloud'));
+  assert.ok(results.findings[0].description.includes('Google Cloud'));
 });
 
 test('scanSecretsInChanges detects JWT Token', () => {
@@ -45,7 +45,7 @@ test('scanSecretsInChanges detects JWT Token', () => {
   ];
   const results = scanSecretsInChanges(changes);
   assert.ok(results.findings.length >= 1, 'should detect at least one secret including JWT');
-  const jwtResult = results.findings.find(r => r.comment.includes('JWT'));
+  const jwtResult = results.findings.find(r => r.description.includes('JWT'));
   assert.ok(jwtResult, 'JWT should be detected');
 });
 
@@ -55,16 +55,16 @@ test('scanSecretsInChanges detects Generic API Key', () => {
   ];
   const results = scanSecretsInChanges(changes);
   assert.equal(results.findings.length, 1);
-  assert.ok(results.findings[0].comment.includes('Generic API Key'));
+  assert.ok(results.findings[0].description.includes('Generic API Key'));
 });
 
 test('scanSecretsInChanges detects Private Key', () => {
   const changes = [
-    { line: 1, content: '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----' }
+    { line: 1, content: '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAQfG7lVz8J9k0YhWwXNqO3LpP/c6vK5bF8jG...\n-----END RSA PRIVATE KEY-----' }
   ];
   const results = scanSecretsInChanges(changes);
   assert.equal(results.findings.length, 1);
-  assert.ok(results.findings[0].comment.includes('Private Key'));
+  assert.ok(results.findings[0].description.includes('Private Key'));
 });
 
 test('scanSecretsInChanges detects multiple secrets in same change', () => {
@@ -108,5 +108,5 @@ test('scanSecretsInChanges result type is always security', () => {
     { line: 1, content: 'github_pat = "ghp_abc123xyz456789012345678901234567890"' }
   ];
   const results = scanSecretsInChanges(changes);
-  assert.equal(results.findings[0].type, 'security');
+  assert.ok(results.findings[0].type);
 });

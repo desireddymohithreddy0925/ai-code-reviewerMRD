@@ -209,7 +209,7 @@ export function scanSecretsInChanges(changes) {
           // Only consider high-entropy strings or strict formats as potential secrets (entropy > 3.5)
           // IP addresses and emails will naturally have lower entropy, but regex matches them strictly.
           // For Generic API Keys or Passwords, this drops test_key = "123".
-          if (entropy > 3.5 || rule.type.includes("Address") || rule.type.includes("Webhook")) {
+          if (entropy > 3.5 || rule.type.includes("Address") || rule.type.includes("Webhook") || rule.type.includes("Private Key")) {
             findings.push({
               line: baseLine + lineIdx,
               type: rule.type,

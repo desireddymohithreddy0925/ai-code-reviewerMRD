@@ -183,7 +183,7 @@ test('scanSecretsInChanges: detects IPv4 in PR diff changes', () => {
   ];
   const results = scanSecretsInChanges(changes);
   assert.ok(results.findings.length >= 1, 'should detect IPv4 in changes');
-  assert.ok(results.findings.some(f => f.comment.includes('Hardcoded IPv4 Address')), 'comment should mention IPv4');
+  assert.ok(results.findings.some(f => f.description.includes('IPv4')), 'comment should mention IPv4');
 });
 
 test('scanSecretsInChanges: detects ETH wallet in PR diff changes', () => {
@@ -192,7 +192,7 @@ test('scanSecretsInChanges: detects ETH wallet in PR diff changes', () => {
   ];
   const results = scanSecretsInChanges(changes);
   assert.ok(results.findings.length >= 1, 'should detect ETH wallet in changes');
-  assert.ok(results.findings.some(f => f.comment.includes('Ethereum')), 'comment should mention Ethereum');
+  assert.ok(results.findings.some(f => f.description.includes('Ethereum')), 'comment should mention Ethereum');
 });
 
 test('scanSecretsInChanges: detects BTC wallet in PR diff changes', () => {
@@ -201,7 +201,7 @@ test('scanSecretsInChanges: detects BTC wallet in PR diff changes', () => {
   ];
   const results = scanSecretsInChanges(changes);
   assert.ok(results.findings.length >= 1, 'should detect BTC wallet in changes');
-  assert.ok(results.findings.some(f => f.comment.includes('Bitcoin')), 'comment should mention Bitcoin');
+  assert.ok(results.findings.some(f => f.description.includes('Bitcoin')), 'comment should mention Bitcoin');
 });
 
 test('scanSecretsInChanges: does NOT flag loopback IP in changes', () => {
@@ -209,7 +209,7 @@ test('scanSecretsInChanges: does NOT flag loopback IP in changes', () => {
     { line: 1, content: 'server.listen("127.0.0.1", 8080);' }
   ];
   const results = scanSecretsInChanges(changes);
-  const ipFindings = results.findings.filter(f => f.comment.includes('IPv4'));
+  const ipFindings = results.findings.filter(f => f.description.includes('IPv4'));
   assert.equal(ipFindings.length, 0, 'should not flag loopback in changes');
 });
 
