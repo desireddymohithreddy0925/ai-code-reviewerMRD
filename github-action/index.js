@@ -304,10 +304,10 @@ Format your JSON precisely as:
     {
       "line": 12,
       "type": "bug | security | optimization | style",
-      "comment": "### 🐞 Bug Title\n\nClear, constructive description of the issue.\n\n#### 💡 Actionable Suggestion\n\`\`\`language\n// corrected code\n\`\`\`"
+      "comment": "### 🐞 Bug Title\n\nClear, constructive description of the issue.\n\n#### 💡 Actionable Suggestion\n\`\`\`suggestion\n// exact replacement code\n\`\`\`"
     }
   ]
-}
+}\n\nCRITICAL: If proposing a code fix, you MUST use the exact GitHub suggestion syntax (\`\`\`suggestion\n<code here>\n\`\`\`) so the user can one-click commit it in the UI.
 If no issues are found, reply with: { "reviews": [] }`;
 
         try {
