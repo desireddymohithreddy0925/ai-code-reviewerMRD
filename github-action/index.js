@@ -9,6 +9,7 @@ import { isPureFormatting } from './utils/astFilter.js';
 import { LlmRouter } from './utils/llmRouter.js';
 import { SemanticCache } from './utils/semanticCache.js';
 import { ChunkHelper } from './utils/chunkHelper.js';
+import { handleConversationEvent } from './utils/conversationHandler.js';
 import pLimit from 'p-limit';
 
 const PARSE_FAILED = { reviews: [], _parseFailed: true };
@@ -92,6 +93,11 @@ async function run() {
       fallbackModel, 
       fallbackApiKey 
     });
+
+    if (github.context.eventName === 'issue_comment' || github.context.eventName === 'pull_request_review_comment') {
+      await handleConversationEvent(github.context, octokit, llmRouter);
+      return;
+    }
     
     const ragHelper = new RagHelper(pineconeApiKey, pineconeIndexName, openaiApiKey);
     if (ragHelper.enabled) {
