@@ -20,6 +20,7 @@ import { TokenEstimator } from './utils/tokenEstimator.js';
 import { AuditLogger } from './utils/auditLogger.js';
 import { TicketFetcher } from './utils/ticketFetcher.js';
 import { SarifGenerator } from './utils/sarifGenerator.js';
+import { RbacVerifier } from './utils/rbacVerifier.js';
 import zlib from 'zlib';
 import { CoverageParser } from './utils/coverageParser.js';
 import { SarifParser } from './utils/sarifParser.js';
@@ -163,7 +164,7 @@ async function run() {
           owner,
           repo,
           path: '.ai-ignore',
-          ref: headSha
+          ref: configRef
         });
         const ignoreContent = Buffer.from(ignoreFile.content, 'base64').toString('utf8');
         const ignoreLines = ignoreContent.split('\n')
