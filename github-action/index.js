@@ -285,44 +285,48 @@ async function run() {
           }
 
           const sanitizedChangesText = sanitizeDiffContent(changesText);
+          const ext = require('path').extname(file.path);
+          const chunks = chunkFileSemantically(sanitizedChangesText, ext);
           
-          // 1.5 Firewall Check
-          const firewall = checkPromptInjection(sanitizedChangesText, file.path);
-          if (firewall.blocked) {
-            console.warn(`⚠️ Firewall blocked review for ${file.path}: ${firewall.reason}`);
-            batchComments.push({
-              path: file.path,
-              line: file.changes[0].line,
-              body: `<!-- RepoSage Review Comment -->\n⚠️ **Security Alert**: RepoSage Firewall detected a potential prompt injection attempt in this file. Skipping automated review.`
-            });
-            return; // Skip LLM call for this file
-          }
-          
-          const bgContext = buildDependencyGraphContext(file.path, process.cwd());
-          let contextPrompt = buildPrompt(file, sanitizedChangesText, existingComments, botUsername);
-          if (bgContext.length > 0) {
-            contextPrompt += "\n\n### Background Context (Unmodified Dependencies)\n";
-            bgContext.forEach(ctx => { contextPrompt += `\n--- ${ctx.path} ---\n${ctx.content}\n`; });
-          }
+          for (const chunk of chunks) {
+            // 1.5 Firewall Check
+            const firewall = checkPromptInjection(chunk, file.path);
+            if (firewall.blocked) {
+              console.warn(`⚠️ Firewall blocked review for ${file.path}: ${firewall.reason}`);
+              batchComments.push({
+                path: file.path,
+                line: file.changes[0].line,
+                body: `<!-- RepoSage Review Comment -->\n⚠️ **Security Alert**: RepoSage Firewall detected a potential prompt injection attempt in this file. Skipping automated review.`
+              });
+              break; // Skip LLM call for the rest of this file
+            }
+            
+            const bgContext = buildDependencyGraphContext(file.path, process.cwd());
+            let contextPrompt = buildPrompt(file, chunk, existingComments, botUsername);
+            if (bgContext.length > 0) {
+              contextPrompt += "\n\n### Background Context (Unmodified Dependencies)\n";
+              bgContext.forEach(ctx => { contextPrompt += `\n--- ${ctx.path} ---\n${ctx.content}\n`; });
+            }
 
-          const reviews = await llmRouter.createReview(contextPrompt, file.path);
-          
-          if (reviews._rateLimitRemaining !== undefined && reviews._rateLimitRemaining !== null) {
-            rateLimitTokens = reviews._rateLimitRemaining;
-          }
+            const reviews = await llmRouter.createReview(contextPrompt, file.path);
+            
+            if (reviews._rateLimitRemaining !== undefined && reviews._rateLimitRemaining !== null) {
+              rateLimitTokens = reviews._rateLimitRemaining;
+            }
 
-          const parsed = typeof reviews === 'string' ? JSON.parse(reviews) : reviews;
-          if (parsed && Array.isArray(parsed.reviews)) {
-            for (const issue of parsed.reviews) {
-              const issueLine = parseInt(issue.line, 10);
-              const validLine = file.changes.some(c => c.line === issueLine);
-              
-              if (validLine) {
-                const bodyText = `<!-- RepoSage Review Comment -->\n**${issue.type || 'Review'}**:\n${issue.comment}`;
-                const alreadyPostedOnPR = existingComments.some(c => c.path === file.path && c.line === issueLine && c.body === bodyText);
-                if (!alreadyPostedOnPR) {
-                  batchComments.push({ path: file.path, line: issueLine, body: bodyText });
-                  commentsToPost.push({ path: file.path, line: issueLine, body: bodyText });
+            const parsed = typeof reviews === 'string' ? JSON.parse(reviews) : reviews;
+            if (parsed && Array.isArray(parsed.reviews)) {
+              for (const issue of parsed.reviews) {
+                const issueLine = parseInt(issue.line, 10);
+                const validLine = file.changes.some(c => c.line === issueLine);
+                
+                if (validLine) {
+                  const bodyText = `<!-- RepoSage Review Comment -->\n**${issue.type || 'Review'}**:\n${issue.comment}`;
+                  const alreadyPostedOnPR = existingComments.some(c => c.path === file.path && c.line === issueLine && c.body === bodyText);
+                  if (!alreadyPostedOnPR) {
+                    batchComments.push({ path: file.path, line: issueLine, body: bodyText });
+                    commentsToPost.push({ path: file.path, line: issueLine, body: bodyText });
+                  }
                 }
               }
             }

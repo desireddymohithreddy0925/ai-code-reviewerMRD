@@ -7,11 +7,15 @@
 export class ChunkHelper {
   /**
    * Splits a massive diff text into an array of smaller diff strings.
+   * Utilizes Semantic AST-heuristic chunking for JS/TS, Python, and Go files
+   * to strictly split at class/function boundaries rather than arbitrary lines!
+   * 
    * @param {string} diffText 
    * @param {number} maxLinesPerChunk
+   * @param {string} fileExtension (optional)
    * @returns {string[]} Array of diff chunks
    */
-  static splitMassiveDiff(diffText, maxLinesPerChunk = 500) {
+  static splitMassiveDiff(diffText, maxLinesPerChunk = 500, fileExtension = '') {
     if (!diffText || typeof diffText !== 'string') return [];
 
     const lines = diffText.split('\n');
@@ -19,23 +23,45 @@ export class ChunkHelper {
       return [diffText];
     }
 
+    let boundaryRegex = null;
+    const ext = (fileExtension || '').toLowerCase();
+    
+    if (['.js', '.ts', '.jsx', '.tsx'].includes(ext)) {
+      // Matches export class, function, const foo = () =>
+      boundaryRegex = /^(?:export\s+)?(?:default\s+)?(?:class|function|const\s+\w+\s*=\s*(?:async\s*)?(?:\([^)]*\)|[^=]+)\s*=>)/;
+    } else if (ext === '.py') {
+      boundaryRegex = /^(?:async\s+)?(?:def|class)\s+\w+/;
+    } else if (ext === '.go') {
+      boundaryRegex = /^func\s+|^type\s+\w+\s+(?:struct|interface)/;
+    }
+
     const chunks = [];
     let currentChunk = [];
     
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      currentChunk.push(line);
-
-      // If we've reached the target chunk size, look for a logical break point
-      if (currentChunk.length >= maxLinesPerChunk) {
-        // Look ahead for an empty line or a new hunk header (@@)
-        const isLogicalBreak = line.trim() === '' || (i + 1 < lines.length && lines[i + 1].startsWith('@@ '));
-        
-        if (isLogicalBreak || currentChunk.length >= maxLinesPerChunk + 100) {
-          // Force break if we exceed maxLines + 100 to avoid infinite looping
+      
+      // If we have a semantic regex, attempt to split exactly at the class/function signature
+      if (boundaryRegex && boundaryRegex.test(line.replace(/^(\+|\-| )/, ''))) {
+        if (currentChunk.length >= maxLinesPerChunk * 0.8) {
           chunks.push(currentChunk.join('\n'));
           currentChunk = [];
         }
+      } else if (!boundaryRegex && currentChunk.length >= maxLinesPerChunk) {
+        // Fallback to hunk boundaries if no language semantic regex matches
+        const isLogicalBreak = line.trim() === '' || (i + 1 < lines.length && lines[i + 1].startsWith('@@ '));
+        if (isLogicalBreak || currentChunk.length >= maxLinesPerChunk + 100) {
+          chunks.push(currentChunk.join('\n'));
+          currentChunk = [];
+        }
+      }
+
+      currentChunk.push(line);
+      
+      // Hard cutoff to prevent infinite chunks if a single function is over 2000 lines
+      if (currentChunk.length >= (maxLinesPerChunk * 2)) {
+        chunks.push(currentChunk.join('\n'));
+        currentChunk = [];
       }
     }
 

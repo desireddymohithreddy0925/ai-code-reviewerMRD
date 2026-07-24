@@ -1,3 +1,4 @@
+import { chunkFileSemantically } from './utils/semanticChunker.js';
 import { checkPromptInjection, wrapUntrustedDiff } from './utils/firewall.js';
 import { extractSuggestionBlock, stripSuggestionBlock, verifySuggestionSyntax } from './utils/sandboxVerifier.js';
 import { register, llmTokenUsageTotal, llmRequestLatencyMs, llmErrorRateTotal } from './utils/telemetry.js';
@@ -2046,13 +2047,20 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       firewallBlocked = true;
     }
 
-    filesToReview.push({
-      path: file.path,
-      changes: file.changes.map(c => ({ line: c.line, content: c.content })),
-      backgroundContext: backgroundContext,
-      firewallBlocked: firewallBlocked,
-      wrappedDiff: wrapUntrustedDiff(diffText)
-    });
+    
+    const ext = require('path').extname(file.path);
+    const chunks = chunkFileSemantically(diffText, ext);
+    
+    // Instead of sending one massive file array, we break it down into semantic chunks
+    for (const chunk of chunks) {
+        filesToReview.push({
+          path: file.path,
+          changes: file.changes.map(c => ({ line: c.line, content: c.content })), // Still send line metadata
+          backgroundContext: backgroundContext,
+          firewallBlocked: firewallBlocked,
+          wrappedDiff: wrapUntrustedDiff(chunk) // Use the semantic chunk!
+        });
+    }
   }
 
   // Track whether the AI engine was successfully queried

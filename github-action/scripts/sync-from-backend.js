@@ -12,6 +12,7 @@ const pairs = [
   { src: 'backend/utils/sandboxVerifier.js', dest: 'github-action/utils/sandboxVerifier.js' },
   { src: 'backend/utils/dependencyGraph.js', dest: 'github-action/utils/dependencyGraph.js' },
   { src: 'backend/utils/firewall.js', dest: 'github-action/utils/firewall.js' },
+  { src: 'backend/utils/semanticChunker.js', dest: 'github-action/utils/semanticChunker.js' },
   { src: 'shared-safety-config.json', dest: 'github-action/shared-safety-config.json' },
 ];
 
