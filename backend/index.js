@@ -2026,9 +2026,19 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     }
 
     // Save list to send to FastAPI AI Engine
+    let backgroundContext = [];
+    try {
+      // Since backend doesn't always have repoRoot checked out in the webhook,
+      // we gracefully fall back to local temp paths if they exist
+      const possibleRepoRoot = require('os').tmpdir();
+      const possibleFilePath = require('path').join(possibleRepoRoot, file.path);
+      backgroundContext = buildDependencyGraphContext(possibleFilePath, possibleRepoRoot);
+    } catch (e) {}
+
     filesToReview.push({
       path: file.path,
-      changes: file.changes.map(c => ({ line: c.line, content: c.content }))
+      changes: file.changes.map(c => ({ line: c.line, content: c.content })),
+      backgroundContext: backgroundContext
     });
   }
 

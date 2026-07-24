@@ -1,3 +1,4 @@
+import { buildDependencyGraphContext } from './utils/dependencyGraph.js';
 import { extractSuggestionBlock, stripSuggestionBlock, verifySuggestionSyntax } from './utils/sandboxVerifier.js';
 import core from '@actions/core';
 import github from '@actions/github';
