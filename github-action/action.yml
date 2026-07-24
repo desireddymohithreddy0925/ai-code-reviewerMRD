@@ -36,6 +36,15 @@ inputs:
   openai-api-key:
     description: 'The OpenAI API key to generate embeddings for RAG (optional).'
     required: false
+  fallback-provider:
+    description: 'The fallback LLM provider to use if Groq fails (openai or anthropic).'
+    required: false
+  fallback-model:
+    description: 'The fallback model ID to use (e.g., gpt-4o-mini, claude-3-haiku-20240307).'
+    required: false
+  fallback-api-key:
+    description: 'The API key for the fallback provider.'
+    required: false
 runs:
   using: 'node20'
   main: 'dist/index.js'

@@ -1,12 +1,12 @@
 import core from '@actions/core';
 import github from '@actions/github';
-import Groq from 'groq-sdk';
 import { parseDiff } from './utils/diffParser.js';
 import { scanSecretsInChanges } from './utils/secretsScanner.js';
 import { globToRegex } from './utils/globToRegex.js';
 import { cleanAndParseJSON, normalizeReviewLineNumber } from './utils/actionUtils.js';
 import { RagHelper } from './utils/ragHelper.js';
 import { isPureFormatting } from './utils/astFilter.js';
+import { LlmRouter } from './utils/llmRouter.js';
 
 const PARSE_FAILED = { reviews: [], _parseFailed: true };
 
@@ -39,6 +39,9 @@ async function run() {
     const pineconeApiKey = core.getInput('pinecone-api-key');
     const pineconeIndexName = core.getInput('pinecone-index-name');
     const openaiApiKey = core.getInput('openai-api-key');
+    const fallbackProvider = core.getInput('fallback-provider');
+    const fallbackModel = core.getInput('fallback-model');
+    const fallbackApiKey = core.getInput('fallback-api-key');
     const excludePathsInput = core.getInput('exclude-paths') || '';
     const includeExtensionsInput = core.getInput('include-extensions') || '';
     if (includeExtensionsInput) {
@@ -78,7 +81,13 @@ async function run() {
     provider.init();
     
     const octokit = github.getOctokit(githubToken);
-    const groq = new Groq({ apiKey: groqApiKey });
+    
+    const llmRouter = new LlmRouter({ 
+      groqApiKey, 
+      fallbackProvider, 
+      fallbackModel, 
+      fallbackApiKey 
+    });
     
     const ragHelper = new RagHelper(pineconeApiKey, pineconeIndexName, openaiApiKey);
     if (ragHelper.enabled) {
@@ -280,15 +289,13 @@ Format your JSON precisely as:
 If no issues are found, reply with: { "reviews": [] }`;
 
         try {
-          const completion = await groq.chat.completions.create({
-            model: 'llama-3.3-70b-versatile',
-            messages: [{ role: 'user', content: reviewPrompt }],
-            temperature: 0.2,
-            max_tokens: maxTokens,
-            response_format: { type: 'json_object' },
-          });
+          const content = await llmRouter.createCompletion(
+            [{ role: 'user', content: reviewPrompt }],
+            'llama-3.3-70b-versatile',
+            maxTokens,
+            0.2
+          );
 
-        const content = completion.choices[0].message.content;
         let parsed = cleanAndParseJSON(content);
         successfulReviewsCount++;
         
@@ -400,18 +407,16 @@ Format your JSON precisely as:
   "summary": "- Added new feature X\\n- Refactored component Y"
 }`;
 
-        const summaryCompletion = await groq.chat.completions.create({
-          messages: [
+        const summaryContent = await llmRouter.createCompletion(
+          [
             { role: 'system', content: 'You are a code reviewer. Always output valid JSON matching the schema {"summary": "string"}.' },
             { role: 'user', content: summaryPrompt }
           ],
-          model: 'llama-3.3-70b-versatile',
-          temperature: 0.3,
-          max_tokens: 500,
-          response_format: { type: 'json_object' }
-        });
+          'llama-3.3-70b-versatile',
+          500,
+          0.3
+        );
         
-        const summaryContent = summaryCompletion.choices[0]?.message?.content;
         if (summaryContent) {
           const summaryData = JSON.parse(summaryContent);
           if (summaryData.summary) {
