@@ -8,6 +8,8 @@ import { RagHelper } from './utils/ragHelper.js';
 import { isPureFormatting } from './utils/astFilter.js';
 import { LlmRouter } from './utils/llmRouter.js';
 import { SemanticCache } from './utils/semanticCache.js';
+import { ChunkHelper } from './utils/chunkHelper.js';
+import pLimit from 'p-limit';
 
 const PARSE_FAILED = { reviews: [], _parseFailed: true };
 
