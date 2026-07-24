@@ -1,3 +1,4 @@
+import { extractSuggestionBlock, stripSuggestionBlock, verifySuggestionSyntax } from './utils/sandboxVerifier.js';
 import { register, llmTokenUsageTotal, llmRequestLatencyMs, llmErrorRateTotal } from './utils/telemetry.js';
 import 'express-async-errors';
 import dotenv from 'dotenv';
@@ -2062,6 +2063,16 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
         if (result && Array.isArray(result.comments)) {
           result.comments.forEach(c => {
             const validLines = validChangedLines.get(c.path);
+            
+            const suggestionCode = extractSuggestionBlock(c.body);
+            if (suggestionCode) {
+              const syntaxCheck = verifySuggestionSyntax(c.path, suggestionCode);
+              if (!syntaxCheck.valid) {
+                console.warn(`[Sandbox Verifier] Dropped syntactically invalid suggestion for ${c.path}: ${syntaxCheck.reason}`);
+                c.body = stripSuggestionBlock(c.body, syntaxCheck.reason);
+              }
+            }
+
             if (!validLines || !validLines.has(Number(c.line))) {
               console.warn(`ΓÜá∩╕Å Skipping invalid inline comment location ${c.path}:${c.line}`);
               aiCommentsDiscarded++;

@@ -9,6 +9,7 @@ const pairs = [
   { src: 'backend/utils/secretsScanner.js', dest: 'github-action/utils/secretsScanner.js' },
   { src: 'backend/utils/diffParser.js', dest: 'github-action/utils/diffParser.js' },
   { src: 'backend/utils/ipynbParser.js', dest: 'github-action/utils/ipynbParser.js' },
+  { src: 'backend/utils/sandboxVerifier.js', dest: 'github-action/utils/sandboxVerifier.js' },
   { src: 'shared-safety-config.json', dest: 'github-action/shared-safety-config.json' },
 ];
 

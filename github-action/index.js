@@ -1,3 +1,4 @@
+import { extractSuggestionBlock, stripSuggestionBlock, verifySuggestionSyntax } from './utils/sandboxVerifier.js';
 import core from '@actions/core';
 import github from '@actions/github';
 import { parseDiff } from './utils/diffParser.js';
