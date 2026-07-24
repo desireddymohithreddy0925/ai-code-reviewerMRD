@@ -1,3 +1,4 @@
+import { DependencyParser } from './utils/dependencyParser.js';
 import { checkPromptInjection, wrapUntrustedDiff } from './utils/firewall.js';
 import { buildDependencyGraphContext } from './utils/dependencyGraph.js';
 import { extractSuggestionBlock, stripSuggestionBlock, verifySuggestionSyntax } from './utils/sandboxVerifier.js';
@@ -189,15 +190,9 @@ async function run() {
     let packageContext = '';
     try {
       const workspacePath = process.env.GITHUB_WORKSPACE || '.';
-      const pkgPath = resolve(workspacePath, 'package.json');
-      const pkgContent = readFileSync(pkgPath, 'utf8');
-      const pkg = JSON.parse(pkgContent);
-      const dependencies = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-      if (Object.keys(dependencies).length > 0) {
-        packageContext = `\n\nCRITICAL CONTEXT: The project uses the following specific dependency versions:\n${JSON.stringify(dependencies, null, 2)}\nYou MUST ensure that your code suggestions are strictly aligned with these versions. For example, if React 18+ is used, do not suggest deprecated methods like ReactDOM.render().`;
-      }
+      packageContext = DependencyParser.buildContext(workspacePath);
     } catch (err) {
-      console.log(`ℹ️ No package.json found or failed to parse. Proceeding without dependency context. (${err.message})`);
+      console.log(`ℹ️ Failed to parse dependencies: ${err.message}`);
     }
 
     const filesToProcess = [];
@@ -302,7 +297,7 @@ async function run() {
             }
             
             const bgContext = buildDependencyGraphContext(file.path, process.cwd());
-            let contextPrompt = buildPrompt(file, chunk, existingComments, botUsername);
+            let contextPrompt = buildPrompt(file, chunk, existingComments, botUsername, packageContext);
             if (bgContext.length > 0) {
               contextPrompt += "\n\n### Background Context (Unmodified Dependencies)\n";
               bgContext.forEach(ctx => { contextPrompt += `\n--- ${ctx.path} ---\n${ctx.content}\n`; });
