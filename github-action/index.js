@@ -14,6 +14,7 @@ import { LlmRouter } from './utils/llmRouter.js';
 import { SemanticCache } from './utils/semanticCache.js';
 import { ChunkHelper } from './utils/chunkHelper.js';
 import { handleConversationEvent } from './utils/conversationHandler.js';
+import { ImageFetcher } from './utils/imageFetcher.js';
 import { CoverageParser } from './utils/coverageParser.js';
 import { SarifParser } from './utils/sarifParser.js';
 import { PersonaHelper } from './utils/personaHelper.js';
@@ -82,7 +83,7 @@ async function run() {
       .map(e => e.trim().toLowerCase().replace(/^\./, ''))
       .filter(e => e.length > 0);
 
-    const defaultExtensions = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'cpp', 'h', 'cs', 'css', 'html', 'php', 'rb', 'sql'];
+    const defaultExtensions = ['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'cpp', 'h', 'cs', 'css', 'html', 'php', 'rb', 'sql', 'png', 'jpg', 'jpeg', 'webp', 'excalidraw'];
     const validExtensions = includeExtensions.length > 0 ? includeExtensions : defaultExtensions;
 
     // 2. Initialize Clients
@@ -266,6 +267,7 @@ async function run() {
     }
 
     const filesToProcess = [];
+    let imageCounter = 0;
     for (const file of parsedFiles) {
       if (excludePatterns.some(regex => regex.test(file.path))) {
         console.log(`⏭️ Skipping excluded file: ${file.path}`);
@@ -372,13 +374,30 @@ async function run() {
             if (uncoveredLines.length > 0) {
                coverageWarning = `\n\nCRITICAL INSTRUCTION: The following modified lines lack test coverage: [${uncoveredLines.join(', ')}]. You MUST generate and output boilerplate Jest/PyTest/etc unit tests for these exact lines as part of your review. Do not just warn the user, give them the code to test it!`;
             }
-            let contextPrompt = buildPrompt(file, chunk, existingComments, botUsername, packageContext, coverageWarning);
+            let contextPrompt = '';
+            let userMessageContent;
+            
+            if (isImage) {
+               contextPrompt = `Review the updated architecture diagram or UI mockup at ${file.path}. As a Senior Staff Engineer, identify any architectural flaws, UX issues, or missing components in this design. Note: This is a vision model task. Return your feedback as a JSON array of comments on line 1.`;
+               userMessageContent = [
+                 { type: 'text', text: contextPrompt },
+                 { type: 'image_url', image_url: { url: `data:${imagePayload.mimeType};base64,${imagePayload.base64}` } }
+               ];
+            } else {
+               contextPrompt = buildPrompt(file, chunk, existingComments, botUsername, packageContext, coverageWarning);
+               userMessageContent = contextPrompt;
+            }
             if (bgContext.length > 0) {
               contextPrompt += "\n\n### Background Context (Unmodified Dependencies)\n";
               bgContext.forEach(ctx => { contextPrompt += `\n--- ${ctx.path} ---\n${ctx.content}\n`; });
             }
 
-            const reviews = await llmRouter.createReview(contextPrompt, file.path);
+            const reviews = await llmRouter.createCompletion(
+              [{ role: 'user', content: userMessageContent }],
+              isImage ? 'llama-3.2-90b-vision-preview' : 'llama-3.3-70b-versatile',
+              maxTokens,
+              0.2
+            );
             
             if (reviews._rateLimitRemaining !== undefined && reviews._rateLimitRemaining !== null) {
               rateLimitTokens = reviews._rateLimitRemaining;
@@ -454,7 +473,8 @@ async function run() {
     // 6. Generate PR Summary
     try {
       let fullDiff = '';
-      for (const file of parsedFiles) {
+      let imageCounter = 0;
+    for (const file of parsedFiles) {
         if (file.changes.length > 0) {
           fullDiff += `\n--- a/${file.path}\n+++ b/${file.path}\n`;
           fullDiff += file.changes.map(c => c.content).join('\n');

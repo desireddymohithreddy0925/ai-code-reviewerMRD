@@ -73,7 +73,22 @@ export class LlmRouter {
         const response = await this.fallbackClient.messages.create({
           model: this.fallbackModel,
           system: systemMessage,
-          messages: userMessages.map(m => ({ role: m.role, content: m.content })),
+          messages: userMessages.map(m => {
+            if (Array.isArray(m.content)) {
+               const anthropicContent = [];
+               for (const block of m.content) {
+                 if (block.type === 'text') {
+                   anthropicContent.push({ type: 'text', text: block.text });
+                 } else if (block.type === 'image_url') {
+                   const dataParts = block.image_url.url.split(',');
+                   const mimeType = dataParts[0].split(';')[0].split(':')[1];
+                   anthropicContent.push({ type: 'image', source: { type: 'base64', media_type: mimeType, data: dataParts[1] } });
+                 }
+               }
+               return { role: m.role, content: anthropicContent };
+            }
+            return { role: m.role, content: m.content };
+          }),
           max_tokens: maxTokens,
           temperature,
         });
