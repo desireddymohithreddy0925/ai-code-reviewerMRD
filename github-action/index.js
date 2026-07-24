@@ -127,10 +127,16 @@ async function run() {
     }
 
     // 3. Verify Context
-    const { owner, repo, pullNumber } = provider.getContext();
-    if (!pullNumber) {
-      core.setFailed('❌ This script can only be run on pull_request or merge_request events.');
-      return;
+    let owner = 'local', repo = 'local', pullNumber = 1;
+    if (process.env.CLI_MODE !== 'true') {
+      const ctx = provider.getContext();
+      owner = ctx.owner;
+      repo = ctx.repo;
+      pullNumber = ctx.pullNumber;
+      if (!pullNumber) {
+        core.setFailed('❌ This script can only be run on pull_request or merge_request events.');
+        return;
+      }
     }
 
     console.log(`🚀 Starting RepoSage AI PR Review for PR #${pullNumber} in ${owner}/${repo}`);
@@ -158,7 +164,17 @@ async function run() {
     }
 
     // 4. Fetch PR Diff
-    const diff = await provider.getDiff();
+    let diff;
+    if (process.env.CLI_MODE === 'true') {
+      const { execSync } = require('child_process');
+      try {
+        diff = execSync('git diff HEAD', { encoding: 'utf-8' });
+      } catch (e) {
+        diff = '';
+      }
+    } else {
+      diff = await provider.getDiff();
+    }
 
     if (!diff) {
       core.warning('⚠️ No diff content found for this Pull Request.');
@@ -167,17 +183,19 @@ async function run() {
     
     // Fetch existing PR review comments to avoid duplicates
     let existingComments = [];
-    try {
-      const response = await octokit.rest.pulls.listReviewComments({
-        owner,
-        repo,
-        pull_number: pullNumber,
-        per_page: 100
-      });
-      existingComments = response.data;
-      console.log(`💬 Found ${existingComments.length} existing review comments.`);
-    } catch (err) {
-      console.warn(`⚠️ Could not fetch existing comments: ${err.message}`);
+    if (process.env.CLI_MODE !== 'true') {
+      try {
+        const response = await octokit.rest.pulls.listReviewComments({
+          owner,
+          repo,
+          pull_number: pullNumber,
+          per_page: 100
+        });
+        existingComments = response.data;
+        console.log(`💬 Found ${existingComments.length} existing review comments.`);
+      } catch (err) {
+        console.warn(`⚠️ Could not fetch existing comments: ${err.message}`);
+      }
     }
 
     // 5. Parse Diff
@@ -212,13 +230,17 @@ async function run() {
            danglingComment += `- \`${ref.file}\` is missing \`${ref.brokenImport}\`\n`;
         }
         
-        try {
-          await octokit.rest.issues.createComment({
-            owner, repo, issue_number: pullNumber,
-            body: danglingComment
-          });
-        } catch (e) {
-          console.error("Failed to post dangling reference comment");
+        if (process.env.CLI_MODE === 'true') {
+          console.log(`\n\x1b[33m[DRY RUN] ${danglingComment}\x1b[0m`);
+        } else {
+          try {
+            await octokit.rest.issues.createComment({
+              owner, repo, issue_number: pullNumber,
+              body: danglingComment
+            });
+          } catch (e) {
+            console.error("Failed to post dangling reference comment");
+          }
         }
       }
     }
@@ -586,4 +608,7 @@ ${issuesText}${truncationWarning}
   }
 }
 
-run();
+if (process.env.CLI_MODE !== 'true') {
+  run();
+}
+export { run };
