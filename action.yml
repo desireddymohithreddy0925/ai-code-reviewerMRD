@@ -1,0 +1,44 @@
+name: 'RepoSage AI Code Reviewer'
+description: 'Fast, secure AI-powered code reviews using LLMs'
+author: 'RepoSage'
+
+inputs:
+  github_token:
+    description: 'GitHub Token for posting comments'
+    required: true
+  groq_api_key:
+    description: 'Groq API Key for LLM inference'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run RepoSage Binary
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        GROQ_API_KEY: ${{ inputs.groq_api_key }}
+        GITHUB_EVENT_PATH: ${{ github.event_path }}
+      run: |
+        OS=""
+        case "$RUNNER_OS" in
+          Linux) OS="linux" ;;
+          macOS) OS="darwin" ;;
+          Windows) OS="windows" ;;
+        esac
+
+        ARCH=""
+        case "$RUNNER_ARCH" in
+          X86) ARCH="amd64" ;;
+          X64) ARCH="amd64" ;;
+          ARM64) ARCH="arm64" ;;
+        esac
+        
+        BINARY_PATH="${GITHUB_ACTION_PATH}/bin/reposage-${OS}-${ARCH}"
+        if [ "$OS" = "windows" ]; then
+          BINARY_PATH="${BINARY_PATH}.exe"
+        fi
+
+        echo "Executing ${BINARY_PATH}..."
+        chmod +x "$BINARY_PATH" || true
+        "$BINARY_PATH"
