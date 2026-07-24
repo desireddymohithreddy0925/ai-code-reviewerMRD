@@ -23,6 +23,7 @@ const pairs = [
   { src: 'backend/utils/rbacVerifier.js', dest: 'github-action/utils/rbacVerifier.js' },
   { src: 'backend/utils/dedupHelper.js', dest: 'github-action/utils/dedupHelper.js' },
   { src: 'backend/utils/dependabotHelper.js', dest: 'github-action/utils/dependabotHelper.js' },
+  { src: 'backend/utils/complexityAnalyzer.js', dest: 'github-action/utils/complexityAnalyzer.js' },
   { src: 'shared-safety-config.json', dest: 'github-action/shared-safety-config.json' },
 ];
 

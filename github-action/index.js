@@ -571,7 +571,32 @@ Format your JSON precisely as:
             let currentBody = pullRequest.body || '';
             const summaryStartTag = '<!-- RepoSage Summary -->';
             const summaryEndTag = '<!-- End RepoSage Summary -->';
-            const newSummaryBlock = `${summaryStartTag}\n### 🤖 RepoSage PR Summary\n${summaryData.summary}\n${summaryEndTag}`;
+            
+            // 1. Complexity Analysis
+            const complexityData = ComplexityAnalyzer.analyzeDiff(parsedFiles);
+            const complexityMarkdown = ComplexityAnalyzer.generateMarkdownTable(complexityData);
+            
+            // 2. Post Complexity Data to Backend
+            try {
+              const baseUrl = (process.env.AI_ENGINE_URL || 'http://localhost:8000').replace(/\/+$/, '');
+              const apiKey = process.env.REPOSAGE_API_KEY || '';
+              await fetch(`${baseUrl}/api/internal/complexity/log`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+                body: JSON.stringify({
+                  repo: `${owner}/${repo}`,
+                  branch: configRef, // Ref is closest approximation to branch without complex Git metadata
+                  pullNumber: pullNumber,
+                  cyclomaticDelta: complexityData.totalCcDelta,
+                  halsteadEffortDelta: complexityData.totalEffortDelta,
+                  topComplexFiles: complexityData.topFiles
+                })
+              });
+              console.log('📈 Code complexity trends logged to backend.');
+            } catch(e) { console.warn('Failed to log complexity data:', e.message); }
+
+            const newSummaryBlock = `${summaryStartTag}\n### 🤖 RepoSage PR Summary\n${summaryData.summary}${complexityMarkdown}\n${summaryEndTag}`;
+
             
             let newBody;
             const startIndex = currentBody.indexOf(summaryStartTag);
