@@ -25,6 +25,7 @@ const pairs = [
   { src: 'backend/utils/dependabotHelper.js', dest: 'github-action/utils/dependabotHelper.js' },
   { src: 'backend/utils/complexityAnalyzer.js', dest: 'github-action/utils/complexityAnalyzer.js' },
   { src: 'backend/utils/globMatcher.js', dest: 'github-action/utils/globMatcher.js' },
+  { src: 'backend/utils/nPlusOneDetector.js', dest: 'github-action/utils/nPlusOneDetector.js' },
   { src: 'shared-safety-config.json', dest: 'github-action/shared-safety-config.json' },
 ];
 
