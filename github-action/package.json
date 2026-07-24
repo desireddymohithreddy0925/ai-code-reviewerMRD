@@ -20,6 +20,7 @@
     "js-yaml": "^5.2.2",
     "openai": "^6.49.0",
     "p-limit": "^7.3.1",
+    "picomatch": "^4.0.5",
     "tree-sitter-go": "^0.25.0",
     "tree-sitter-javascript": "^0.25.0",
     "tree-sitter-python": "^0.25.0",

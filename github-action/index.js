@@ -6,7 +6,7 @@ import core from '@actions/core';
 import github from '@actions/github';
 import { parseDiff } from './utils/diffParser.js';
 import { scanSecretsInChanges } from './utils/secretsScanner.js';
-import { globToRegex } from './utils/globToRegex.js';
+import { createGlobMatcher, isGlobMatch } from './utils/globMatcher.js';
 import { cleanAndParseJSON, normalizeReviewLineNumber } from './utils/actionUtils.js';
 import { RagHelper } from './utils/ragHelper.js';
 import { isPureFormatting } from './utils/astFilter.js';
@@ -83,8 +83,7 @@ async function run() {
     const excludePatterns = excludePathsInput
       .split(',')
       .map(p => p.trim())
-      .filter(p => p.length > 0)
-      .map(p => globToRegex(p));
+      .filter(p => p.length > 0);
 
     const includeExtensions = includeExtensionsInput
       .split(',')

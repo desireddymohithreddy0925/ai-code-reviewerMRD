@@ -28,7 +28,7 @@ import { isValidGithubToken } from './utils/tokenValidator.js';
 import simpleGit from 'simple-git';
 import escapeHtml from 'lodash.escape';
 import { parseDiff } from './utils/diffParser.js';
-import { globToRegex } from './utils/globToRegex.js';
+import { createGlobMatcher, isGlobMatch } from './utils/globMatcher.js';
 import { analyzeComplexity } from './utils/complexityAnalyzer.js';
 import { deleteFolderRecursive, getFolderSize } from './utils/fileHelper.js';
 import { verifyWebhookSignature } from './utils/signatureVerifier.js';
@@ -1976,7 +1976,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
 
   // Fetch .ai-ignore patterns once
   const excludePatternsInput = 'package-lock.json,yarn.lock,pnpm-lock.yaml,dist/**,build/**';
-  const baseExcludePatterns = excludePatternsInput.split(',').map(p => p.trim()).filter(Boolean).map(globToRegex);
+  const baseExcludePatterns = excludePatternsInput.split(',').map(p => p.trim()).filter(Boolean);
 
   let aiIgnorePatterns = [];
   try {
@@ -1984,7 +1984,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       owner, repo, path: '.ai-ignore', ref: headSha
     });
     const ignoreContent = Buffer.from(ignoreFile.content, 'base64').toString('utf8');
-    aiIgnorePatterns = ignoreContent.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(globToRegex);
+    aiIgnorePatterns = ignoreContent.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
     console.log(`✅ Loaded ${aiIgnorePatterns.length} patterns from .ai-ignore in ${owner}/${repo}`);
   } catch (e) {
     // no .ai-ignore file
