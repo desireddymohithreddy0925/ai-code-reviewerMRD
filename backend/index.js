@@ -2147,6 +2147,8 @@ diffText = PiiRedactor.redact(diffText);
             console.warn(`ΓÜá∩╕Å ${aiCommentsDiscarded} AI comments could not be posted due to line number mismatches with the diff`);
           }
           aiEngineQueried = true;
+          // Fire and forget: stream to ML dataset in S3
+          s3Archiver.streamToDataset(repo, diff, result).catch(e => console.error('S3 Archiver Error:', e));
           if (result && result.truncated) {
             reviewDiffTruncated = true;
             console.warn(`⚠️ AI engine review-diff was truncated: ${result.warning || (result.files_reviewed + ' of ' + result.files_total + ' files reviewed')}`);
