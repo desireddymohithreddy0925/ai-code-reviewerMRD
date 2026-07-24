@@ -14,6 +14,7 @@ import { LlmRouter } from './utils/llmRouter.js';
 import { SemanticCache } from './utils/semanticCache.js';
 import { ChunkHelper } from './utils/chunkHelper.js';
 import { handleConversationEvent } from './utils/conversationHandler.js';
+import { CoverageParser } from './utils/coverageParser.js';
 import { SarifParser } from './utils/sarifParser.js';
 import { PersonaHelper } from './utils/personaHelper.js';
 import { DiffMinifier } from './utils/diffMinifier.js';
@@ -119,6 +120,13 @@ async function run() {
     const sarifParser = new SarifParser(sarifPath);
     if (sarifParser.enabled) {
       console.log('🛡️ SARIF CodeQL Integration enabled.');
+    }
+    
+    const coveragePath = core.getInput('coverage-path') || process.env.COVERAGE_PATH;
+    let coverageMap = {};
+    if (coveragePath) {
+      console.log(`📊 Parsing LCOV coverage file at ${coveragePath}...`);
+      coverageMap = CoverageParser.parseLcov(coveragePath, workspacePath);
     }
     
     const semanticCache = new SemanticCache(redisUrl);
@@ -359,7 +367,12 @@ async function run() {
             }
             
             const bgContext = buildDependencyGraphContext(file.path, process.cwd());
-            let contextPrompt = buildPrompt(file, chunk, existingComments, botUsername, packageContext);
+                        let coverageWarning = '';
+            const uncoveredLines = CoverageParser.getUncoveredModifiedLines(file.changes, file.path, coverageMap);
+            if (uncoveredLines.length > 0) {
+               coverageWarning = `\n\nCRITICAL INSTRUCTION: The following modified lines lack test coverage: [${uncoveredLines.join(', ')}]. You MUST generate and output boilerplate Jest/PyTest/etc unit tests for these exact lines as part of your review. Do not just warn the user, give them the code to test it!`;
+            }
+            let contextPrompt = buildPrompt(file, chunk, existingComments, botUsername, packageContext, coverageWarning);
             if (bgContext.length > 0) {
               contextPrompt += "\n\n### Background Context (Unmodified Dependencies)\n";
               bgContext.forEach(ctx => { contextPrompt += `\n--- ${ctx.path} ---\n${ctx.content}\n`; });

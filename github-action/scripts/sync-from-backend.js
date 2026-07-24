@@ -14,6 +14,7 @@ const pairs = [
   { src: 'backend/utils/firewall.js', dest: 'github-action/utils/firewall.js' },
   { src: 'backend/utils/semanticChunker.js', dest: 'github-action/utils/semanticChunker.js' },
   { src: 'backend/utils/dependencyParser.js', dest: 'github-action/utils/dependencyParser.js' },
+  { src: 'backend/utils/coverageParser.js', dest: 'github-action/utils/coverageParser.js' },
   { src: 'shared-safety-config.json', dest: 'github-action/shared-safety-config.json' },
 ];
 
