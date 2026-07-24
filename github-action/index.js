@@ -12,6 +12,7 @@ import { ChunkHelper } from './utils/chunkHelper.js';
 import { handleConversationEvent } from './utils/conversationHandler.js';
 import { SarifParser } from './utils/sarifParser.js';
 import { PersonaHelper } from './utils/personaHelper.js';
+import { DiffMinifier } from './utils/diffMinifier.js';
 import pLimit from 'p-limit';
 
 const PARSE_FAILED = { reviews: [], _parseFailed: true };
