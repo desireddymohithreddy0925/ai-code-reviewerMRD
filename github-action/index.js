@@ -19,6 +19,8 @@ import { PiiRedactor } from './utils/piiRedactor.js';
 import { TokenEstimator } from './utils/tokenEstimator.js';
 import { AuditLogger } from './utils/auditLogger.js';
 import { TicketFetcher } from './utils/ticketFetcher.js';
+import { SarifGenerator } from './utils/sarifGenerator.js';
+import zlib from 'zlib';
 import { CoverageParser } from './utils/coverageParser.js';
 import { SarifParser } from './utils/sarifParser.js';
 import { PersonaHelper } from './utils/personaHelper.js';
