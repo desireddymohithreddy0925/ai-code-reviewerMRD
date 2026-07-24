@@ -6,6 +6,7 @@ import { scanSecretsInChanges } from './utils/secretsScanner.js';
 import { globToRegex } from './utils/globToRegex.js';
 import { cleanAndParseJSON, normalizeReviewLineNumber } from './utils/actionUtils.js';
 import { RagHelper } from './utils/ragHelper.js';
+import { isPureFormatting } from './utils/astFilter.js';
 
 const PARSE_FAILED = { reviews: [], _parseFailed: true };
 
@@ -177,6 +178,15 @@ async function run() {
       }
 
       if (file.changes.length === 0) continue;
+
+      const oldCodeChunk = (file.deletions || []).map(d => d.content).join('\n');
+      const newCodeChunk = (file.changes || []).map(c => c.content).join('\n');
+      
+      const isFormattingOnly = await isPureFormatting(oldCodeChunk, newCodeChunk, fileName);
+      if (isFormattingOnly) {
+        console.log(`⏭️ Skipping purely formatting/whitespace changes for: ${file.path}`);
+        continue;
+      }
 
       totalReviewableFiles++;
 

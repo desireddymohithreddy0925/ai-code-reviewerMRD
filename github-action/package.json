@@ -14,7 +14,8 @@
     "@actions/github": "^6.0.0",
     "@pinecone-database/pinecone": "^8.1.0",
     "groq-sdk": "^0.18.0",
-    "openai": "^6.49.0"
+    "openai": "^6.49.0",
+    "web-tree-sitter": "^0.26.11"
   },
   "devDependencies": {
     "@vercel/ncc": "^0.38.1"
