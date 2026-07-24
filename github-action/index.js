@@ -16,6 +16,7 @@ import { ChunkHelper } from './utils/chunkHelper.js';
 import { handleConversationEvent } from './utils/conversationHandler.js';
 import { ImageFetcher } from './utils/imageFetcher.js';
 import { PiiRedactor } from './utils/piiRedactor.js';
+import { TokenEstimator } from './utils/tokenEstimator.js';
 import { CoverageParser } from './utils/coverageParser.js';
 import { SarifParser } from './utils/sarifParser.js';
 import { PersonaHelper } from './utils/personaHelper.js';
@@ -394,6 +395,18 @@ async function run() {
             if (bgContext.length > 0) {
               contextPrompt += "\n\n### Background Context (Unmodified Dependencies)\n";
               bgContext.forEach(ctx => { contextPrompt += `\n--- ${ctx.path} ---\n${ctx.content}\n`; });
+            }
+
+            // Token Limit Degradation Check
+            if (!isImage) {
+               const degraded = TokenEstimator.enforceGracefulDegradation(contextPrompt, maxTokens);
+               if (degraded.tokens > maxTokens) {
+                 console.warn(`⚠️ Even after summarization mode, tokens (${degraded.tokens}) exceed limit (${maxTokens}). Truncating raw string...`);
+                 contextPrompt = degraded.safeContext.substring(0, maxTokens * 3.5);
+               } else {
+                 contextPrompt = degraded.safeContext;
+               }
+               userMessageContent = contextPrompt;
             }
 
             const reviews = await llmRouter.createCompletion(

@@ -2065,7 +2065,18 @@ diffText = PiiRedactor.redact(diffText);
     const chunks = chunkFileSemantically(diffText, fileExt);
     
     // Instead of sending one massive file array, we break it down into semantic chunks
-    for (const chunk of chunks) {
+    for (let chunk of chunks) {
+        // Enforce Graceful Degradation on the chunk
+        const maxTokens = 32000;
+        const degraded = TokenEstimator.enforceGracefulDegradation(chunk, maxTokens);
+        
+        if (degraded.tokens > maxTokens) {
+           console.warn(`⚠️ Even after summarization mode, tokens (${degraded.tokens}) exceed limit (${maxTokens}). Truncating raw chunk...`);
+           chunk = degraded.safeContext.substring(0, maxTokens * 3.5);
+        } else {
+           chunk = degraded.safeContext;
+        }
+
         filesToReview.push({
           path: file.path,
           changes: file.changes.map(c => ({ line: c.line, content: c.content })), // Still send line metadata
