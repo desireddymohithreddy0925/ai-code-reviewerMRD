@@ -21,6 +21,7 @@ const pairs = [
   { src: 'backend/utils/ticketFetcher.js', dest: 'github-action/utils/ticketFetcher.js' },
   { src: 'backend/utils/sarifGenerator.js', dest: 'github-action/utils/sarifGenerator.js' },
   { src: 'backend/utils/rbacVerifier.js', dest: 'github-action/utils/rbacVerifier.js' },
+  { src: 'backend/utils/dedupHelper.js', dest: 'github-action/utils/dedupHelper.js' },
   { src: 'shared-safety-config.json', dest: 'github-action/shared-safety-config.json' },
 ];
 
