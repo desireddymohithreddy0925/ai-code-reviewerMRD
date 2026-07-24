@@ -138,7 +138,6 @@ export function readFilesRecursively(dir, fileList = [], baseDir = dir, ignorePa
 
       if (validExtensions.includes(ext) || isExtensionless) {
         try {
-          const stat = fs.statSync(filePath);
           if (stat.size > MAX_FILE_SIZE) {
             if (validExtensions.includes(ext)) {
               skippedFiles.push({ name: path.relative(baseDir, filePath).replace(/\\/g, '/'), reason: 'File exceeds size limit of 100KB', size: stat.size });
