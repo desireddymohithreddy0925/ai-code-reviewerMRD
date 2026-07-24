@@ -32,7 +32,7 @@ function scrubRepositoryPayload(codebaseString) {
 
   for (const rule of SECRET_DETECTION_RULES) {
     sanitizedPayload = sanitizedPayload.replace(rule, (match, capturedGroup) => {
-      if (capturedGroup && match.includes(capturedGroup)) {
+      if (capturedGroup) {
         return match.replace(capturedGroup, '[REDACTED_SECRET]');
       }
       return '[REDACTED_SECRET]';
