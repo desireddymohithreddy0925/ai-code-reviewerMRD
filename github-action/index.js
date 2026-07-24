@@ -1,6 +1,6 @@
 import { DependencyParser } from './utils/dependencyParser.js';
 import { checkPromptInjection, wrapUntrustedDiff } from './utils/firewall.js';
-import { buildDependencyGraphContext } from './utils/dependencyGraph.js';
+import { buildDependencyGraphContext, findDanglingReferences } from './utils/dependencyGraph.js';
 import { extractSuggestionBlock, stripSuggestionBlock, verifySuggestionSyntax } from './utils/sandboxVerifier.js';
 import core from '@actions/core';
 import github from '@actions/github';
@@ -183,6 +183,46 @@ async function run() {
     // 5. Parse Diff
     const { files: parsedFiles } = parseDiff(diff);
     console.log(`📁 Found ${parsedFiles.length} files in PR diff.`);
+    
+    // 5.5 Dangling Reference Check
+    const deletedFiles = [];
+    const deletedExports = [];
+    for (const f of parsedFiles) {
+      if (f.deleted || (f.changes && f.changes.every(c => c.content.startsWith('-')) && f.changes.length > 0)) {
+        deletedFiles.push(f.path);
+      } else {
+        for (const c of f.changes) {
+          if (c.content.startsWith('-')) {
+            const expMatch = c.content.match(/-\s*export\s+(?:const|let|var|function|class)\s+(\w+)/);
+            if (expMatch) {
+              deletedExports.push({ path: f.path, exportName: expMatch[1] });
+            }
+          }
+        }
+      }
+    }
+    
+    if (deletedFiles.length > 0 || deletedExports.length > 0) {
+      console.log(`🔍 Scanning for dangling imports across the workspace...`);
+      const workspacePath = process.env.GITHUB_WORKSPACE || '.';
+      const dangling = findDanglingReferences(deletedFiles, deletedExports, workspacePath);
+      if (dangling.length > 0) {
+        let danglingComment = `⚠️ **Static Analysis: Dangling References Detected!**\nThe following files are importing modules or exports that were deleted in this PR:\n`;
+        for (const ref of dangling) {
+           danglingComment += `- \`${ref.file}\` is missing \`${ref.brokenImport}\`\n`;
+        }
+        
+        try {
+          await octokit.rest.issues.createComment({
+            owner, repo, issue_number: pullNumber,
+            body: danglingComment
+          });
+        } catch (e) {
+          console.error("Failed to post dangling reference comment");
+        }
+      }
+    }
+
 
     const MAX_REVIEW_FILES = parseInt(core.getInput('max-review-files') || process.env.MAX_REVIEW_FILES || '50', 10);
     let totalReviewableFiles = 0;
