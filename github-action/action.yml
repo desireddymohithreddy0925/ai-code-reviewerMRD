@@ -27,6 +27,15 @@ inputs:
     description: 'Whether to automatically approve PRs with no issues found.'
     required: false
     default: 'false'
+  pinecone-api-key:
+    description: 'The Pinecone API key used for RAG global repository context (optional).'
+    required: false
+  pinecone-index-name:
+    description: 'The Pinecone Index Name for fetching context embeddings (optional).'
+    required: false
+  openai-api-key:
+    description: 'The OpenAI API key to generate embeddings for RAG (optional).'
+    required: false
 runs:
   using: 'node20'
   main: 'dist/index.js'
