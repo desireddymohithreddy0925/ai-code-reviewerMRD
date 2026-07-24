@@ -1,3 +1,4 @@
+import { checkPromptInjection, wrapUntrustedDiff } from './utils/firewall.js';
 import { extractSuggestionBlock, stripSuggestionBlock, verifySuggestionSyntax } from './utils/sandboxVerifier.js';
 import { register, llmTokenUsageTotal, llmRequestLatencyMs, llmErrorRateTotal } from './utils/telemetry.js';
 import 'express-async-errors';
@@ -2035,10 +2036,22 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       backgroundContext = buildDependencyGraphContext(possibleFilePath, possibleRepoRoot);
     } catch (e) {}
 
+    // Firewall check
+    let firewallBlocked = false;
+    let diffText = file.changes.map(c => c.content).join('\n');
+    const firewall = checkPromptInjection(diffText, file.path);
+    
+    if (firewall.blocked) {
+      console.warn(`⚠️ Firewall blocked review for ${file.path}: ${firewall.reason}`);
+      firewallBlocked = true;
+    }
+
     filesToReview.push({
       path: file.path,
       changes: file.changes.map(c => ({ line: c.line, content: c.content })),
-      backgroundContext: backgroundContext
+      backgroundContext: backgroundContext,
+      firewallBlocked: firewallBlocked,
+      wrappedDiff: wrapUntrustedDiff(diffText)
     });
   }
 

@@ -1,3 +1,4 @@
+import { checkPromptInjection, wrapUntrustedDiff } from './utils/firewall.js';
 import { buildDependencyGraphContext } from './utils/dependencyGraph.js';
 import { extractSuggestionBlock, stripSuggestionBlock, verifySuggestionSyntax } from './utils/sandboxVerifier.js';
 import core from '@actions/core';
@@ -284,6 +285,19 @@ async function run() {
           }
 
           const sanitizedChangesText = sanitizeDiffContent(changesText);
+          
+          // 1.5 Firewall Check
+          const firewall = checkPromptInjection(sanitizedChangesText, file.path);
+          if (firewall.blocked) {
+            console.warn(`⚠️ Firewall blocked review for ${file.path}: ${firewall.reason}`);
+            batchComments.push({
+              path: file.path,
+              line: file.changes[0].line,
+              body: `<!-- RepoSage Review Comment -->\n⚠️ **Security Alert**: RepoSage Firewall detected a potential prompt injection attempt in this file. Skipping automated review.`
+            });
+            return; // Skip LLM call for this file
+          }
+          
           const bgContext = buildDependencyGraphContext(file.path, process.cwd());
           let contextPrompt = buildPrompt(file, sanitizedChangesText, existingComments, botUsername);
           if (bgContext.length > 0) {
