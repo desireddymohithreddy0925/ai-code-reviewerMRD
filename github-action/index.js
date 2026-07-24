@@ -17,6 +17,7 @@ import { handleConversationEvent } from './utils/conversationHandler.js';
 import { ImageFetcher } from './utils/imageFetcher.js';
 import { PiiRedactor } from './utils/piiRedactor.js';
 import { TokenEstimator } from './utils/tokenEstimator.js';
+import { AuditLogger } from './utils/auditLogger.js';
 import { CoverageParser } from './utils/coverageParser.js';
 import { SarifParser } from './utils/sarifParser.js';
 import { PersonaHelper } from './utils/personaHelper.js';
@@ -319,6 +320,7 @@ async function run() {
 
     const commentsToPost = [];
     let reviewedFilesCount = 0;
+    const auditLogger = new AuditLogger();
     let successfulReviewsCount = 0;
     let failedReviewsCount = 0;
     let emptyOrUnparseable = false;
@@ -415,6 +417,15 @@ async function run() {
               maxTokens,
               0.2
             );
+            
+            auditLogger.addTrace({
+              filePath: file.path,
+              model: isImage ? 'llama-3.2-90b-vision-preview' : 'llama-3.3-70b-versatile',
+              maxTokens: maxTokens,
+              prompt: userMessageContent,
+              response: reviews,
+              isDegraded: typeof degraded !== 'undefined' ? degraded.tokens > maxTokens : false
+            });
             
             if (reviews._rateLimitRemaining !== undefined && reviews._rateLimitRemaining !== null) {
               rateLimitTokens = reviews._rateLimitRemaining;
