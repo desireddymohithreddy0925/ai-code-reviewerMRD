@@ -19,7 +19,6 @@ _fallback_active = False
 _MAX_CACHE_SIZE = int(os.getenv("MAX_EMBEDDING_CACHE_SIZE", "10000"))
 _cache_enabled = os.getenv("EMBEDDING_CACHE_ENABLED", "true").lower() == "true"
 _embedding_cache = collections.OrderedDict()
-_cache_access_order = _embedding_cache
 _cache_lock = threading.Lock()
 _per_key_locks: dict[str, threading.Lock] = {}
 _per_key_locks_lock = threading.Lock()
