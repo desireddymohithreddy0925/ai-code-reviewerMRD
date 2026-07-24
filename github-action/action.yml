@@ -54,6 +54,15 @@ inputs:
   coverage-path:
     description: 'Path to an lcov.info file to cross-reference test coverage.'
     required: false
+  LINEAR_API_KEY:
+    description: "Optional Linear API key to fetch ticket context"
+    required: false
+  JIRA_API_TOKEN:
+    description: "Optional Jira API token to fetch ticket context"
+    required: false
+  JIRA_DOMAIN:
+    description: "Optional Jira domain (e.g. https://your-domain.atlassian.net)"
+    required: false
 runs:
   using: 'node20'
   main: 'dist/index.js'

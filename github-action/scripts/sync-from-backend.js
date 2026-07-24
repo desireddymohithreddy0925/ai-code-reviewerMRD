@@ -18,6 +18,7 @@ const pairs = [
   { src: 'backend/utils/imageFetcher.js', dest: 'github-action/utils/imageFetcher.js' },
   { src: 'backend/utils/piiRedactor.js', dest: 'github-action/utils/piiRedactor.js' },
   { src: 'backend/utils/tokenEstimator.js', dest: 'github-action/utils/tokenEstimator.js' },
+  { src: 'backend/utils/ticketFetcher.js', dest: 'github-action/utils/ticketFetcher.js' },
   { src: 'shared-safety-config.json', dest: 'github-action/shared-safety-config.json' },
 ];
 

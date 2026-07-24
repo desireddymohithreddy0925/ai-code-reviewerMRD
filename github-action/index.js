@@ -18,6 +18,7 @@ import { ImageFetcher } from './utils/imageFetcher.js';
 import { PiiRedactor } from './utils/piiRedactor.js';
 import { TokenEstimator } from './utils/tokenEstimator.js';
 import { AuditLogger } from './utils/auditLogger.js';
+import { TicketFetcher } from './utils/ticketFetcher.js';
 import { CoverageParser } from './utils/coverageParser.js';
 import { SarifParser } from './utils/sarifParser.js';
 import { PersonaHelper } from './utils/personaHelper.js';
