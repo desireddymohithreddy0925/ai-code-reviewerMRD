@@ -1517,10 +1517,21 @@ app.get('/api/roi', async (req, res) => {
 
 // 🚀 Route: GitHub Webhook Receiver for automated Pull Request Reviews
 app.post('/api/webhook', webhookLimiter, async (req, res) => {
-  const webhookSecret = process.env.WEBHOOK_SECRET;
+  const webhookSecret = process.env.WEBHOOK_SECRET || process.env.GITHUB_WEBHOOK_SECRET;
+  
   if (!webhookSecret) {
-    console.error('Γ¥î WEBHOOK_SECRET not configured');
-    return res.status(500).json({ error: 'Webhook secret not configured. Set WEBHOOK_SECRET in environment.' });
+    console.warn('⚠️ GITHUB_WEBHOOK_SECRET is not set! Running in insecure mode (webhook signatures are NOT verified).');
+  } else {
+    const signature = req.headers['x-hub-signature-256'];
+    if (!signature) {
+      console.warn('⚠️ Missing X-Hub-Signature-256 header. Spoofing attempt blocked.');
+      return res.status(401).json({ error: 'Missing X-Hub-Signature-256 header. Unauthorized.' });
+    }
+
+    if (!verifyWebhookSignature(req.rawBody, signature, webhookSecret)) {
+      console.warn('⚠️ Spoofed webhook payload blocked: signature verification failed');
+      return res.status(401).json({ error: 'Invalid webhook signature. Unauthorized.' });
+    }
   }
 
   const signature = req.headers['x-hub-signature-256'];
@@ -2048,8 +2059,8 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     }
 
     
-    const ext = require('path').extname(file.path);
-    const chunks = chunkFileSemantically(diffText, ext);
+    const fileExt = require('path').extname(file.path);
+    const chunks = chunkFileSemantically(diffText, fileExt);
     
     // Instead of sending one massive file array, we break it down into semantic chunks
     for (const chunk of chunks) {
