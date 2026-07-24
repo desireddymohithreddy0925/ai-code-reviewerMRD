@@ -3,6 +3,10 @@ description: 'Fast, secure AI-powered code reviews using LLMs'
 author: 'RepoSage'
 
 inputs:
+  generate_pr_description:
+    description: 'Auto-generate PR description and assign labels'
+    required: false
+    default: 'false'
   github_token:
     description: 'GitHub Token for posting comments'
     required: true
@@ -16,6 +20,7 @@ runs:
     - name: Run RepoSage Binary
       shell: bash
       env:
+        GENERATE_PR_DESCRIPTION: ${{ inputs.generate_pr_description }}
         GITHUB_TOKEN: ${{ inputs.github_token }}
         GROQ_API_KEY: ${{ inputs.groq_api_key }}
         GITHUB_EVENT_PATH: ${{ github.event_path }}
