@@ -48,6 +48,9 @@ inputs:
   redis-url:
     description: 'Redis connection string (e.g. redis://...) for semantic caching of LLM requests.'
     required: false
+  sarif-path:
+    description: 'Path to a generated SARIF file from a previous SAST job to inject as baseline findings.'
+    required: false
 runs:
   using: 'node20'
   main: 'dist/index.js'

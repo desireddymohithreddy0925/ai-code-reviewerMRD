@@ -10,6 +10,7 @@ import { LlmRouter } from './utils/llmRouter.js';
 import { SemanticCache } from './utils/semanticCache.js';
 import { ChunkHelper } from './utils/chunkHelper.js';
 import { handleConversationEvent } from './utils/conversationHandler.js';
+import { SarifParser } from './utils/sarifParser.js';
 import pLimit from 'p-limit';
 
 const PARSE_FAILED = { reviews: [], _parseFailed: true };
@@ -47,6 +48,7 @@ async function run() {
     const fallbackModel = core.getInput('fallback-model');
     const fallbackApiKey = core.getInput('fallback-api-key');
     const redisUrl = core.getInput('redis-url');
+    const sarifPath = core.getInput('sarif-path');
     const excludePathsInput = core.getInput('exclude-paths') || '';
     const includeExtensionsInput = core.getInput('include-extensions') || '';
     if (includeExtensionsInput) {
@@ -102,6 +104,11 @@ async function run() {
     const ragHelper = new RagHelper(pineconeApiKey, pineconeIndexName, openaiApiKey);
     if (ragHelper.enabled) {
       console.log('🌲 Pinecone RAG enabled for global repository context.');
+    }
+    
+    const sarifParser = new SarifParser(sarifPath);
+    if (sarifParser.enabled) {
+      console.log('🛡️ SARIF CodeQL Integration enabled.');
     }
     
     const semanticCache = new SemanticCache(redisUrl);
