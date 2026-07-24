@@ -45,6 +45,9 @@ inputs:
   fallback-api-key:
     description: 'The API key for the fallback provider.'
     required: false
+  redis-url:
+    description: 'Redis connection string (e.g. redis://...) for semantic caching of LLM requests.'
+    required: false
 runs:
   using: 'node20'
   main: 'dist/index.js'

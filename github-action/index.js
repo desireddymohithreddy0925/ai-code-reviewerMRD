@@ -7,6 +7,7 @@ import { cleanAndParseJSON, normalizeReviewLineNumber } from './utils/actionUtil
 import { RagHelper } from './utils/ragHelper.js';
 import { isPureFormatting } from './utils/astFilter.js';
 import { LlmRouter } from './utils/llmRouter.js';
+import { SemanticCache } from './utils/semanticCache.js';
 
 const PARSE_FAILED = { reviews: [], _parseFailed: true };
 
@@ -42,6 +43,7 @@ async function run() {
     const fallbackProvider = core.getInput('fallback-provider');
     const fallbackModel = core.getInput('fallback-model');
     const fallbackApiKey = core.getInput('fallback-api-key');
+    const redisUrl = core.getInput('redis-url');
     const excludePathsInput = core.getInput('exclude-paths') || '';
     const includeExtensionsInput = core.getInput('include-extensions') || '';
     if (includeExtensionsInput) {
@@ -92,6 +94,11 @@ async function run() {
     const ragHelper = new RagHelper(pineconeApiKey, pineconeIndexName, openaiApiKey);
     if (ragHelper.enabled) {
       console.log('🌲 Pinecone RAG enabled for global repository context.');
+    }
+    
+    const semanticCache = new SemanticCache(redisUrl);
+    if (semanticCache.enabled) {
+      console.log('⚡ Redis Semantic Caching enabled.');
     }
 
     // 3. Verify Context
@@ -289,12 +296,24 @@ Format your JSON precisely as:
 If no issues are found, reply with: { "reviews": [] }`;
 
         try {
-          const content = await llmRouter.createCompletion(
-            [{ role: 'user', content: reviewPrompt }],
-            'llama-3.3-70b-versatile',
-            maxTokens,
-            0.2
-          );
+          const cacheHash = semanticCache.generateHash(sanitizedChangesText, packageContext + ragContext);
+          let content = await semanticCache.get(cacheHash);
+          
+          if (content) {
+            console.log(`🚀 Cache HIT for ${file.path}! Returning instant semantic review.`);
+          } else {
+            content = await llmRouter.createCompletion(
+              [{ role: 'user', content: reviewPrompt }],
+              'llama-3.3-70b-versatile',
+              maxTokens,
+              0.2
+            );
+            
+            // Store successful completion in cache
+            if (content) {
+              await semanticCache.set(cacheHash, content);
+            }
+          }
 
         let parsed = cleanAndParseJSON(content);
         successfulReviewsCount++;
@@ -543,6 +562,10 @@ ${issuesText}${truncationWarning}
 
   } catch (err) {
     core.setFailed(`❌ Action run failed: ${err.message}`);
+  } finally {
+    if (typeof semanticCache !== 'undefined') {
+      await semanticCache.quit();
+    }
   }
 }
 
