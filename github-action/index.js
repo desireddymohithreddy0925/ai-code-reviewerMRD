@@ -11,6 +11,7 @@ import { SemanticCache } from './utils/semanticCache.js';
 import { ChunkHelper } from './utils/chunkHelper.js';
 import { handleConversationEvent } from './utils/conversationHandler.js';
 import { SarifParser } from './utils/sarifParser.js';
+import { PersonaHelper } from './utils/personaHelper.js';
 import pLimit from 'p-limit';
 
 const PARSE_FAILED = { reviews: [], _parseFailed: true };
@@ -105,6 +106,10 @@ async function run() {
     if (ragHelper.enabled) {
       console.log('🌲 Pinecone RAG enabled for global repository context.');
     }
+    
+    const workspace = process.env.GITHUB_WORKSPACE || '';
+    const dynamicPersona = PersonaHelper.getPersonaPrompt(workspace);
+    console.log('🎭 Loaded AI Persona:', dynamicPersona);
     
     const sarifParser = new SarifParser(sarifPath);
     if (sarifParser.enabled) {
