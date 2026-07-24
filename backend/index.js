@@ -44,6 +44,7 @@ import Session, { estimateSessionSize } from './models/Session.js';
 import { RoiMetrics } from './models/RoiMetrics.js';
 import { connectDatabase, isDatabaseConnected, ensureConnection, closeDatabase } from './config/db.js';
 import { streamReview } from './controllers/streamController.js';
+import { register, llmTokenUsageCounter, llmRequestDurationHistogram, llmErrorsCounter } from './utils/metrics.js';
 
 dotenv.config();
 
@@ -1249,7 +1250,11 @@ app.post('/api/analyze-file', requireApiKey, requireJsonContentType, llmAnalysis
       if (aiResponse.ok) {
         const resData = await aiResponse.json();
         reviewResult = resData;
-      } else if (aiResponse.status === 401) {
+      } else {
+        llmErrorsCounter.labels(repo, aiResponse.status.toString()).inc();
+      }
+      
+      if (aiResponse && aiResponse.status === 401) {
         const errData = await aiResponse.json().catch(() => ({}));
         throw new Error(errData.error || 'AI Engine authentication failed');
       } else {
@@ -2039,11 +2044,22 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     
     try {
       const baseUrl = aiEngineUrl.replace(/\/+$/, '');
-      const aiResponse = await fetchWithTimeout(`${baseUrl}/review-diff`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
-        body: JSON.stringify({ files: filesToReview })
-      }, 60000);
+      
+      const startTime = Date.now();
+      let aiResponse;
+      try {
+        aiResponse = await fetchWithTimeout(`${baseUrl}/review-diff`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
+          body: JSON.stringify({ files: filesToReview })
+        }, 60000);
+      } catch (err) {
+        llmErrorsCounter.labels(repo, 'timeout_or_network').inc();
+        throw err;
+      }
+      
+      const duration = (Date.now() - startTime) / 1000;
+      llmRequestDurationHistogram.labels(repo).observe(duration);
 
       if (aiResponse.ok) {
         let result;
@@ -2051,6 +2067,10 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
           result = await aiResponse.json();
         } catch (parseErr) {
           console.warn('ΓÜá∩╕Å AI engine returned HTTP 200 with malformed (non-JSON) body:', parseErr.message);
+        }
+        if (result?.usage) {
+          llmTokenUsageCounter.labels(repo, 'prompt').inc(result.usage.prompt_tokens || 0);
+          llmTokenUsageCounter.labels(repo, 'completion').inc(result.usage.completion_tokens || 0);
         }
         if (result && Array.isArray(result.comments)) {
           result.comments.forEach(c => {
@@ -2077,7 +2097,11 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
         } else {
           console.warn('ΓÜá∩╕Å AI engine returned HTTP 200 with empty or malformed response body ΓÇö not treating as a clean analysis');
         }
-      } else if (aiResponse.status === 401) {
+      } else {
+        llmErrorsCounter.labels(repo, aiResponse.status.toString()).inc();
+      }
+      
+      if (aiResponse && aiResponse.status === 401) {
         console.error('≡ƒÜ¿ AI Engine rejected authentication. Check REPOSAGE_API_KEY in backend/.env');
         throw new Error('AI Engine authentication failed');
       }
@@ -2097,14 +2121,32 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     // We truncate diff to max 15000 chars for summary
     const truncatedDiff = diff.length > 15000 ? diff.substring(0, 15000) + '\n...[Diff truncated]' : diff;
     
-    const summaryResponse = await fetchWithTimeout(`${baseUrl}/summarize-pr`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
-      body: JSON.stringify({ diff: truncatedDiff })
-    }, 60000);
+    const startSummaryTime = Date.now();
+    let summaryResponse;
+    try {
+      summaryResponse = await fetchWithTimeout(`${baseUrl}/summarize-pr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
+        body: JSON.stringify({ diff: truncatedDiff })
+      }, 60000);
+    } catch (err) {
+      llmErrorsCounter.labels(repo, 'timeout_or_network').inc();
+      throw err;
+    }
+
+    const durationSummary = (Date.now() - startSummaryTime) / 1000;
+    llmRequestDurationHistogram.labels(repo).observe(durationSummary);
+
+    if (!summaryResponse.ok) {
+      llmErrorsCounter.labels(repo, summaryResponse.status.toString()).inc();
+    }
     
     if (summaryResponse.ok) {
       const summaryData = await summaryResponse.json();
+      if (summaryData?.usage) {
+        llmTokenUsageCounter.labels(repo, 'prompt').inc(summaryData.usage.prompt_tokens || 0);
+        llmTokenUsageCounter.labels(repo, 'completion').inc(summaryData.usage.completion_tokens || 0);
+      }
       if (summaryData.summary) {
         let currentBody = pullRequest.body || '';
         const summaryStartTag = '<!-- RepoSage Summary -->';
@@ -2785,6 +2827,31 @@ app.get("/api/review-history/compare/:id1/:id2", requireApiKey, async (req, res)
 
 });
 
+app.get('/api/health/circuit-breaker', (req, res) => {
+  res.status(200).json({
+    status: groqCircuitBreaker.isOpen ? 'open' : 'closed',
+    failures: groqCircuitBreaker.failureCount,
+    lastFailure: groqCircuitBreaker.lastFailureTime,
+    nextRetry: groqCircuitBreaker.nextRetryTime,
+  });
+});
+
+app.get('/metrics', async (req, res) => {
+  try {
+    const isPrometheusTokenSet = !!process.env.PROMETHEUS_TOKEN;
+    const providedToken = req.headers['authorization']?.split(' ')[1] || req.query.token;
+
+    if (isPrometheusTokenSet && providedToken !== process.env.PROMETHEUS_TOKEN) {
+      return res.status(401).send('Unauthorized');
+    }
+
+    res.set('Content-Type', register.contentType);
+    res.end(await register.metrics());
+  } catch (ex) {
+    res.status(500).end(ex.message);
+  }
+});
+
 app.get('/health', (req, res) => {
   if (!serverReady) {
     return res.status(503).json({
@@ -2803,14 +2870,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.get('/api/health/circuit-breaker', (req, res) => {
-  res.json({
-    ...reviewQueue.getCircuitState(),
-    timestamp: new Date().toISOString(),
-  });
-});
-
-// Sanitize error messages that may contain API keys or sensitive tokens.
 const SANITIZE_PATTERNS = [
   { pattern: /(?:sk-|gsk_|api[_-]?key|apikey|token|secret|password|auth)[\s=:"']+[^\s"']{8,}/gi, replacement: '***' },
   { pattern: /[A-Za-z0-9_-]{32,}/g, replacement: '***' },
