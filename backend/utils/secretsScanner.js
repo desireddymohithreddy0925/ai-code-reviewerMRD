@@ -86,6 +86,22 @@ export const rules = [
   }
 ];
 
+function calculateShannonEntropy(str) {
+  if (!str) return 0;
+  const len = str.length;
+  const frequencies = {};
+  for (let i = 0; i < len; i++) {
+    const char = str[i];
+    frequencies[char] = (frequencies[char] || 0) + 1;
+  }
+  let entropy = 0;
+  for (const char in frequencies) {
+    const p = frequencies[char] / len;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
 function getMaxLineLength() {
   const n = parseInt(process.env.SECRETS_MAX_LINE_LENGTH, 10);
   return Number.isFinite(n) ? n : 2000;
@@ -187,12 +203,20 @@ export function scanSecretsInChanges(changes) {
         rule.regex.lastIndex = 0;
         let match;
         while ((match = rule.regex.exec(lineContent)) !== null) {
-          findings.push({
-            line: baseLine + lineIdx,
-            column: match.index,
-            type: "security",
-            comment: `### 🛡️ Hardcoded Secret Warning\n\nI have detected a hardcoded **${rule.type}** on line **${baseLine + lineIdx}**.\n\n#### 💡 Actionable Suggestion\nMove this credential immediately to a protected environment variable (e.g. GitHub Secrets or \`.env\`) and load it dynamically at runtime. DO NOT commit plain secrets to public Git repositories!`
-          });
+          const matchedString = match[0];
+          const entropy = calculateShannonEntropy(matchedString);
+          
+          // Only consider high-entropy strings or strict formats as potential secrets (entropy > 3.5)
+          // IP addresses and emails will naturally have lower entropy, but regex matches them strictly.
+          // For Generic API Keys or Passwords, this drops test_key = "123".
+          if (entropy > 3.5 || rule.type.includes("Address") || rule.type.includes("Webhook")) {
+            findings.push({
+              line: baseLine + lineIdx,
+              type: rule.type,
+              match: matchedString,
+              description: rule.description
+            });
+          }
           if (rule.regex.lastIndex === match.index) {
             rule.regex.lastIndex++;
           }
