@@ -15,6 +15,7 @@ import { SemanticCache } from './utils/semanticCache.js';
 import { ChunkHelper } from './utils/chunkHelper.js';
 import { handleConversationEvent } from './utils/conversationHandler.js';
 import { ImageFetcher } from './utils/imageFetcher.js';
+import { PiiRedactor } from './utils/piiRedactor.js';
 import { CoverageParser } from './utils/coverageParser.js';
 import { SarifParser } from './utils/sarifParser.js';
 import { PersonaHelper } from './utils/personaHelper.js';
@@ -355,7 +356,10 @@ async function run() {
           const ext = require('path').extname(file.path);
           const chunks = chunkFileSemantically(sanitizedChangesText, ext);
           
-          for (const chunk of chunks) {
+          for (let chunk of chunks) {
+            // 1.4 PII Redaction
+            chunk = PiiRedactor.redact(chunk);
+
             // 1.5 Firewall Check
             const firewall = checkPromptInjection(chunk, file.path);
             if (firewall.blocked) {

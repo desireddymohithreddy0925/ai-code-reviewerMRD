@@ -16,6 +16,7 @@ const pairs = [
   { src: 'backend/utils/dependencyParser.js', dest: 'github-action/utils/dependencyParser.js' },
   { src: 'backend/utils/coverageParser.js', dest: 'github-action/utils/coverageParser.js' },
   { src: 'backend/utils/imageFetcher.js', dest: 'github-action/utils/imageFetcher.js' },
+  { src: 'backend/utils/piiRedactor.js', dest: 'github-action/utils/piiRedactor.js' },
   { src: 'shared-safety-config.json', dest: 'github-action/shared-safety-config.json' },
 ];
 

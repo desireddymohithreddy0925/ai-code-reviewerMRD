@@ -1,3 +1,4 @@
+import { PiiRedactor } from './utils/piiRedactor.js';
 import { chunkFileSemantically } from './utils/semanticChunker.js';
 import { checkPromptInjection, wrapUntrustedDiff } from './utils/firewall.js';
 import { extractSuggestionBlock, stripSuggestionBlock, verifySuggestionSyntax } from './utils/sandboxVerifier.js';
@@ -2051,6 +2052,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     // Firewall check
     let firewallBlocked = false;
     let diffText = file.changes.map(c => c.content).join('\n');
+diffText = PiiRedactor.redact(diffText);
     const firewall = checkPromptInjection(diffText, file.path);
     
     if (firewall.blocked) {
