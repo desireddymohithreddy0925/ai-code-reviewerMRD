@@ -571,7 +571,7 @@ async function generateDependencyReport(clonePath) {
 
 // Webhook deduplication using Redis SETNX for cross-instance safety
 // TTL matches GitHub's webhook retry window (300 seconds)
-const DELIVERY_REDIS_TTL = 300;
+const DELIVERY_REDIS_TTL = 86400; // 24 hours (Webhook Deduplication)
 
 // In-memory fallback for webhook SHA dedup when Redis is unavailable
 const shaDedupMemoryMap = new Map();
