@@ -396,7 +396,25 @@ async function run() {
                  { type: 'image_url', image_url: { url: `data:${imagePayload.mimeType};base64,${imagePayload.base64}` } }
                ];
             } else {
-               contextPrompt = buildPrompt(file, chunk, existingComments, botUsername, packageContext, coverageWarning);
+               
+               let dependabotContext = '';
+               try {
+                 const prContext = github.context.payload.pull_request;
+                 if (prContext && DependabotHelper.isDependabotPR(prContext.user.login)) {
+                   const bump = DependabotHelper.extractPackageBump(prContext.title);
+                   if (bump) {
+                     const releaseNotes = DependabotHelper.extractReleaseNotesFromBody(prContext.body);
+                     if (releaseNotes) {
+                       dependabotContext = `\n\n[DEPENDABOT CONTEXT]\nYou are reviewing a Dependabot PR that bumps '${bump.pkg}' from ${bump.from} to ${bump.to}. Here are the official release notes for this update:\n\n${releaseNotes}\n\nCRITICAL INSTRUCTION: Verify if our codebase uses any of the deprecated or breaking features mentioned above.`;
+                     }
+                   }
+                 }
+               } catch (e) {
+                 console.warn('⚠️ Failed to extract Dependabot context:', e.message);
+               }
+               
+               contextPrompt = buildPrompt(file, chunk, existingComments, botUsername, packageContext, coverageWarning) + dependabotContext;
+
                userMessageContent = contextPrompt;
             }
             if (bgContext.length > 0) {
