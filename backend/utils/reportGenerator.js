@@ -115,9 +115,6 @@ function generateHTMLReport(repoName, files, reviewResult, outputPath) {
     const rankA = severityOrder[a.severity] ?? 3;
     const rankB = severityOrder[b.severity] ?? 3;
     return rankA - rankB;
-    const orderA = severityOrder[a.severity] !== undefined ? severityOrder[a.severity] : 3;
-    const orderB = severityOrder[b.severity] !== undefined ? severityOrder[b.severity] : 3;
-    return orderA - orderB;
   });
 
   const findingRows = sortedFindings.map(f => `
