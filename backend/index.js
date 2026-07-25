@@ -682,7 +682,7 @@ function requireJsonContentType(req, res, next) {
 }
 
 // 🚀 Route: Stream AI Review (SSE)
-app.post('/api/review/stream', requireApiKey, requireJsonContentType, analyzeLimiter, streamReview);
+app.post('/api/review/stream', requireApiKey, requireJsonContentType, llmAnalysisLimiter, streamReview);
 // ≡ƒƒó Route: GitHub Import & AI Review
 app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimiter, async (req, res) => {
   let { repoUrl, company = 'General', language = 'English', model = 'llama-3.3-70b-versatile',temperature = 0.7,
