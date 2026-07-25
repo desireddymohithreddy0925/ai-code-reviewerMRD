@@ -53,7 +53,7 @@ export function cleanAndParseJSON(responseText) {
     }
     return JSON.parse(cleaned.trim());
   } catch {
-    return { reviews: [] };
+    return null;
   }
 }
 
