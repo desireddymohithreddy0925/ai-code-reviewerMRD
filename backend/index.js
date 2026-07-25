@@ -817,10 +817,6 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
       for (const file of files) {
         if (currentPayloadLength + file.content.length > MAX_PAYLOAD_CHARS) {
           partial_review = true;
-          const allowedChars = MAX_PAYLOAD_CHARS - currentPayloadLength;
-          if (allowedChars > 0) {
-            truncatedFiles.push({ ...file, content: file.content.substring(0, allowedChars) });
-          }
           break;
         }
         truncatedFiles.push(file);
