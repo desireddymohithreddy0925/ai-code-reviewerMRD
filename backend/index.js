@@ -627,10 +627,10 @@ const shaDedupCleanupTimer = setInterval(() => {
 shaDedupCleanupTimer.unref();
 
 function cleanupTimers() {
-  clearInterval(cacheMetricsTimer);
-  clearInterval(aiEngineHealthTimer);
-  clearInterval(exclusiveLockCleanupTimer);
-  clearInterval(shaDedupCleanupTimer);
+  if (typeof cacheMetricsTimer !== 'undefined') clearInterval(cacheMetricsTimer);
+  if (typeof aiEngineHealthTimer !== 'undefined') clearInterval(aiEngineHealthTimer);
+  if (typeof exclusiveLockCleanupTimer !== 'undefined') clearInterval(exclusiveLockCleanupTimer);
+  if (typeof shaDedupCleanupTimer !== 'undefined') clearInterval(shaDedupCleanupTimer);
 }
 
   // Loaded from shared-safety-config.json via dangerousPhrases.js
