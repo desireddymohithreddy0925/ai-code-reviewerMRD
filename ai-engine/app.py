@@ -593,12 +593,13 @@ def _merge_review(combined, file_path, review, batch_idx, review_config=None):
         for category in ["bugs", "security", "optimization", "styling"]:
             existing_items = existing.get(category, [])
             new_items = review.get(category, [])
+            def _nk(v): return str(v) if v is not None else ""
             seen = set()
             for item in existing_items:
-                key = (item.get("type", ""), item.get("line", ""), item.get("description", ""))
+                key = (_nk(item.get("type")), _nk(item.get("line")), _nk(item.get("description")))
                 seen.add(key)
             for item in new_items:
-                key = (item.get("type", ""), item.get("line", ""), item.get("description", ""))
+                key = (_nk(item.get("type")), _nk(item.get("line")), _nk(item.get("description")))
                 if key not in seen:
                     existing_items.append(item)
                     seen.add(key)
