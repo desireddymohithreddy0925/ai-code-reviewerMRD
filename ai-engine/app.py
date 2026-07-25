@@ -441,8 +441,7 @@ async def rate_limit_middleware(request: Request, call_next):
                 window = _rate_limit_store[client_ip]
             else:
                 if len(_rate_limit_store) >= MAX_RATE_LIMIT_ENTRIES:
-                    evict_count = min(len(_rate_limit_store), BULK_EVICT_BATCH_SIZE)
-                    for _ in range(evict_count):
+                    for _ in range(BULK_EVICT_BATCH_SIZE):
                         try:
                             _rate_limit_store.popitem(last=False)
                         except KeyError:
