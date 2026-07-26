@@ -258,7 +258,10 @@ If no issues are found, reply with: { "reviews": [] }`;
         try {
           const completion = await groq.chat.completions.create({
             model: 'llama-3.3-70b-versatile',
-            messages: [{ role: 'user', content: reviewPrompt }],
+            messages: [
+              { role: 'system', content: 'You are a code reviewer. Always output valid JSON matching the schema { "reviews": [{"line": int, "type": "bug|security|optimization|style", "comment": "string"}] }.' },
+              { role: 'user', content: reviewPrompt }
+            ],
             temperature: 0.2,
             max_tokens: maxTokens,
             response_format: { type: 'json_object' },
