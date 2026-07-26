@@ -898,7 +898,7 @@ export default function Dashboard() {
   };
 
   // Helper to trigger README download
-  const downloadReadme = () => {
+  function downloadReadme() {
     if (!analysisResult) return;
     const element = document.createElement("a");
     const file = new Blob([analysisResult.analysis?.generatedReadme || ''], {

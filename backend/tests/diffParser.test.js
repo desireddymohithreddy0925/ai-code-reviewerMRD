@@ -220,6 +220,8 @@ diff --git "a/space b/quoted.js" "b/space b/quoted.js"
   assert.equal(result.length, 2);
   assert.equal(result[0].path, 'sub/dir/b/file.js');
   assert.equal(result[1].path, 'space b/quoted.js');
+});
+
 test('parseDiff handles quoted filenames and paths containing b/', () => {
   const diffQuoted = 'diff --git "a/my file.js" "b/my file.js"\n--- "a/my file.js"\n+++ "b/my file.js"\n@@ -1 +1 @@\n+x';
   const resQuoted = parseDiff(diffQuoted).files;

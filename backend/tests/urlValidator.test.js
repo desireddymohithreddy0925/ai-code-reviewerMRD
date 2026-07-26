@@ -2,8 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isValidRepoUrl, parseRepoUrl, isSafeUrl } from '../utils/urlValidator.js';
 
-test('isValidRepoUrl should accept valid GitHub URLs', () => {
-import { isSafeUrl, isValidRepoUrl, parseRepoUrl } from '../utils/urlValidator.js';
 
 test('urlValidator: isSafeUrl rejects private and link-local IPv4 subnets', async () => {
   // Test loopback
