@@ -146,3 +146,29 @@ Format your JSON precisely as:
 }}
 
 You must obey the JSON output format above."""
+
+ARCHITECTURE_AGENT_PROMPT = """Target Company Persona: {company}
+Response Language: {language}
+
+Review this repository codebase batch focusing strictly on ARCHITECTURAL REGRESSION. Detect if developers are bypassing layered architecture constraints (e.g., UI directly querying databases, controllers importing repositories, or violating separation of concerns).
+Ignore styling, security, and general performance.
+
+Here is the repository structure for context:
+{structure_text}
+
+Here is the contents of files for this batch:
+{contents_text}
+
+You MUST reply ONLY in a valid JSON format. Do not write markdown wrapping, do not write explanations before or after.
+Format your JSON precisely as:
+{{
+  "fileReviews": {{
+    "file_path_1": {{
+      "architecture": [
+        {{ "type": "layer bypass", "line": 22, "description": "...", "suggestion": "..." }}
+      ]
+    }}
+  }}
+}}
+
+You must obey the JSON output format above."""

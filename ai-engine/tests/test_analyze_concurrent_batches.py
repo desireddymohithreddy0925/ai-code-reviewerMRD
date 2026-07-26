@@ -76,7 +76,8 @@ def fake_groq(monkeypatch):
                 "security": [],
                 "optimization": [],
                 "styling": [],
-                "impact": []
+                "impact": [],
+                "architecture": []
             }
             for name in filenames
         }
@@ -110,7 +111,7 @@ def test_analyze_merges_fileReviews_from_all_batches(fake_groq):
         assert data["fileReviews"][name]["bugs"][0]["description"] == f"issue in {name}"
 
     # 3 files at batchSize=1 means 3 batches, each spawning 4 agents (Security, Performance, Style, Synthesizer)
-    assert len(fake_groq) == 12
+    assert len(fake_groq) == 18
 
 
 def test_analyze_readme_and_mermaid_come_only_from_first_batch(fake_groq):
@@ -142,7 +143,7 @@ def test_analyze_single_batch_still_works(fake_groq):
 
     assert "only.py" in data["fileReviews"]
     assert data["generatedReadme"] == "# Fake Readme"
-    assert len(fake_groq) == 4
+    assert len(fake_groq) == 6
 
 
 def test_analyze_first_batch_failure_aborts_whole_request(monkeypatch):
@@ -198,7 +199,7 @@ def test_analyze_non_first_batch_failure_is_skipped_not_fatal(monkeypatch):
         if filenames == ["b.py"]:
             raise RuntimeError("transient failure on batch 2")
         payload = {
-            "fileReviews": {name: {"bugs": [], "security": [], "optimization": [], "styling": [], "impact": []} for name in filenames},
+            "fileReviews": {name: {"bugs": [], "security": [], "optimization": [], "styling": [], "impact": [], "architecture": []} for name in filenames},
             "generatedReadme": "# Fake Readme",
             "mermaidDiagram": "graph TD\n  A[\"S\"] --> B[\"E\"]",
         }
