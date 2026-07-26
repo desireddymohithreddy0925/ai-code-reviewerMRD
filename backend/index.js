@@ -1573,7 +1573,17 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
     return res.status(401).json({ error: 'Missing X-Hub-Signature-256 header.' });
   }
 
-  if (!verifyWebhookSignature(req.rawBody, signature, webhookSecret)) {
+  if (!verifyWebhookSignature(req.rawBody, signature, webhookSecret, 5000)) {
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+  
+  if (Buffer.byteLength(JSON.stringify(req.body), 'utf8') > 1048576) {
+    return res.status(413).json({ error: 'Payload too large' });
+  }
+  
+  if (!req.body || !req.body.action) {
+    return res.status(400).json({ error: 'Invalid webhook payload' });
+  }
     console.warn('Γ¥î Webhook signature verification failed');
     return res.status(401).json({ error: 'Invalid webhook signature' });
   }
