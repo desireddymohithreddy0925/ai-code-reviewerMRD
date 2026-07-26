@@ -81,7 +81,7 @@ class DedupStore {
       this.memoryStore.delete(key);
       return false;
     }
-    return entry.value.has(member);
+    return entry.value instanceof Set ? entry.value.has(member) : false;
   }
 
   async removeFromSet(key, member) {
@@ -99,7 +99,7 @@ class DedupStore {
       this.memoryStore.delete(key);
       return;
     }
-    entry.value.delete(member);
+    if (entry.value instanceof Set) entry.value.delete(member);
   }
 
   async expire(key, ttlMs) {
