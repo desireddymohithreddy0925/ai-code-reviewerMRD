@@ -1359,6 +1359,9 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
     model = chatNormalized;
   }
 
+  temperature = Math.max(0, Math.min(2, parseFloat(temperature) || 0.7));
+  maxTokens = Math.max(1, Math.min(128000, parseInt(maxTokens, 10) || 2048));
+
   if (!message) {
     return res.status(400).json({ error: 'Message is required.' });
   }
