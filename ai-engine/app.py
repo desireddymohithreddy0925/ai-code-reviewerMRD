@@ -228,7 +228,7 @@ def sanitize_mermaid_code(mermaid_text: str) -> str:
     Strips HTML/XML tags and javascript: URIs, and validates the diagram type."""
     if not mermaid_text:
         return ""
-    dangerous = re.compile(r'<[^>]*>|javascript:|vbscript:|data:\s*text/html|\bon\w+\s*=', re.IGNORECASE)
+    dangerous = re.compile(r'<[\s\S]*?>|javascript:|vbscript:|data:\s*text/html|\bon\w+\s*=', re.IGNORECASE)
     if dangerous.search(mermaid_text):
         return "graph TD\n    A[\"Diagram omitted: security concern\"]"
     valid_start = re.compile(r'^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|gitgraph)\s')
