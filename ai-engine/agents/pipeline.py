@@ -6,7 +6,10 @@ from .prompts import (
     PERFORMANCE_AGENT_PROMPT,
     STYLE_AGENT_PROMPT,
     IMPACT_ANALYSIS_AGENT_PROMPT,
-    SYNTHESIZER_AGENT_PROMPT
+    SYNTHESIZER_AGENT_PROMPT,
+    STRICT_ARCHITECT_PROMPT,
+    PRAGMATIC_DELIVERER_PROMPT,
+    DEBATE_MODERATOR_PROMPT
 )
 
 async def _run_agent(agent_name: str, system_prompt: str, user_prompt: str, llm_caller: Callable[[str, str], Awaitable[Dict[Any, Any]]]) -> Dict[Any, Any]:
@@ -52,24 +55,50 @@ async def run_batch_pipeline(
         structure_text=structure_text,
         contents_text=contents_text
     )
+    strict_architect_prompt = STRICT_ARCHITECT_PROMPT.format(
+        company=company,
+        language=language,
+        structure_text=structure_text,
+        contents_text=contents_text
+    )
+    pragmatic_deliverer_prompt = PRAGMATIC_DELIVERER_PROMPT.format(
+        company=company,
+        language=language,
+        structure_text=structure_text,
+        contents_text=contents_text
+    )
 
-    # Dispatch concurrently
-    print(f"⏳ Dispatching Security, Performance, Style, and Impact agents concurrently...")
+    # Dispatch concurrently (Round 1)
+    print(f"⏳ Dispatching Security, Performance, Style, Impact, Architect, and Pragmatic agents concurrently...")
     results = await asyncio.gather(
         _run_agent("Security", base_prompt, security_user_prompt, llm_caller),
         _run_agent("Performance", base_prompt, performance_user_prompt, llm_caller),
         _run_agent("Style", base_prompt, style_user_prompt, llm_caller),
-        _run_agent("Impact", base_prompt, impact_user_prompt, llm_caller)
+        _run_agent("Impact", base_prompt, impact_user_prompt, llm_caller),
+        _run_agent("Architect", base_prompt, strict_architect_prompt, llm_caller),
+        _run_agent("Pragmatic", base_prompt, pragmatic_deliverer_prompt, llm_caller)
     )
     
-    security_res, performance_res, style_res, impact_res = results
+    security_res, performance_res, style_res, impact_res, architect_res, pragmatic_res = results
     
-    # Combine findings to send to Synthesizer
+    # Round 2: Debate Moderator
+    print(f"⏳ Dispatching Debate Moderator to resolve architectural conflicts...")
+    moderator_prompt = DEBATE_MODERATOR_PROMPT.format(
+        company=company,
+        language=language,
+        structure_text=structure_text,
+        architect_findings=json.dumps(architect_res.get("fileReviews", {}), indent=2),
+        pragmatic_findings=json.dumps(pragmatic_res.get("fileReviews", {}), indent=2)
+    )
+    moderator_res = await _run_agent("Moderator", base_prompt, moderator_prompt, llm_caller)
+    
+    # Combine findings to send to Synthesizer (Round 3)
     combined_findings = {
         "security_findings": security_res.get("fileReviews", {}),
         "performance_findings": performance_res.get("fileReviews", {}),
         "style_findings": style_res.get("fileReviews", {}),
-        "impact_findings": impact_res.get("fileReviews", {})
+        "impact_findings": impact_res.get("fileReviews", {}),
+        "architecture_findings": moderator_res.get("fileReviews", {})
     }
     
     readme_mermaid_instructions = ""
