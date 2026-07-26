@@ -2321,7 +2321,7 @@ function sanitizeFilename(repoName) {
   try { str = decodeURIComponent(str); } catch { /* keep original */ }
   str = str.normalize('NFKC');
   str = str.replace(/\0/g, '');
-  str = str.replace(/[/\\]+/g, '/').replace(/\.\.\/|\.\\/g, '');
+  str = str.replace(/[/\\]+/g, '/').replace(/\.\.(\/|\\)/g, '');
   str = str.replace(/\.\.+/g, '_').replace(/(?:^|\/)[.]+(?=\/|$)/g, '_');
   str = str.replace(/[^\w.-]+/g, '_');
   if (str.length === 0) return 'untitled_repo';
