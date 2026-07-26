@@ -4,7 +4,7 @@ export function parseDiff(diffStr) {
   if (!diffStr || typeof diffStr !== 'string') {
     return { files, binaryFiles };
   }
-  const lines = diffStr.split('\n');
+  const lines = diffStr.replace(/\r\n/g, '\n').split('\n');
   let currentFile = null;
   let currentLineInNewFile = 0;
   let currentLineInOldFile = 0;
