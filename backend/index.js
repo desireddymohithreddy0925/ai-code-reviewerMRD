@@ -419,8 +419,15 @@ try {
   console.warn(`ΓÜá∩╕Å Failed to clean up temp_repos directory on startup: ${error.message}`);
 }
 
+// Guard to make cleanupTempRepos idempotent (safe to call multiple times)
+let _tempReposCleaned = false;
+
 // Clean up temp_repos on process exit to avoid leftover clones
 function cleanupTempRepos() {
+  if (_tempReposCleaned) {
+    return;
+  }
+  _tempReposCleaned = true;
   try {
     if (fs.existsSync(tempReposDir)) {
       fs.rmSync(tempReposDir, { recursive: true, force: true });
@@ -446,11 +453,7 @@ process.on('uncaughtException', (err) => {
   if (err.stack) {
     console.error(err.stack);
   }
-  cleanupTempRepos();
-  cleanupTimers();
-  if (redisClient) redisClient.quit();
-  closeDatabase();
-  process.exit(1);
+  onShutdown();
 });
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -458,6 +461,7 @@ process.on('unhandledRejection', (reason, promise) => {
   if (reason instanceof Error && reason.stack) {
     console.error(reason.stack);
   }
+  onShutdown();
 });
 
 // Repository contexts for chat are now persisted in MongoDB via the Session model.
