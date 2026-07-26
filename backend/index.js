@@ -9,6 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { Octokit } from '@octokit/rest';
+import yaml from 'js-yaml';
 import { createFrontendSessionCookie, requireApiKey, SESSION_COOKIE_NAME, validateSessionSecret, isValidUuid } from './utils/authMiddleware.js';
 import rateLimit from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
@@ -34,6 +35,7 @@ import { DANGEROUS_PHRASES, HOMOGLYPH_MAP } from './shared/dangerousPhrases.js';
 import { verifyPort } from './utils/envVerifier.js';
 import { sanitizeRedisKey } from './utils/redisSafe.js';
 import { mockAIReview } from './utils/mockAIReview.js';
+import { buildRepositoryContext } from './utils/repositoryAnalyzer.js';
 import { loadConfigFile, applySeverityConfig } from './utils/severityConfig.js';
 import AnalysisCache from './utils/analysisCache.js';
 import { getPriorReviewIds, storeReviewIds, clearReviewIds, supersedePriorReviews } from './utils/reviewTracker.js';
@@ -41,6 +43,7 @@ import DedupStore from './utils/dedupStore.js';
 import mongoose from 'mongoose';
 import Analytics from './models/Analytics.js';
 import Session, { estimateSessionSize } from './models/Session.js';
+import User from './models/User.js';
 import { RoiMetrics } from './models/RoiMetrics.js';
 import { connectDatabase, isDatabaseConnected, ensureConnection, closeDatabase } from './config/db.js';
 import { streamReview } from './controllers/streamController.js';
@@ -59,12 +62,12 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = verifyPort(process.env.PORT || 5000);
 
-const ALLOWED_ANALYSIS_MODELS = ["llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b", "llama-3.1-8b-instant", "gemma2-9b-it"];
+const ALLOWED_ANALYSIS_MODELS = ["llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b", "llama-3.1-8b-instant", "gemma2-9b-it", "gpt-3.5-turbo", "gemini-3.1-pro"];
 
 // Initialize analysis cache with configurable TTL (default: 1 hour, mock: 2 minutes)
 const ANALYSIS_CACHE_TTL_MS = ((n) => Number.isFinite(n) && n > 0 ? n : 60)(parseInt(process.env.ANALYSIS_CACHE_TTL_MINUTES || '60', 10)) * 60 * 1000;
 const ANALYSIS_CACHE_MOCK_TTL_MS = ((n) => Number.isFinite(n) && n > 0 ? n : 120)(parseInt(process.env.ANALYSIS_CACHE_MOCK_TTL_SECONDS || '120', 10)) * 1000;
-const analysisCache = new AnalysisCache(ANALYSIS_CACHE_TTL_MS, ANALYSIS_CACHE_MOCK_TTL_MS);
+const analysisCache = new AnalysisCache(ANALYSIS_CACHE_TTL_MS, 2, ANALYSIS_CACHE_MOCK_TTL_MS);
 const responseCache = new AnalysisCache(ANALYSIS_CACHE_TTL_MS);
 
 // Trust the first hop of reverse proxy headers (Render, Railway, Heroku, Nginx, AWS ALB, etc.)
@@ -306,6 +309,7 @@ async function csrfProtection(req, res, next) {
       try {
         const session = await Session.findOne({ sessionId }).select('csrfToken').lean();
         if (session && session.csrfToken) {
+          if (!session?.csrfToken) { return next(); }
           const storedBuf = Buffer.from(String(session.csrfToken));
           const headerBuf = Buffer.from(String(headerToken || ''));
           if (storedBuf.length === headerBuf.length && crypto.timingSafeEqual(storedBuf, headerBuf)) {
@@ -383,11 +387,11 @@ app.post('/api/session', requireApiKey, async (req, res) => {
 });
 
 // Logout endpoint ΓÇö clears session and CSRF token
-app.post('/api/logout', requireApiKey, (req, res) => {
+app.post('/api/logout', requireApiKey, async (req, res) => {
   const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
   if (cookieToken) {
-    csrfTokenStore.delete(cookieToken);
-    csrfGraceTokenStore.delete(cookieToken);
+    await csrfTokenStore.delete(cookieToken);
+    await csrfGraceTokenStore.delete(cookieToken);
   }
   res.clearCookie(CSRF_COOKIE_NAME, { path: '/' });
   res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
@@ -417,8 +421,15 @@ try {
   console.warn(`ΓÜá∩╕Å Failed to clean up temp_repos directory on startup: ${error.message}`);
 }
 
+// Guard to make cleanupTempRepos idempotent (safe to call multiple times)
+let _tempReposCleaned = false;
+
 // Clean up temp_repos on process exit to avoid leftover clones
 function cleanupTempRepos() {
+  if (_tempReposCleaned) {
+    return;
+  }
+  _tempReposCleaned = true;
   try {
     if (fs.existsSync(tempReposDir)) {
       fs.rmSync(tempReposDir, { recursive: true, force: true });
@@ -444,11 +455,7 @@ process.on('uncaughtException', (err) => {
   if (err.stack) {
     console.error(err.stack);
   }
-  cleanupTempRepos();
-  cleanupTimers();
-  if (redisClient) redisClient.quit();
-  closeDatabase();
-  process.exit(1);
+  onShutdown();
 });
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -456,6 +463,7 @@ process.on('unhandledRejection', (reason, promise) => {
   if (reason instanceof Error && reason.stack) {
     console.error(reason.stack);
   }
+  onShutdown();
 });
 
 // Repository contexts for chat are now persisted in MongoDB via the Session model.
@@ -627,10 +635,10 @@ const shaDedupCleanupTimer = setInterval(() => {
 shaDedupCleanupTimer.unref();
 
 function cleanupTimers() {
-  clearInterval(cacheMetricsTimer);
-  clearInterval(aiEngineHealthTimer);
-  clearInterval(exclusiveLockCleanupTimer);
-  clearInterval(shaDedupCleanupTimer);
+  if (typeof cacheMetricsTimer !== 'undefined') clearInterval(cacheMetricsTimer);
+  if (typeof aiEngineHealthTimer !== 'undefined') clearInterval(aiEngineHealthTimer);
+  if (typeof exclusiveLockCleanupTimer !== 'undefined') clearInterval(exclusiveLockCleanupTimer);
+  if (typeof shaDedupCleanupTimer !== 'undefined') clearInterval(shaDedupCleanupTimer);
 }
 
   // Loaded from shared-safety-config.json via dangerousPhrases.js
@@ -681,11 +689,38 @@ function requireJsonContentType(req, res, next) {
   next();
 }
 
+// 🚀 Route: User Settings
+app.get('/api/user/settings', requireApiKey, async (req, res) => {
+  try {
+    const user = await User.findOne({ clientId: req.clientId });
+    res.json({ preferredModel: user?.preferredModel || 'llama-3.3-70b-versatile' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch settings' });
+  }
+});
+
+app.post('/api/user/settings', requireApiKey, express.json(), async (req, res) => {
+  const { preferredModel } = req.body;
+  if (!ALLOWED_ANALYSIS_MODELS.includes(preferredModel)) {
+    return res.status(400).json({ error: 'Invalid model selection' });
+  }
+  try {
+    const user = await User.findOneAndUpdate(
+      { clientId: req.clientId },
+      { preferredModel },
+      { upsert: true, new: true }
+    );
+    res.json({ success: true, preferredModel: user.preferredModel });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
 // 🚀 Route: Stream AI Review (SSE)
-app.post('/api/review/stream', requireApiKey, requireJsonContentType, analyzeLimiter, streamReview);
+app.post('/api/review/stream', requireApiKey, requireJsonContentType, llmAnalysisLimiter, streamReview);
 // ≡ƒƒó Route: GitHub Import & AI Review
 app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimiter, async (req, res) => {
-  let { repoUrl, company = 'General', language = 'English', model = 'llama-3.3-70b-versatile',temperature = 0.7,
+  let { repoUrl, company = 'General', language = 'English', model, temperature = 0.7,
      maxTokens = 2048, systemPrompt = '', batchSize = 5, githubToken
    } = req.body;
 
@@ -697,9 +732,23 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
   const AI_ENGINE_MAX_TOKENS = parseInt(process.env.AI_ENGINE_MAX_TOKENS, 10) || 32768;
   maxTokens = Math.max(1, Math.min(AI_ENGINE_MAX_TOKENS, parseInt(maxTokens, 10) || 2048));
 
+  let fallbackModel = "llama-3.3-70b-versatile";
+  try {
+    const user = await User.findOne({ clientId: req.clientId });
+    if (user && user.preferredModel) {
+      fallbackModel = user.preferredModel;
+    }
+  } catch (err) {
+    console.warn("Failed to fetch user preferences", err);
+  }
+
+  if (!model) {
+    model = fallbackModel;
+  }
+
   const normalizedModel = ALLOWED_ANALYSIS_MODELS.find(m => m.toLowerCase() === model.toLowerCase());
   if (!normalizedModel) {
-    model = "llama-3.3-70b-versatile";
+    model = fallbackModel;
   } else {
     model = normalizedModel;
   }
@@ -789,7 +838,16 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
   try {
     const cloneTimeout = parseInt(process.env.GIT_CLONE_TIMEOUT, 10) || 120000;
     const git = simpleGit({ timeout: { block: cloneTimeout } });
-    await git.clone(repoUrl, clonePath, ['--depth', '1', '--single-branch', `--filter=blob:limit=${maxRepoSizeMB}m`]);
+    try {
+      await git.clone(repoUrl, clonePath, ['--depth', '1', '--single-branch', `--filter=blob:limit=${maxRepoSizeMB}m`]);
+    } catch (partialErr) {
+      if (partialErr.message && partialErr.message.includes('filter') && partialErr.message.includes('not supported')) {
+        console.warn('Partial clone not supported, falling back to shallow clone');
+        await git.clone(repoUrl, clonePath, ['--depth', '1', '--single-branch']);
+      } else {
+        throw partialErr;
+      }
+    }
 
     // Check repository size
     const repoSize = await getFolderSize(clonePath);
@@ -817,10 +875,6 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
       for (const file of files) {
         if (currentPayloadLength + file.content.length > MAX_PAYLOAD_CHARS) {
           partial_review = true;
-          const allowedChars = MAX_PAYLOAD_CHARS - currentPayloadLength;
-          if (allowedChars > 0) {
-            truncatedFiles.push({ ...file, content: file.content.substring(0, allowedChars) });
-          }
           break;
         }
         truncatedFiles.push(file);
@@ -833,6 +887,28 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
         return res.status(400).json({ error: 'No supportable source code files found in the repository.' });
       }
 
+      console.log(`📁 Found ${files.length} valid source files. Sending to AI engine...`);
+      
+      const repositoryContext = buildRepositoryContext(files);
+
+      // 2. Mocking AI Response for initial setup (or forward to FastAPI AI Engine)
+      // This is a perfect placeholder where contributors can connect the FastAPI server!
+      const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+      
+      let reviewResult;
+      const baseUrl = aiEngineUrl.replace(/\/+$/, '');
+      try {
+        const aiResponse = await fetch(`${baseUrl}/analyze`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt, batchSize, repositoryContext })
+        });
+        
+        if (aiResponse.ok) {
+          reviewResult = await aiResponse.json();
+          reviewResult._mock = false;
+        } else {
+          throw new Error('AI engine responded with error');
       console.log(`≡ƒôü Found ${files.length} valid source files. Checking cache...`);
 
       // 1.3. Scan files for prompt injection patterns
@@ -848,7 +924,10 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
       }
 
       // 1.5. Check analysis cache to avoid redundant LLM calls for identical analyses
-      const scrubbedFiles = files.map(file => ({
+      const CONFIG_FILENAME = '.codereviewer.yml';
+      const scrubbedFiles = files
+        .filter(f => f.name !== CONFIG_FILENAME)
+        .map(file => ({
         ...file,
         content: scrubRepositoryPayload(file.content)
       }));
@@ -875,9 +954,17 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
             resData._mock = false;
             return resData;
           } else {
-            throw new Error('AI engine responded with error');
+            let errMsg = 'AI engine responded with error';
+            try {
+              const errData = await aiResponse.json();
+              errMsg = errData.detail || errData.error || errData.message || errMsg;
+            } catch {}
+            throw new Error(errMsg);
           }
         } catch (err) {
+          if (!process.env.ALLOW_MOCK_FALLBACK) {
+            throw new Error('AI engine unavailable and mock fallback not enabled');
+          }
           console.warn('⚠️ FastAPI engine not running, falling back to local Express review handler');
           const mockRes = mockAIReview(scrubbedFiles, model);
           mockRes._mock = true;
@@ -1181,7 +1268,7 @@ if (reviewResult?.fileReviews) {
       };
 
       if (finalCacheKey && !reviewResult?._mock) {
-        responseCache.set(finalCacheKey, responseObject, repoUrl);
+        responseCache.set(finalCacheKey, responseObject, { repoUrl });
       }
 
       return res.json(responseObject);
@@ -1196,7 +1283,7 @@ if (reviewResult?.fileReviews) {
 // ≡ƒƒó Route: Direct File Analysis (for VS Code extension and single-file use cases)
 app.post('/api/analyze-file', requireApiKey, requireJsonContentType, llmAnalysisLimiter, async (req, res) => {
   try {
-    let { files, company = 'General', language = 'English', model = 'llama-3.3-70b-versatile', temperature = 0.7, maxTokens = 2048, systemPrompt = '', batchSize = 5 } = req.body;
+    let { files, company = 'General', language = 'English', model, temperature = 0.7, maxTokens = 2048, systemPrompt = '', batchSize = 5 } = req.body;
 
     if (!files || !Array.isArray(files) || files.length === 0) {
       return res.status(400).json({ error: 'At least one file is required.' });
@@ -1213,9 +1300,23 @@ app.post('/api/analyze-file', requireApiKey, requireJsonContentType, llmAnalysis
     const AI_ENGINE_MAX_TOKENS = parseInt(process.env.AI_ENGINE_MAX_TOKENS, 10) || 32768;
     maxTokens = Math.max(1, Math.min(AI_ENGINE_MAX_TOKENS, parseInt(maxTokens, 10) || 2048));
 
+    let fallbackModel = "llama-3.3-70b-versatile";
+    try {
+      const user = await User.findOne({ clientId: req.clientId });
+      if (user && user.preferredModel) {
+        fallbackModel = user.preferredModel;
+      }
+    } catch (err) {
+      console.warn("Failed to fetch user preferences", err);
+    }
+
+    if (!model) {
+      model = fallbackModel;
+    }
+
     const normalizedModel = ALLOWED_ANALYSIS_MODELS.find(m => m.toLowerCase() === model.toLowerCase());
     if (!normalizedModel) {
-      model = "llama-3.3-70b-versatile";
+      model = fallbackModel;
     } else {
       model = normalizedModel;
     }
@@ -1258,6 +1359,9 @@ app.post('/api/analyze-file', requireApiKey, requireJsonContentType, llmAnalysis
     } catch (err) {
       if (err.message.includes('authentication failed')) {
         throw err;
+      }
+      if (!process.env.ALLOW_MOCK_FALLBACK) {
+        throw new Error('AI engine unavailable and mock fallback not enabled');
       }
       const { mockAIReview } = await import('./utils/mockAIReview.js');
       const mockRes = mockAIReview(files, model);
@@ -1311,6 +1415,9 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
   } else {
     model = chatNormalized;
   }
+
+  temperature = Math.max(0, Math.min(2, parseFloat(temperature) || 0.7));
+  maxTokens = Math.max(1, Math.min(128000, parseInt(maxTokens, 10) || 2048));
 
   if (!message) {
     return res.status(400).json({ error: 'Message is required.' });
@@ -1526,7 +1633,17 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
     return res.status(401).json({ error: 'Missing X-Hub-Signature-256 header.' });
   }
 
-  if (!verifyWebhookSignature(req.rawBody, signature, webhookSecret)) {
+  if (!verifyWebhookSignature(req.rawBody, signature, webhookSecret, 5000)) {
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+  
+  if (Buffer.byteLength(JSON.stringify(req.body), 'utf8') > 1048576) {
+    return res.status(413).json({ error: 'Payload too large' });
+  }
+  
+  if (!req.body || !req.body.action) {
+    return res.status(400).json({ error: 'Invalid webhook payload' });
+  }
     console.warn('Γ¥î Webhook signature verification failed');
     return res.status(401).json({ error: 'Invalid webhook signature' });
   }
@@ -2043,11 +2160,42 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
     
     try {
+      // Look for .ai-reviewer.yml to check security mode
+      // Look for .ai-reviewer.yml to check custom configurations
+      let securityMode = false;
+      let customPrompt = '';
+      let autoFixTrivial = false;
+      let severityOverrides = null;
+
+      try {
+        const { data: configFile } = await octokit.rest.repos.getContent({
+          owner,
+          repo,
+          path: '.ai-reviewer.yml',
+          ref: headSha
+        });
+        const content = Buffer.from(configFile.content, 'base64').toString('utf8');
+        const config = yaml.load(content);
+        if (config) {
+          securityMode = !!config.security_mode;
+          if (securityMode) {
+            console.log(`🔒 Dedicated Security Mode enabled for ${owner}/${repo}`);
+          }
+          customPrompt = config.custom_prompt || '';
+          autoFixTrivial = !!config.auto_fix_trivial;
+          if (config.severity) {
+            severityOverrides = config.severity;
+          }
+        }
+      } catch (e) {
+        // file doesn't exist, ignore
+      }
+
       const baseUrl = aiEngineUrl.replace(/\/+$/, '');
       const aiResponse = await fetchWithTimeout(`${baseUrl}/review-diff`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
-        body: JSON.stringify({ files: filesToReview })
+        body: JSON.stringify({ files: filesToReview, security_mode: securityMode, custom_prompt: customPrompt })
       }, 60000);
 
       if (aiResponse.ok) {
@@ -2058,13 +2206,30 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
           console.warn('ΓÜá∩╕Å AI engine returned HTTP 200 with malformed (non-JSON) body:', parseErr.message);
         }
         if (result && Array.isArray(result.comments)) {
+          
+          // Map body to message for categorizeFinding
+          result.comments.forEach(c => { c.message = c.body; });
+          const configForSeverity = severityOverrides ? { severity: severityOverrides } : {};
+          result.comments = applySeverityConfig(result.comments, configForSeverity);
+
           result.comments.forEach(c => {
             const validLines = validChangedLines.get(c.path);
             if (!validLines || !validLines.has(Number(c.line))) {
-              console.warn(`ΓÜá∩╕Å Skipping invalid inline comment location ${c.path}:${c.line}`);
+              console.warn(`⚠️ Skipping invalid inline comment location ${c.path}:${c.line}`);
               aiCommentsDiscarded++;
               return;
             }
+
+            // Auto-fix Trivial Issues (#910)
+            if (autoFixTrivial && (c.severity === 'info' || c.severity === 'style' || c.category === 'style')) {
+              c.body = c.body.replace(/```[a-z]*\n([\s\S]*?)```/g, '```suggestion\n$1```');
+            }
+
+            // Categorize Suggestions with Severity Labels (#902)
+            if (c.severity) {
+               c.body = `**[${c.severity.toUpperCase()}]** ${c.body}`;
+            }
+
             // Avoid duplicate comments if secrets scanner already flagged it
             const duplicate = commentsToPost.some(exist => exist.path === c.path && exist.line === c.line);
             if (!duplicate) {
@@ -2294,7 +2459,7 @@ function sanitizeFilename(repoName) {
   try { str = decodeURIComponent(str); } catch { /* keep original */ }
   str = str.normalize('NFKC');
   str = str.replace(/\0/g, '');
-  str = str.replace(/[/\\]+/g, '/').replace(/\.\.\/|\.\\/g, '');
+  str = str.replace(/[/\\]+/g, '/').replace(/\.\.(\/|\\)/g, '');
   str = str.replace(/\.\.+/g, '_').replace(/(?:^|\/)[.]+(?=\/|$)/g, '_');
   str = str.replace(/[^\w.-]+/g, '_');
   if (str.length === 0) return 'untitled_repo';

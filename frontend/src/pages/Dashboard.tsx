@@ -366,7 +366,7 @@ export default function Dashboard() {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [apiError, setChatHistory]);
+  }, [apiError, setChatHistory, downloadReadme, setShowSettings, setShowShortcutsHelp]);
 
   const isValidAuditEntry = (entry: unknown): entry is AuditHistoryEntry => {
     if (!entry || typeof entry !== 'object') return false;
@@ -603,7 +603,7 @@ export default function Dashboard() {
               if (!raw) continue;
               const data = JSON.parse(raw);
               if (Array.isArray(data) && data.length > 0) {
-                const evicted = data.slice(data.length <= 1 ? 0 : 1);
+                const evicted = data.slice(Math.max(1, Math.ceil(data.length * 0.5)));
                 localStorage.setItem(storageKey, JSON.stringify(evicted));
               }
             } catch { /* ignore corrupt entries */ }
@@ -631,13 +631,8 @@ export default function Dashboard() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [useRag, setUseRag] = useState(false);
 
-  const chatEndRef = useRef<HTMLDivElement>(null);
   const chatHistoryRef = useRef<ChatMessage[]>(chatHistory);
   chatHistoryRef.current = chatHistory;
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatHistory, isChatLoading]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -903,19 +898,27 @@ export default function Dashboard() {
   };
 
   // Helper to trigger README download
-  const downloadReadme = () => {
+  function downloadReadme() {
     if (!analysisResult) return;
     const element = document.createElement("a");
     const file = new Blob([analysisResult.analysis?.generatedReadme || ''], {
       type: "text/plain",
     });
-    element.href = URL.createObjectURL(file);
+    const url = URL.createObjectURL(file);
+    element.href = url;
     element.download = "GENERATED_README.md";
-    document.body.appendChild(element);
+    let appended = false;
+    try {
+      document.body.appendChild(element);
+      appended = true;
       element.click();
-      document.body.removeChild(element);
-      URL.revokeObjectURL(element.href);
-    };
+    } finally {
+      if (appended) {
+        document.body.removeChild(element);
+      }
+      URL.revokeObjectURL(url);
+    }
+  };
 
   const chatInputEmpty = !chatInput.trim();
 

@@ -5,6 +5,8 @@ import { parseDiff } from './utils/diffParser.js';
 import { scanSecretsInChanges } from './utils/secretsScanner.js';
 import { globToRegex } from './utils/globToRegex.js';
 import { cleanAndParseJSON, normalizeReviewLineNumber } from './utils/actionUtils.js';
+import { GitHubProvider } from './providers/GitHubProvider.js';
+import { GitLabProvider } from './providers/GitLabProvider.js';
 
 const PARSE_FAILED = { reviews: [], _parseFailed: true };
 
@@ -245,7 +247,10 @@ If no issues are found, reply with: { "reviews": [] }`;
           try {
             completion = await groq.chat.completions.create({
               model: 'llama-3.3-70b-versatile',
-              messages: [{ role: 'user', content: reviewPrompt }],
+              messages: [
+                { role: 'system', content: 'You are a code reviewer. Always output valid JSON matching the schema { "reviews": [{"line": int, "type": "bug|security|optimization|style", "comment": "string"}] }.' },
+                { role: 'user', content: reviewPrompt }
+              ],
               temperature: 0.2,
               max_tokens: maxTokens,
               response_format: { type: 'json_object' },
