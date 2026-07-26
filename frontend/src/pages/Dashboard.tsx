@@ -904,13 +904,21 @@ export default function Dashboard() {
     const file = new Blob([analysisResult.analysis?.generatedReadme || ''], {
       type: "text/plain",
     });
-    element.href = URL.createObjectURL(file);
+    const url = URL.createObjectURL(file);
+    element.href = url;
     element.download = "GENERATED_README.md";
-    document.body.appendChild(element);
+    let appended = false;
+    try {
+      document.body.appendChild(element);
+      appended = true;
       element.click();
-      document.body.removeChild(element);
-      URL.revokeObjectURL(element.href);
-    };
+    } finally {
+      if (appended) {
+        document.body.removeChild(element);
+      }
+      URL.revokeObjectURL(url);
+    }
+  };
 
   const chatInputEmpty = !chatInput.trim();
 
