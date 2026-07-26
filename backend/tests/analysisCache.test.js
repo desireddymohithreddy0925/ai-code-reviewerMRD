@@ -322,6 +322,8 @@ test('AnalysisCache: sliding TTL for mock entries uses mockTtlMs', () => {
   // now + mockTtlMs. The difference from originalExpiresAt should be minimal (close to 0)
   // rather than ~3600000ms (which would happen if it used ttlMs).
   assert.ok(diff < 1000, `Sliding window extended mock TTL by too much: ${diff}ms`);
+});
+
 test('AnalysisCache: sweeper evicts expired keys from _repoUrlIndex and cleans empty Sets', async () => {
   const cache = new AnalysisCache(20); // 20ms TTL
   const repo = 'https://github.com/owner/repo-sweeper';

@@ -9,6 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { Octokit } from '@octokit/rest';
+import yaml from 'js-yaml';
 import { createFrontendSessionCookie, requireApiKey, SESSION_COOKIE_NAME, validateSessionSecret, isValidUuid } from './utils/authMiddleware.js';
 import rateLimit from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
@@ -2160,7 +2161,12 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     
     try {
       // Look for .ai-reviewer.yml to check security mode
+      // Look for .ai-reviewer.yml to check custom configurations
       let securityMode = false;
+      let customPrompt = '';
+      let autoFixTrivial = false;
+      let severityOverrides = null;
+
       try {
         const { data: configFile } = await octokit.rest.repos.getContent({
           owner,
@@ -2169,9 +2175,17 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
           ref: headSha
         });
         const content = Buffer.from(configFile.content, 'base64').toString('utf8');
-        if (content.includes('security_mode: true')) {
-          securityMode = true;
-          console.log(`🔒 Dedicated Security Mode enabled for ${owner}/${repo}`);
+        const config = yaml.load(content);
+        if (config) {
+          securityMode = !!config.security_mode;
+          if (securityMode) {
+            console.log(`🔒 Dedicated Security Mode enabled for ${owner}/${repo}`);
+          }
+          customPrompt = config.custom_prompt || '';
+          autoFixTrivial = !!config.auto_fix_trivial;
+          if (config.severity) {
+            severityOverrides = config.severity;
+          }
         }
       } catch (e) {
         // file doesn't exist, ignore
@@ -2181,7 +2195,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       const aiResponse = await fetchWithTimeout(`${baseUrl}/review-diff`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
-        body: JSON.stringify({ files: filesToReview, security_mode: securityMode })
+        body: JSON.stringify({ files: filesToReview, security_mode: securityMode, custom_prompt: customPrompt })
       }, 60000);
 
       if (aiResponse.ok) {
@@ -2192,13 +2206,30 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
           console.warn('ΓÜá∩╕Å AI engine returned HTTP 200 with malformed (non-JSON) body:', parseErr.message);
         }
         if (result && Array.isArray(result.comments)) {
+          
+          // Map body to message for categorizeFinding
+          result.comments.forEach(c => { c.message = c.body; });
+          const configForSeverity = severityOverrides ? { severity: severityOverrides } : {};
+          result.comments = applySeverityConfig(result.comments, configForSeverity);
+
           result.comments.forEach(c => {
             const validLines = validChangedLines.get(c.path);
             if (!validLines || !validLines.has(Number(c.line))) {
-              console.warn(`ΓÜá∩╕Å Skipping invalid inline comment location ${c.path}:${c.line}`);
+              console.warn(`⚠️ Skipping invalid inline comment location ${c.path}:${c.line}`);
               aiCommentsDiscarded++;
               return;
             }
+
+            // Auto-fix Trivial Issues (#910)
+            if (autoFixTrivial && (c.severity === 'info' || c.severity === 'style' || c.category === 'style')) {
+              c.body = c.body.replace(/```[a-z]*\n([\s\S]*?)```/g, '```suggestion\n$1```');
+            }
+
+            // Categorize Suggestions with Severity Labels (#902)
+            if (c.severity) {
+               c.body = `**[${c.severity.toUpperCase()}]** ${c.body}`;
+            }
+
             // Avoid duplicate comments if secrets scanner already flagged it
             const duplicate = commentsToPost.some(exist => exist.path === c.path && exist.line === c.line);
             if (!duplicate) {

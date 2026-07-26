@@ -45,93 +45,40 @@ export function loadIgnorePatterns(dir) {
   return patterns;
 }
 
+import picomatch from 'picomatch';
+
 // 🟢 Helper to check if a path matches any ignore pattern
 export function isIgnored(filePath, patterns, baseDir) {
-  if (!patterns || !Array.isArray(patterns)) return false;
-  const relative = path.relative(baseDir, filePath).replace(/\\/g, '/');
+  if (!patterns || !Array.isArray(patterns) || patterns.length === 0) return false;
+  const normalizedFilePath = filePath.replace(/\\/g, '/');
+  const normalizedBaseDir = baseDir.replace(/\\/g, '/');
+  const relative = path.posix.relative(normalizedBaseDir, normalizedFilePath);
   if (relative.startsWith('../') || relative === '..') return false;
-  const segments = relative.split('/');
 
-  for (const pattern of patterns) {
-    if (typeof pattern !== 'string') continue;
+  const pmPatterns = patterns.flatMap(p => {
+    if (typeof p !== 'string') return [];
+    let pat = p.startsWith('/') ? p.slice(1) : p;
+    if (!pat) return [];
     
-    const isDirPattern = pattern.endsWith('/');
-    const patClean = isDirPattern ? pattern.slice(0, -1) : pattern;
-    const patHasSlash = patClean.includes('/');
+    const isDir = pat.endsWith('/');
+    const patClean = isDir ? pat.slice(0, -1) : pat;
+    if (!patClean) return [];
 
-    if (patHasSlash) {
-      if (isDirPattern) {
-        if (relative === patClean || relative.startsWith(pattern)) {
-          return true;
-        }
-      } else if (pattern.startsWith('*.')) {
-        if (relative.endsWith(pattern.slice(1))) {
-          return true;
-        }
-      } else if (pattern.includes('*')) {
-        const escaped = pattern
-          .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-          .split('**')
-          .map(part => part.split('*').join('[^/]*'))
-          .join('.*')
-          .replace(/^\.\*\//, '(?:.*/)?');
-        try {
-          if (new RegExp(`^${escaped}$`).test(relative)) return true;
-        } catch { /* skip invalid pattern */ }
-      } else {
-        if (relative === pattern || relative.startsWith(pattern + '/')) {
-          return true;
-        }
+    const hasSlash = patClean.includes('/');
+
+    if (hasSlash) {
+      if (isDir) {
+        return [patClean, patClean + '/**'];
       }
+      return [patClean];
     } else {
-      if (isDirPattern) {
-        if (segments.includes(patClean)) return true;
-      } else if (pattern.startsWith('*.')) {
-        if (relative.endsWith(pattern.slice(1))) return true;
-      } else if (pattern.includes('*')) {
-        const escaped = pattern
-          .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-          .split('**')
-          .map(part => part.split('*').join('[^/]*'))
-          .join('.*')
-          .replace(/^\.\*\//, '(?:.*/)?');
-        try {
-          if (new RegExp(`^${escaped}$`).test(relative)) return true;
-          if (new RegExp(`(?:^|/)${escaped}$`).test(relative)) return true;
-        } catch { /* skip invalid pattern */ }
-      } else {
-        if (segments.includes(pattern)) return true;
-    let cleanPattern = pattern.startsWith('/') ? pattern.slice(1) : pattern;
-    if (!cleanPattern) continue;
-    if (cleanPattern.endsWith('/')) {
-      if (relative === cleanPattern.slice(0, -1) || relative.startsWith(cleanPattern)) {
-        return true;
-      }
-    } else if (cleanPattern.startsWith('*.')) {
-      if (relative.endsWith(cleanPattern.slice(1))) {
-        return true;
-      }
-    } else if (cleanPattern.includes('*')) {
-      // Convert glob to regex. Handle `**` (matches across any number of
-      // directories, including `/`) correctly: split on `**` first, replace
-      // any single `*` within the segments with `[^/]*`, then join the
-      // segments with `.*` so globstar crosses directory boundaries.
-      const escaped = cleanPattern
-        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-        .split('**')
-        .map(part => part.split('*').join('[^/]*'))
-        .join('.*')
-        .replace(/^\.\*\//, '(?:.*/)?');
-      try {
-        if (new RegExp(`^${escaped}$`).test(relative)) return true;
-      } catch { /* skip invalid pattern */ }
-    } else {
-      if (relative === cleanPattern || relative.startsWith(cleanPattern + '/')) {
-        return true;
-      }
+      return [patClean, '**/' + patClean, patClean + '/**', '**/' + patClean + '/**'];
     }
-  }
-  return false;
+  });
+
+  if (pmPatterns.length === 0) return false;
+
+  return picomatch.isMatch(relative, pmPatterns, { dot: true });
 }
 
 // 🟢 Helper to recursively read files
