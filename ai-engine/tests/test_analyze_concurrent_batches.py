@@ -47,12 +47,22 @@ def fake_groq(monkeypatch):
         user_content = messages[1]["content"]
 
         is_synthesizer = "You are the Synthesizer Agent" in user_content
+        is_first_batch = "MUST construct a valid Mermaid.js flowchart" in user_content
         
         filenames = []
         if is_synthesizer:
-            is_first_batch = "MUST construct a valid Mermaid.js flowchart" in user_content
-            if call_log:
-                filenames = call_log[-1]
+            start_marker = "Here are the specialized agent findings:\n"
+            end_marker = "\n\nYou MUST reply ONLY in a valid JSON format."
+            start = user_content.find(start_marker)
+            end = user_content.find(end_marker)
+            if start != -1 and end != -1:
+                findings_str = user_content[start + len(start_marker):end]
+                try:
+                    findings = json.loads(findings_str)
+                    if "security_findings" in findings:
+                        filenames = list(findings["security_findings"].keys())
+                except:
+                    pass
         else:
             for line in user_content.splitlines():
                 if line.startswith("--- File: ") and line.endswith(" ---"):
@@ -161,11 +171,22 @@ def test_analyze_non_first_batch_failure_is_skipped_not_fatal(monkeypatch):
         user_content = messages[1]["content"]
 
         is_synthesizer = "You are the Synthesizer Agent" in user_content
+        is_first_batch = "MUST construct a valid Mermaid.js flowchart" in user_content
         
         filenames = []
         if is_synthesizer:
-            if call_log:
-                filenames = call_log[-1]
+            start_marker = "Here are the specialized agent findings:\n"
+            end_marker = "\n\nYou MUST reply ONLY in a valid JSON format."
+            start = user_content.find(start_marker)
+            end = user_content.find(end_marker)
+            if start != -1 and end != -1:
+                findings_str = user_content[start + len(start_marker):end]
+                try:
+                    findings = json.loads(findings_str)
+                    if "security_findings" in findings:
+                        filenames = list(findings["security_findings"].keys())
+                except:
+                    pass
         else:
             for line in user_content.splitlines():
                 if line.startswith("--- File: ") and line.endswith(" ---"):
