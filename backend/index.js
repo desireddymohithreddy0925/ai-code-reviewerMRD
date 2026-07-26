@@ -902,7 +902,12 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
             resData._mock = false;
             return resData;
           } else {
-            throw new Error('AI engine responded with error');
+            let errMsg = 'AI engine responded with error';
+            try {
+              const errData = await aiResponse.json();
+              errMsg = errData.detail || errData.error || errData.message || errMsg;
+            } catch {}
+            throw new Error(errMsg);
           }
         } catch (err) {
           if (!process.env.ALLOW_MOCK_FALLBACK) {
