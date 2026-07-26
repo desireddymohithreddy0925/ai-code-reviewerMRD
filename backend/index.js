@@ -34,6 +34,7 @@ import { DANGEROUS_PHRASES, HOMOGLYPH_MAP } from './shared/dangerousPhrases.js';
 import { verifyPort } from './utils/envVerifier.js';
 import { sanitizeRedisKey } from './utils/redisSafe.js';
 import { mockAIReview } from './utils/mockAIReview.js';
+import { buildRepositoryContext } from './utils/repositoryAnalyzer.js';
 import { loadConfigFile, applySeverityConfig } from './utils/severityConfig.js';
 import AnalysisCache from './utils/analysisCache.js';
 import { getPriorReviewIds, storeReviewIds, clearReviewIds, supersedePriorReviews } from './utils/reviewTracker.js';
@@ -833,6 +834,28 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
         return res.status(400).json({ error: 'No supportable source code files found in the repository.' });
       }
 
+      console.log(`📁 Found ${files.length} valid source files. Sending to AI engine...`);
+      
+      const repositoryContext = buildRepositoryContext(files);
+
+      // 2. Mocking AI Response for initial setup (or forward to FastAPI AI Engine)
+      // This is a perfect placeholder where contributors can connect the FastAPI server!
+      const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+      
+      let reviewResult;
+      const baseUrl = aiEngineUrl.replace(/\/+$/, '');
+      try {
+        const aiResponse = await fetch(`${baseUrl}/analyze`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt, batchSize, repositoryContext })
+        });
+        
+        if (aiResponse.ok) {
+          reviewResult = await aiResponse.json();
+          reviewResult._mock = false;
+        } else {
+          throw new Error('AI engine responded with error');
       console.log(`≡ƒôü Found ${files.length} valid source files. Checking cache...`);
 
       // 1.3. Scan files for prompt injection patterns
