@@ -46,11 +46,11 @@ def fake_groq(monkeypatch):
         system_content = messages[0]["content"]
         user_content = messages[1]["content"]
 
-        is_synthesizer = "You are the Synthesizer Agent" in system_content
+        is_synthesizer = "You are the Synthesizer Agent" in user_content
         
         filenames = []
         if is_synthesizer:
-            is_first_batch = "MUST construct a valid Mermaid.js flowchart" in system_content
+            is_first_batch = "MUST construct a valid Mermaid.js flowchart" in user_content
             # Extract filenames from agent_findings JSON inside user_content
             start = user_content.find("{")
             end = user_content.rfind("}")
