@@ -319,7 +319,7 @@ async def _call_groq_with_timeout(**kwargs):
     """Run a synchronous Groq completion in a thread-pool executor with a
     configurable wall-clock timeout. Raises HTTP 504 if the LLM does not
     respond within LLM_TIMEOUT_SECONDS seconds, freeing the FastAPI worker. (#786)"""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         return await asyncio.wait_for(
             loop.run_in_executor(None, lambda: groq_client.chat.completions.create(**kwargs)),
