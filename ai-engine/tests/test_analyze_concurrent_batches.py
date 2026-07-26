@@ -43,8 +43,30 @@ def fake_groq(monkeypatch):
 
     async def fake_call_groq_with_timeout(**kwargs):
         messages = kwargs["messages"]
-        is_first_batch = "MUST construct a valid Mermaid.js flowchart" in messages[1]["content"]
-        filenames = _extract_batch_filenames(messages)
+        system_content = messages[0]["content"]
+        user_content = messages[1]["content"]
+
+        is_synthesizer = "You are the Synthesizer Agent" in system_content
+        
+        filenames = []
+        if is_synthesizer:
+            is_first_batch = "MUST construct a valid Mermaid.js flowchart" in system_content
+            # Extract filenames from agent_findings JSON inside user_content
+            start = user_content.find("{")
+            end = user_content.rfind("}")
+            if start != -1 and end != -1:
+                try:
+                    findings = json.loads(user_content[start:end+1])
+                    if "security_findings" in findings:
+                        filenames = list(findings["security_findings"].keys())
+                except:
+                    pass
+        else:
+            is_first_batch = False
+            for line in user_content.splitlines():
+                if line.startswith("--- File: ") and line.endswith(" ---"):
+                    filenames.append(line[len("--- File: "):-len(" ---")])
+        
         call_log.append(filenames)
 
         file_reviews = {
@@ -85,8 +107,8 @@ def test_analyze_merges_fileReviews_from_all_batches(fake_groq):
     for name in ("a.py", "b.py", "c.py"):
         assert data["fileReviews"][name]["bugs"][0]["description"] == f"issue in {name}"
 
-    # 3 files at batchSize=1 means 3 separate concurrent Groq calls were made.
-    assert len(fake_groq) == 3
+    # 3 files at batchSize=1 means 3 batches, each spawning 4 agents (Security, Performance, Style, Synthesizer)
+    assert len(fake_groq) == 12
 
 
 def test_analyze_readme_and_mermaid_come_only_from_first_batch(fake_groq):
@@ -118,7 +140,7 @@ def test_analyze_single_batch_still_works(fake_groq):
 
     assert "only.py" in data["fileReviews"]
     assert data["generatedReadme"] == "# Fake Readme"
-    assert len(fake_groq) == 1
+    assert len(fake_groq) == 4
 
 
 def test_analyze_first_batch_failure_aborts_whole_request(monkeypatch):
@@ -143,7 +165,28 @@ def test_analyze_non_first_batch_failure_is_skipped_not_fatal(monkeypatch):
 
     async def flaky_call(**kwargs):
         messages = kwargs["messages"]
-        filenames = _extract_batch_filenames(messages)
+        system_content = messages[0]["content"]
+        user_content = messages[1]["content"]
+
+        is_synthesizer = "You are the Synthesizer Agent" in system_content
+        
+        filenames = []
+        if is_synthesizer:
+            # Extract filenames from agent_findings JSON inside user_content
+            start = user_content.find("{")
+            end = user_content.rfind("}")
+            if start != -1 and end != -1:
+                try:
+                    findings = json.loads(user_content[start:end+1])
+                    if "security_findings" in findings:
+                        filenames = list(findings["security_findings"].keys())
+                except:
+                    pass
+        else:
+            for line in user_content.splitlines():
+                if line.startswith("--- File: ") and line.endswith(" ---"):
+                    filenames.append(line[len("--- File: "):-len(" ---")])
+
         if filenames == ["b.py"]:
             raise RuntimeError("transient failure on batch 2")
         payload = {
