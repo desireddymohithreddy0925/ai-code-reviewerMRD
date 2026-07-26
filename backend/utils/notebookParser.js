@@ -22,9 +22,11 @@ function stripMagicCommands(code) {
   const lines = code.split('\n');
   const cleanedLines = lines.map(line => {
     const trimmed = line.trim();
-    const isMagic = trimmed.startsWith('%') || trimmed.startsWith('!');
+    // Exclude single-char formats like %s by requiring at least 2 chars after % for magics
+    const isMagic = /^(?:%{1,2}[a-zA-Z_][a-zA-Z0-9_]+|!).*$/.test(trimmed);
     if (isMagic) {
-      return '# ' + line;
+      // Preserve indentation but comment it out to keep line numbers intact
+      return line.replace(/^([ \t]*)/, '$1# ');
     }
     return line;
   });
