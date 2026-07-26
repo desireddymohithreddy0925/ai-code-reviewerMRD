@@ -138,7 +138,7 @@ export interface AuditHistoryEntry {
 
 
 export default function Dashboard() {
-  const { reviewText, isStreaming, error: streamError, startStream } = useStreamingReview();
+  const { reviewText, isStreaming, error: streamError } = useStreamingReview();
   const [showSettings, setShowSettings] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
@@ -875,12 +875,31 @@ export default function Dashboard() {
     setAnalysisResult(null);
     setSelectedFile(null);
     setChatHistory([]);
+    setIsLoading(true);
+    _setLoadingStep("Cloning repository...");
     try { localStorage.removeItem('reposage_chat_history'); } catch {};
 
     try {
       const aiSettings = getSavedAiSettings();
-      await startStream({
+      
+      const steps = [
+        "Cloning repository...",
+        "Analyzing files...",
+        "Generating review...",
+        "Applying security checks..."
+      ];
+      let stepIndex = 1;
+      const stepInterval = setInterval(() => {
+        _setLoadingStep(steps[stepIndex]);
+        stepIndex = (stepIndex + 1) % steps.length;
+      }, 2000);
+
+      const response = await fetch(`${API_BASE_URL}/api/analyze`, {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": sessionStorage.getItem("reposage_api_key") || "",
+        },
         body: JSON.stringify({
           repoUrl,
           company,
@@ -903,13 +922,14 @@ export default function Dashboard() {
       }
 
       const data: BackendResponse = await response.json();
+      setAnalysisResult(data);
       const currentSessionId = data.sessionPersisted === true ? data.sessionId ?? null : null;
       setSessionId(currentSessionId);
+      
       await saveReport(data, repoUrl, currentSessionId);
       persistAuditHistory(data);
       setChatHistory([]);
 
-      // Select the first file reviewed automatically
       const filesList = Object.keys(data.analysis?.fileReviews || {});
       if (filesList.length > 0) {
         setSelectedFile(filesList[0]);
