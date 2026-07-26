@@ -34,6 +34,7 @@ import { DANGEROUS_PHRASES, HOMOGLYPH_MAP } from './shared/dangerousPhrases.js';
 import { verifyPort } from './utils/envVerifier.js';
 import { sanitizeRedisKey } from './utils/redisSafe.js';
 import { mockAIReview } from './utils/mockAIReview.js';
+import { buildRepositoryContext } from './utils/repositoryAnalyzer.js';
 import { loadConfigFile, applySeverityConfig } from './utils/severityConfig.js';
 import AnalysisCache from './utils/analysisCache.js';
 import { getPriorReviewIds, storeReviewIds, clearReviewIds, supersedePriorReviews } from './utils/reviewTracker.js';
@@ -64,7 +65,7 @@ const ALLOWED_ANALYSIS_MODELS = ["llama-3.3-70b-versatile", "deepseek-r1-distill
 // Initialize analysis cache with configurable TTL (default: 1 hour, mock: 2 minutes)
 const ANALYSIS_CACHE_TTL_MS = ((n) => Number.isFinite(n) && n > 0 ? n : 60)(parseInt(process.env.ANALYSIS_CACHE_TTL_MINUTES || '60', 10)) * 60 * 1000;
 const ANALYSIS_CACHE_MOCK_TTL_MS = ((n) => Number.isFinite(n) && n > 0 ? n : 120)(parseInt(process.env.ANALYSIS_CACHE_MOCK_TTL_SECONDS || '120', 10)) * 1000;
-const analysisCache = new AnalysisCache(ANALYSIS_CACHE_TTL_MS, ANALYSIS_CACHE_MOCK_TTL_MS);
+const analysisCache = new AnalysisCache(ANALYSIS_CACHE_TTL_MS, 2, ANALYSIS_CACHE_MOCK_TTL_MS);
 const responseCache = new AnalysisCache(ANALYSIS_CACHE_TTL_MS);
 
 // Trust the first hop of reverse proxy headers (Render, Railway, Heroku, Nginx, AWS ALB, etc.)
@@ -306,6 +307,7 @@ async function csrfProtection(req, res, next) {
       try {
         const session = await Session.findOne({ sessionId }).select('csrfToken').lean();
         if (session && session.csrfToken) {
+          if (!session?.csrfToken) { return next(); }
           const storedBuf = Buffer.from(String(session.csrfToken));
           const headerBuf = Buffer.from(String(headerToken || ''));
           if (storedBuf.length === headerBuf.length && crypto.timingSafeEqual(storedBuf, headerBuf)) {
@@ -383,11 +385,11 @@ app.post('/api/session', requireApiKey, async (req, res) => {
 });
 
 // Logout endpoint ΓÇö clears session and CSRF token
-app.post('/api/logout', requireApiKey, (req, res) => {
+app.post('/api/logout', requireApiKey, async (req, res) => {
   const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
   if (cookieToken) {
-    csrfTokenStore.delete(cookieToken);
-    csrfGraceTokenStore.delete(cookieToken);
+    await csrfTokenStore.delete(cookieToken);
+    await csrfGraceTokenStore.delete(cookieToken);
   }
   res.clearCookie(CSRF_COOKIE_NAME, { path: '/' });
   res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
@@ -627,10 +629,10 @@ const shaDedupCleanupTimer = setInterval(() => {
 shaDedupCleanupTimer.unref();
 
 function cleanupTimers() {
-  clearInterval(cacheMetricsTimer);
-  clearInterval(aiEngineHealthTimer);
-  clearInterval(exclusiveLockCleanupTimer);
-  clearInterval(shaDedupCleanupTimer);
+  if (typeof cacheMetricsTimer !== 'undefined') clearInterval(cacheMetricsTimer);
+  if (typeof aiEngineHealthTimer !== 'undefined') clearInterval(aiEngineHealthTimer);
+  if (typeof exclusiveLockCleanupTimer !== 'undefined') clearInterval(exclusiveLockCleanupTimer);
+  if (typeof shaDedupCleanupTimer !== 'undefined') clearInterval(shaDedupCleanupTimer);
 }
 
   // Loaded from shared-safety-config.json via dangerousPhrases.js
@@ -682,7 +684,7 @@ function requireJsonContentType(req, res, next) {
 }
 
 // 🚀 Route: Stream AI Review (SSE)
-app.post('/api/review/stream', requireApiKey, requireJsonContentType, analyzeLimiter, streamReview);
+app.post('/api/review/stream', requireApiKey, requireJsonContentType, llmAnalysisLimiter, streamReview);
 // ≡ƒƒó Route: GitHub Import & AI Review
 app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimiter, async (req, res) => {
   let { repoUrl, company = 'General', language = 'English', model = 'llama-3.3-70b-versatile',temperature = 0.7,
@@ -789,7 +791,16 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
   try {
     const cloneTimeout = parseInt(process.env.GIT_CLONE_TIMEOUT, 10) || 120000;
     const git = simpleGit({ timeout: { block: cloneTimeout } });
-    await git.clone(repoUrl, clonePath, ['--depth', '1', '--single-branch', `--filter=blob:limit=${maxRepoSizeMB}m`]);
+    try {
+      await git.clone(repoUrl, clonePath, ['--depth', '1', '--single-branch', `--filter=blob:limit=${maxRepoSizeMB}m`]);
+    } catch (partialErr) {
+      if (partialErr.message && partialErr.message.includes('filter') && partialErr.message.includes('not supported')) {
+        console.warn('Partial clone not supported, falling back to shallow clone');
+        await git.clone(repoUrl, clonePath, ['--depth', '1', '--single-branch']);
+      } else {
+        throw partialErr;
+      }
+    }
 
     // Check repository size
     const repoSize = await getFolderSize(clonePath);
@@ -817,10 +828,6 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
       for (const file of files) {
         if (currentPayloadLength + file.content.length > MAX_PAYLOAD_CHARS) {
           partial_review = true;
-          const allowedChars = MAX_PAYLOAD_CHARS - currentPayloadLength;
-          if (allowedChars > 0) {
-            truncatedFiles.push({ ...file, content: file.content.substring(0, allowedChars) });
-          }
           break;
         }
         truncatedFiles.push(file);
@@ -833,6 +840,28 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
         return res.status(400).json({ error: 'No supportable source code files found in the repository.' });
       }
 
+      console.log(`📁 Found ${files.length} valid source files. Sending to AI engine...`);
+      
+      const repositoryContext = buildRepositoryContext(files);
+
+      // 2. Mocking AI Response for initial setup (or forward to FastAPI AI Engine)
+      // This is a perfect placeholder where contributors can connect the FastAPI server!
+      const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+      
+      let reviewResult;
+      const baseUrl = aiEngineUrl.replace(/\/+$/, '');
+      try {
+        const aiResponse = await fetch(`${baseUrl}/analyze`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt, batchSize, repositoryContext })
+        });
+        
+        if (aiResponse.ok) {
+          reviewResult = await aiResponse.json();
+          reviewResult._mock = false;
+        } else {
+          throw new Error('AI engine responded with error');
       console.log(`≡ƒôü Found ${files.length} valid source files. Checking cache...`);
 
       // 1.3. Scan files for prompt injection patterns
@@ -848,7 +877,10 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
       }
 
       // 1.5. Check analysis cache to avoid redundant LLM calls for identical analyses
-      const scrubbedFiles = files.map(file => ({
+      const CONFIG_FILENAME = '.codereviewer.yml';
+      const scrubbedFiles = files
+        .filter(f => f.name !== CONFIG_FILENAME)
+        .map(file => ({
         ...file,
         content: scrubRepositoryPayload(file.content)
       }));
@@ -875,9 +907,17 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
             resData._mock = false;
             return resData;
           } else {
-            throw new Error('AI engine responded with error');
+            let errMsg = 'AI engine responded with error';
+            try {
+              const errData = await aiResponse.json();
+              errMsg = errData.detail || errData.error || errData.message || errMsg;
+            } catch {}
+            throw new Error(errMsg);
           }
         } catch (err) {
+          if (!process.env.ALLOW_MOCK_FALLBACK) {
+            throw new Error('AI engine unavailable and mock fallback not enabled');
+          }
           console.warn('⚠️ FastAPI engine not running, falling back to local Express review handler');
           const mockRes = mockAIReview(scrubbedFiles, model);
           mockRes._mock = true;
@@ -1181,7 +1221,7 @@ if (reviewResult?.fileReviews) {
       };
 
       if (finalCacheKey && !reviewResult?._mock) {
-        responseCache.set(finalCacheKey, responseObject, repoUrl);
+        responseCache.set(finalCacheKey, responseObject, { repoUrl });
       }
 
       return res.json(responseObject);
@@ -1258,6 +1298,9 @@ app.post('/api/analyze-file', requireApiKey, requireJsonContentType, llmAnalysis
     } catch (err) {
       if (err.message.includes('authentication failed')) {
         throw err;
+      }
+      if (!process.env.ALLOW_MOCK_FALLBACK) {
+        throw new Error('AI engine unavailable and mock fallback not enabled');
       }
       const { mockAIReview } = await import('./utils/mockAIReview.js');
       const mockRes = mockAIReview(files, model);
@@ -2312,7 +2355,7 @@ function sanitizeFilename(repoName) {
   try { str = decodeURIComponent(str); } catch { /* keep original */ }
   str = str.normalize('NFKC');
   str = str.replace(/\0/g, '');
-  str = str.replace(/[/\\]+/g, '/').replace(/\.\.\/|\.\\/g, '');
+  str = str.replace(/[/\\]+/g, '/').replace(/\.\.(\/|\\)/g, '');
   str = str.replace(/\.\.+/g, '_').replace(/(?:^|\/)[.]+(?=\/|$)/g, '_');
   str = str.replace(/[^\w.-]+/g, '_');
   if (str.length === 0) return 'untitled_repo';
