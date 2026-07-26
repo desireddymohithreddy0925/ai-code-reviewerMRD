@@ -3,6 +3,10 @@
  * Supports: * (non-slash wildcard), ** (recursive), ? (single char), . (escaped).
  */
 export function globToRegex(pattern) {
+  if (pattern.length > 1024) {
+    throw new Error(`Glob pattern too long (${pattern.length} chars, max 1024)`);
+  }
+
   let regexStr = '^';
   let i = 0;
   while (i < pattern.length) {
@@ -21,11 +25,11 @@ export function globToRegex(pattern) {
     } else if (ch === '?') {
       regexStr += '[^/]';
       i++;
-    } else if (ch === '.') {
-      regexStr += '\\.';
-      i++;
     } else if (ch === '/') {
       regexStr += '/';
+      i++;
+    } else if ('\\.+*?^${}()|[]'.includes(ch)) {
+      regexStr += '\\' + ch;
       i++;
     } else {
       regexStr += ch;

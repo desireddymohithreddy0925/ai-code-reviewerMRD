@@ -49,8 +49,58 @@ export function loadIgnorePatterns(dir) {
 export function isIgnored(filePath, patterns, baseDir) {
   if (!patterns || !Array.isArray(patterns)) return false;
   const relative = path.relative(baseDir, filePath).replace(/\\/g, '/');
+  if (relative.startsWith('../') || relative === '..') return false;
+  const segments = relative.split('/');
+
   for (const pattern of patterns) {
     if (typeof pattern !== 'string') continue;
+    
+    const isDirPattern = pattern.endsWith('/');
+    const patClean = isDirPattern ? pattern.slice(0, -1) : pattern;
+    const patHasSlash = patClean.includes('/');
+
+    if (patHasSlash) {
+      if (isDirPattern) {
+        if (relative === patClean || relative.startsWith(pattern)) {
+          return true;
+        }
+      } else if (pattern.startsWith('*.')) {
+        if (relative.endsWith(pattern.slice(1))) {
+          return true;
+        }
+      } else if (pattern.includes('*')) {
+        const escaped = pattern
+          .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+          .split('**')
+          .map(part => part.split('*').join('[^/]*'))
+          .join('.*')
+          .replace(/^\.\*\//, '(?:.*/)?');
+        try {
+          if (new RegExp(`^${escaped}$`).test(relative)) return true;
+        } catch { /* skip invalid pattern */ }
+      } else {
+        if (relative === pattern || relative.startsWith(pattern + '/')) {
+          return true;
+        }
+      }
+    } else {
+      if (isDirPattern) {
+        if (segments.includes(patClean)) return true;
+      } else if (pattern.startsWith('*.')) {
+        if (relative.endsWith(pattern.slice(1))) return true;
+      } else if (pattern.includes('*')) {
+        const escaped = pattern
+          .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+          .split('**')
+          .map(part => part.split('*').join('[^/]*'))
+          .join('.*')
+          .replace(/^\.\*\//, '(?:.*/)?');
+        try {
+          if (new RegExp(`^${escaped}$`).test(relative)) return true;
+          if (new RegExp(`(?:^|/)${escaped}$`).test(relative)) return true;
+        } catch { /* skip invalid pattern */ }
+      } else {
+        if (segments.includes(pattern)) return true;
     let cleanPattern = pattern.startsWith('/') ? pattern.slice(1) : pattern;
     if (!cleanPattern) continue;
     if (cleanPattern.endsWith('/')) {
@@ -138,7 +188,6 @@ export function readFilesRecursively(dir, fileList = [], baseDir = dir, ignorePa
 
       if (validExtensions.includes(ext) || isExtensionless) {
         try {
-          const stat = fs.statSync(filePath);
           if (stat.size > MAX_FILE_SIZE) {
             if (validExtensions.includes(ext)) {
               skippedFiles.push({ name: path.relative(baseDir, filePath).replace(/\\/g, '/'), reason: 'File exceeds size limit of 100KB', size: stat.size });

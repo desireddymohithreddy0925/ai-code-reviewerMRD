@@ -298,23 +298,22 @@ def validate_system_prompt(prompt: str, max_len: int = 2000) -> str:
     
     homoglyph_normalized = normalize_homoglyphs(truncated)
 
-    lower_before = homoglyph_normalized.lower()
+    lower_normalized = homoglyph_normalized.lower()
 
+    stripped = homoglyph_normalized
     found = []
     for phrase in DANGEROUS_PATTERNS:
         pattern = r"\s+".join(re.escape(w) for w in phrase.split())
-        if re.search(pattern, lower_before):
+        if re.search(pattern, lower_normalized):
             found.append(phrase)
-    
+            phrase_pattern = r"\s+".join(re.escape(w) for w in phrase.split())
+            stripped = re.sub(phrase_pattern, '[REDACTED]', stripped, flags=re.IGNORECASE)
+
     if found:
         details = "; ".join(f"'{p}'" for p in found)
-        print(f"⚠️ System prompt rejected: contains prohibited directives: {details}")
-        raise HTTPException(
-            status_code=422,
-            detail=f"System prompt rejected: contains prohibited directive(s): {details}. "
-                   f"Please remove them and try again."
-        )
-    return homoglyph_normalized[:max_len]
+        print(f"⚠️ System prompt stripped dangerous phrase(s): {details}")
+
+    return stripped[:max_len]
 async def _call_groq_with_timeout(**kwargs):
     """Run a synchronous Groq completion in a thread-pool executor with a
     configurable wall-clock timeout. Raises HTTP 504 if the LLM does not
@@ -1093,6 +1092,7 @@ class FileChanges(BaseModel):
 class ReviewDiffRequest(BaseModel):
     files: List[FileChanges]
     model: Optional[str] = "llama-3.3-70b-versatile"
+    security_mode: Optional[bool] = False
 
 class CleanupRequest(BaseModel):
     current_files: List[str]
@@ -1249,12 +1249,22 @@ async def review_diff(request: ReviewDiffRequest, raw_request: Request):
                 changes_text = sanitize_file_content(changes_text)
         
                 # FIXED: Prompt now explicitly requests a JSON object {"reviews": [...]}
-                review_prompt = f"""You are a Senior Staff Engineer performing an automated Pull Request code review.
+                if request.security_mode:
+                    review_prompt = f"""You are a dedicated DevSecOps engineer performing a rigorous security audit on this Pull Request.
+Analyze the following code additions in the file "{file.path}". 
+You must HUNT EXCLUSIVELY for OWASP Top 10 vulnerabilities (SQLi, XSS, CSRF, hardcoded secrets, injection, insecure deserialization). Ignore all stylistic, naming, or architectural nitpicks.
+If you find a vulnerability, provide a detailed exploit scenario.
+
+You must answer strictly based on the provided code additions. Do not use any external knowledge. If you cannot identify any critical security issues, return an empty array inside the reviews object.
+"""
+                else:
+                    review_prompt = f"""You are a Senior Staff Engineer performing an automated Pull Request code review.
 Analyze the following code additions in the file "{file.path}". 
 Identify any logical bugs, security threats (API key leaks, hardcoded credentials, SQL injection, null references), naming/style issues, or performance optimization opportunities.
 
 You must answer strictly based on the provided code additions. Do not use any external knowledge, assumptions, or information beyond the code changes shown above. If you cannot identify any issues in the provided code, return an empty array inside the reviews object.
-
+"""
+                review_prompt += f"""
 Code additions with line numbers:
 {changes_text}
 
@@ -1471,4 +1481,3 @@ if __name__ == "__main__":
     import uvicorn
     reload_enabled = os.getenv("UVICORN_RELOAD", "false").lower() == "true"
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=reload_enabled, proxy_headers=True, forwarded_allow_ips="*")
-# TODO: Issue #395 - Bug [AI Engine]: `validate_system_prompt` fails to strip multiple occurrences of dangerous phrases
