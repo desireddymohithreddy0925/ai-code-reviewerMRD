@@ -349,8 +349,10 @@ async def global_exception_handler(request, exc):
     key = os.getenv("GROQ_API_KEY") or ""
     sanitized = sanitize_error(str(exc), key)
     import traceback
+    raw_tb = traceback.format_exc()
+    sanitized_tb = sanitize_error(raw_tb, key)
     print(f"Unhandled exception: {sanitized}")
-    print(traceback.format_exc())
+    print(sanitized_tb)
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"},
