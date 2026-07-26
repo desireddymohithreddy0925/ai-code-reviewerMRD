@@ -56,8 +56,6 @@ class DedupStore {
       }
     }
     if (!this.memoryStore.has(key) || !(this.memoryStore.get(key).value instanceof Set)) {
-      this.memoryStore.set(key, { value: new Set(), expiresAt: Infinity });
-    if (!this.memoryStore.has(key)) {
       this.memoryStore.set(key, { value: new Set(), expiresAt: Date.now() + ttlMs });
     }
     const entry = this.memoryStore.get(key);
@@ -97,14 +95,14 @@ class DedupStore {
       }
     }
     const entry = this.memoryStore.get(key);
-    if (entry && entry.value instanceof Set) {
-      entry.value.delete(member);
     if (!entry) return;
     if (Date.now() > entry.expiresAt) {
       this.memoryStore.delete(key);
       return;
     }
-    if (entry.value instanceof Set) entry.value.delete(member);
+    if (entry.value instanceof Set) {
+      entry.value.delete(member);
+    }
   }
 
   async expire(key, ttlMs) {

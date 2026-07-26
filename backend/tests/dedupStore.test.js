@@ -21,9 +21,6 @@ test('DedupStore: expires memory entries after TTL', async () => {
   assert.equal(await store.get('key1'), null);
 });
 
-test('DedupStore: set operations (addToSet, isMember, removeFromSet) behave correctly in memory', async () => {
-  const store = new DedupStore();
-
 test('DedupStore: sets and gets values in memory when Redis is absent', async () => {
   const store = new DedupStore();
   await store.set('key1', 'value1', 100);
@@ -64,14 +61,7 @@ test('DedupStore: handles type transitions safely without throwing TypeError', a
   // 4. Calling addToSet should safely overwrite/re-initialize the value as a Set
   await store.addToSet('mixedKey', 'member');
   assert.equal(await store.isMember('mixedKey', 'member'), true);
-  // Expire the key in memory
-  await store.expire('set1', 20);
-  assert.equal(await store.isMember('set1', 'member1'), true);
 
-  // Wait for expiration
-  await new Promise(r => setTimeout(r, 30));
-  assert.equal(await store.isMember('set1', 'member1'), false, 'Should return false after expiration');
-  assert.equal(await store.has('set1'), false, 'Should be fully evicted');
 });
 
 test('DedupStore: delete removes the entry and subsequent has returns false', async () => {
