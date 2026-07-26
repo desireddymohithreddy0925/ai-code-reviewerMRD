@@ -31,16 +31,19 @@ def test_analyze_creates_refactoring_pr(monkeypatch):
     
     monkeypatch.setattr(app_module, "_call_groq_with_timeout", fake_call_groq_with_timeout)
 
-    mock_post = AsyncMock()
-    mock_post.return_value.status_code = 201
-    mock_post.return_value.json.return_value = {"html_url": "https://github.com/test/repo/pull/1"}
+    mock_response_post = MagicMock()
+    mock_response_post.status_code = 201
+    mock_response_post.json.return_value = {"html_url": "https://github.com/test/repo/pull/1"}
+    mock_post = AsyncMock(return_value=mock_response_post)
     
-    mock_get = AsyncMock()
-    mock_get.return_value.status_code = 200
-    mock_get.return_value.json.return_value = {"object": {"sha": "basesha123"}, "sha": "filesha123"}
+    mock_response_get = MagicMock()
+    mock_response_get.status_code = 200
+    mock_response_get.json.return_value = {"object": {"sha": "basesha123"}, "sha": "filesha123"}
+    mock_get = AsyncMock(return_value=mock_response_get)
     
-    mock_put = AsyncMock()
-    mock_put.return_value.status_code = 201
+    mock_response_put = MagicMock()
+    mock_response_put.status_code = 201
+    mock_put = AsyncMock(return_value=mock_response_put)
     
     mock_client_instance = MagicMock()
     mock_client_instance.get = mock_get
