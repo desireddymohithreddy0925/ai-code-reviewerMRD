@@ -11,6 +11,12 @@ export function parseDiff(diffStr) {
 
   for (const line of lines) {
     if (line.startsWith('diff --git')) {
+      let match = line.match(/^diff --git "a\/(.+?)" "b\/(.+?)"$/);
+      if (!match) {
+        match = line.match(/^diff --git a\/(.+) b\/(.+)$/);
+      }
+      if (match) {
+        const cleanPath = match[2];
       const match = line.match(/(?:^| )"?b\/(.+?)"?$/);
       if (match) {
         const cleanPath = match[1];
