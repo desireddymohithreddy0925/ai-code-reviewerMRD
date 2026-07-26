@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 import bleach
 from bleach.css_sanitizer import CSSSanitizer
 import vectorstore
+import extractor
 from embeddings import is_fallback_active
 from config_loader import load_config_from_files, ConfigValidationError, CONFIG_FILENAME
 from diff_helper import get_changed_files_from_git, filter_files_by_changes, format_diff_header
@@ -1442,6 +1443,27 @@ async def get_paginated_chunks(request: PaginatedChunksRequest):
     chunks = get_chunks_paginated(limit=request.limit, offset=request.offset, repo_url=request.repo_url)
     stats = get_collection_stats(repo_url=request.repo_url)
     return PaginatedChunksResponse(chunks=chunks, total_chunks=stats["chunk_count"])
+
+
+class ExtractRequest(BaseModel):
+    files: List[FileItem]
+
+
+class ExtractResponse(BaseModel):
+    chunks: List[dict]
+
+
+# 🟢 Route: Extract code chunks (classes, functions, methods) for Python, JS, Java
+@app.post("/api/extract", response_model=ExtractResponse)
+@app.post("/extract", response_model=ExtractResponse)
+async def extract_code_chunks(request: ExtractRequest):
+    all_chunks = []
+    for file_item in request.files:
+        chunks = extractor.extract_chunks(file_item.name, file_item.content)
+        all_chunks.extend(chunks)
+    return ExtractResponse(chunks=all_chunks)
+
+
 
 
 if __name__ == "__main__":
