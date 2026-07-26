@@ -50,7 +50,7 @@ export function cleanAndParseJSON(responseText) {
     }
     return JSON.parse(cleaned);
   } catch {
-    return { reviews: [] };
+    return null;
   }
 }
 
