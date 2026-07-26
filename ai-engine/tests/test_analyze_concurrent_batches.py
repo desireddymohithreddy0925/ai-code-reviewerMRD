@@ -43,31 +43,8 @@ def fake_groq(monkeypatch):
 
     async def fake_call_groq_with_timeout(**kwargs):
         messages = kwargs["messages"]
-        system_content = messages[0]["content"]
-        user_content = messages[1]["content"]
-
-        is_synthesizer = "You are the Synthesizer Agent" in user_content
-        is_first_batch = "MUST construct a valid Mermaid.js flowchart" in user_content
-        
-        filenames = []
-        if is_synthesizer:
-            start_marker = "Here are the specialized agent findings:\n"
-            end_marker = "\n\nYou MUST reply ONLY in a valid JSON format."
-            start = user_content.find(start_marker)
-            end = user_content.find(end_marker)
-            if start != -1 and end != -1:
-                findings_str = user_content[start + len(start_marker):end]
-                try:
-                    findings = json.loads(findings_str)
-                    if "security_findings" in findings:
-                        filenames = list(findings["security_findings"].keys())
-                except:
-                    pass
-        else:
-            for line in user_content.splitlines():
-                if line.startswith("--- File: ") and line.endswith(" ---"):
-                    filenames.append(line[len("--- File: "):-len(" ---")])
-        
+        is_first_batch = "MUST construct a valid Mermaid.js flowchart" in messages[1]["content"]
+        filenames = _extract_batch_filenames(messages)
         call_log.append(filenames)
 
         file_reviews = {
@@ -76,7 +53,6 @@ def fake_groq(monkeypatch):
                 "security": [],
                 "optimization": [],
                 "styling": [],
-                "impact": []
             }
             for name in filenames
         }
@@ -109,8 +85,8 @@ def test_analyze_merges_fileReviews_from_all_batches(fake_groq):
     for name in ("a.py", "b.py", "c.py"):
         assert data["fileReviews"][name]["bugs"][0]["description"] == f"issue in {name}"
 
-    # 3 files at batchSize=1 means 3 batches, each spawning 4 agents (Security, Performance, Style, Synthesizer)
-    assert len(fake_groq) == 12
+    # 3 files at batchSize=1 means 3 separate concurrent Groq calls were made.
+    assert len(fake_groq) == 3
 
 
 def test_analyze_readme_and_mermaid_come_only_from_first_batch(fake_groq):
@@ -142,7 +118,7 @@ def test_analyze_single_batch_still_works(fake_groq):
 
     assert "only.py" in data["fileReviews"]
     assert data["generatedReadme"] == "# Fake Readme"
-    assert len(fake_groq) == 4
+    assert len(fake_groq) == 1
 
 
 def test_analyze_first_batch_failure_aborts_whole_request(monkeypatch):
@@ -164,41 +140,14 @@ def test_analyze_first_batch_failure_aborts_whole_request(monkeypatch):
 
 def test_analyze_non_first_batch_failure_is_skipped_not_fatal(monkeypatch):
     monkeypatch.setattr(app_module, "groq_client", MagicMock())
-    call_log = []
 
     async def flaky_call(**kwargs):
         messages = kwargs["messages"]
-        system_content = messages[0]["content"]
-        user_content = messages[1]["content"]
-
-        is_synthesizer = "You are the Synthesizer Agent" in user_content
-        is_first_batch = "MUST construct a valid Mermaid.js flowchart" in user_content
-        
-        filenames = []
-        if is_synthesizer:
-            start_marker = "Here are the specialized agent findings:\n"
-            end_marker = "\n\nYou MUST reply ONLY in a valid JSON format."
-            start = user_content.find(start_marker)
-            end = user_content.find(end_marker)
-            if start != -1 and end != -1:
-                findings_str = user_content[start + len(start_marker):end]
-                try:
-                    findings = json.loads(findings_str)
-                    if "security_findings" in findings:
-                        filenames = list(findings["security_findings"].keys())
-                except:
-                    pass
-        else:
-            for line in user_content.splitlines():
-                if line.startswith("--- File: ") and line.endswith(" ---"):
-                    filenames.append(line[len("--- File: "):-len(" ---")])
-        
-        call_log.append(filenames)
-
+        filenames = _extract_batch_filenames(messages)
         if filenames == ["b.py"]:
             raise RuntimeError("transient failure on batch 2")
         payload = {
-            "fileReviews": {name: {"bugs": [], "security": [], "optimization": [], "styling": [], "impact": []} for name in filenames},
+            "fileReviews": {name: {"bugs": [], "security": [], "optimization": [], "styling": []} for name in filenames},
             "generatedReadme": "# Fake Readme",
             "mermaidDiagram": "graph TD\n  A[\"S\"] --> B[\"E\"]",
         }

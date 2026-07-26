@@ -111,38 +111,9 @@ Format your JSON precisely as:
       ],
       "styling": [
         {{ "type": "convention issue", "line": 15, "description": "...", "suggestion": "..." }}
-      ],
-      "impact": [
-        {{ "type": "breaking change", "line": 5, "description": "...", "suggestion": "..." }}
       ]
     }}
   }}{readme_mermaid_schema}
-}}
-
-You must obey the JSON output format above."""
-
-IMPACT_ANALYSIS_AGENT_PROMPT = """Target Company Persona: {company}
-Response Language: {language}
-
-Review this repository codebase batch focusing strictly on CROSS-REPOSITORY DEPENDENCY IMPACT. Look for backwards-incompatible API changes, removed exports, signature modifications, or any changes that could break downstream repositories relying on these contracts.
-Ignore other aspects like styling, security, or general performance.
-
-Here is the repository structure for context:
-{structure_text}
-
-Here is the contents of files for this batch:
-{contents_text}
-
-You MUST reply ONLY in a valid JSON format. Do not write markdown wrapping, do not write explanations before or after.
-Format your JSON precisely as:
-{{
-  "fileReviews": {{
-    "file_path_1": {{
-      "impact": [
-        {{ "type": "breaking change", "line": 5, "description": "...", "suggestion": "..." }}
-      ]
-    }}
-  }}
 }}
 
 You must obey the JSON output format above."""

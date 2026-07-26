@@ -5,7 +5,6 @@ from .prompts import (
     SECURITY_AGENT_PROMPT,
     PERFORMANCE_AGENT_PROMPT,
     STYLE_AGENT_PROMPT,
-    IMPACT_ANALYSIS_AGENT_PROMPT,
     SYNTHESIZER_AGENT_PROMPT
 )
 
@@ -14,8 +13,6 @@ async def _run_agent(agent_name: str, system_prompt: str, user_prompt: str, llm_
         return await llm_caller(system_prompt, user_prompt)
     except Exception as e:
         print(f"⚠️ {agent_name} Agent failed: {e}")
-        if agent_name == "Synthesizer":
-            raise
         return {}
 
 async def run_batch_pipeline(
@@ -46,30 +43,22 @@ async def run_batch_pipeline(
         structure_text=structure_text,
         contents_text=contents_text
     )
-    impact_user_prompt = IMPACT_ANALYSIS_AGENT_PROMPT.format(
-        company=company,
-        language=language,
-        structure_text=structure_text,
-        contents_text=contents_text
-    )
 
     # Dispatch concurrently
-    print(f"⏳ Dispatching Security, Performance, Style, and Impact agents concurrently...")
+    print(f"⏳ Dispatching Security, Performance, and Style agents concurrently...")
     results = await asyncio.gather(
         _run_agent("Security", base_prompt, security_user_prompt, llm_caller),
         _run_agent("Performance", base_prompt, performance_user_prompt, llm_caller),
-        _run_agent("Style", base_prompt, style_user_prompt, llm_caller),
-        _run_agent("Impact", base_prompt, impact_user_prompt, llm_caller)
+        _run_agent("Style", base_prompt, style_user_prompt, llm_caller)
     )
     
-    security_res, performance_res, style_res, impact_res = results
+    security_res, performance_res, style_res = results
     
     # Combine findings to send to Synthesizer
     combined_findings = {
         "security_findings": security_res.get("fileReviews", {}),
         "performance_findings": performance_res.get("fileReviews", {}),
-        "style_findings": style_res.get("fileReviews", {}),
-        "impact_findings": impact_res.get("fileReviews", {})
+        "style_findings": style_res.get("fileReviews", {})
     }
     
     readme_mermaid_instructions = ""
