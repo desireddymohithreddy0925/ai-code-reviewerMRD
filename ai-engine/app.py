@@ -231,7 +231,7 @@ def sanitize_mermaid_code(mermaid_text: str) -> str:
     dangerous = re.compile(r'<[^>]*>|javascript:|vbscript:|data:\s*text/html|\bon\w+\s*=', re.IGNORECASE)
     if dangerous.search(mermaid_text):
         return "graph TD\n    A[\"Diagram omitted: security concern\"]"
-    valid_start = re.compile(r'^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|gitgraph)\s', re.MULTILINE)
+    valid_start = re.compile(r'^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|gitgraph)\s')
     if not valid_start.search(mermaid_text):
         return "graph TD\n    A[\"Diagram omitted: invalid format\"]"
     return mermaid_text
