@@ -905,6 +905,9 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
             throw new Error('AI engine responded with error');
           }
         } catch (err) {
+          if (!process.env.ALLOW_MOCK_FALLBACK) {
+            throw new Error('AI engine unavailable and mock fallback not enabled');
+          }
           console.warn('⚠️ FastAPI engine not running, falling back to local Express review handler');
           const mockRes = mockAIReview(scrubbedFiles, model);
           mockRes._mock = true;
@@ -1285,6 +1288,9 @@ app.post('/api/analyze-file', requireApiKey, requireJsonContentType, llmAnalysis
     } catch (err) {
       if (err.message.includes('authentication failed')) {
         throw err;
+      }
+      if (!process.env.ALLOW_MOCK_FALLBACK) {
+        throw new Error('AI engine unavailable and mock fallback not enabled');
       }
       const { mockAIReview } = await import('./utils/mockAIReview.js');
       const mockRes = mockAIReview(files, model);
