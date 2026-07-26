@@ -872,7 +872,10 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
       }
 
       // 1.5. Check analysis cache to avoid redundant LLM calls for identical analyses
-      const scrubbedFiles = files.map(file => ({
+      const CONFIG_FILENAME = '.codereviewer.yml';
+      const scrubbedFiles = files
+        .filter(f => f.name !== CONFIG_FILENAME)
+        .map(file => ({
         ...file,
         content: scrubRepositoryPayload(file.content)
       }));
