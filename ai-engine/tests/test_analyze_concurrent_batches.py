@@ -51,18 +51,9 @@ def fake_groq(monkeypatch):
         filenames = []
         if is_synthesizer:
             is_first_batch = "MUST construct a valid Mermaid.js flowchart" in user_content
-            # Extract filenames from agent_findings JSON inside user_content
-            start = user_content.find("{")
-            end = user_content.rfind("}")
-            if start != -1 and end != -1:
-                try:
-                    findings = json.loads(user_content[start:end+1])
-                    if "security_findings" in findings:
-                        filenames = list(findings["security_findings"].keys())
-                except:
-                    pass
+            if call_log:
+                filenames = call_log[-1]
         else:
-            is_first_batch = False
             for line in user_content.splitlines():
                 if line.startswith("--- File: ") and line.endswith(" ---"):
                     filenames.append(line[len("--- File: "):-len(" ---")])
@@ -162,30 +153,25 @@ def test_analyze_first_batch_failure_aborts_whole_request(monkeypatch):
 
 def test_analyze_non_first_batch_failure_is_skipped_not_fatal(monkeypatch):
     monkeypatch.setattr(app_module, "groq_client", MagicMock())
+    call_log = []
 
     async def flaky_call(**kwargs):
         messages = kwargs["messages"]
         system_content = messages[0]["content"]
         user_content = messages[1]["content"]
 
-        is_synthesizer = "You are the Synthesizer Agent" in system_content
+        is_synthesizer = "You are the Synthesizer Agent" in user_content
         
         filenames = []
         if is_synthesizer:
-            # Extract filenames from agent_findings JSON inside user_content
-            start = user_content.find("{")
-            end = user_content.rfind("}")
-            if start != -1 and end != -1:
-                try:
-                    findings = json.loads(user_content[start:end+1])
-                    if "security_findings" in findings:
-                        filenames = list(findings["security_findings"].keys())
-                except:
-                    pass
+            if call_log:
+                filenames = call_log[-1]
         else:
             for line in user_content.splitlines():
                 if line.startswith("--- File: ") and line.endswith(" ---"):
                     filenames.append(line[len("--- File: "):-len(" ---")])
+        
+        call_log.append(filenames)
 
         if filenames == ["b.py"]:
             raise RuntimeError("transient failure on batch 2")
