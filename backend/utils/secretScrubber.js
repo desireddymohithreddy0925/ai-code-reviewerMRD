@@ -14,8 +14,8 @@ const SECRET_DETECTION_RULES = [
   // Generic High-Entropy API Keys / Tokens in assignments
   /(?:api[_\-]?key|secret[_\-]?key|auth[_\-]?token|access[_\-]?token)['"]?\s*[:=]\s*['"]?([a-zA-Z0-9\-_]{20,})['"]?/gi,
 
-  // Generic Bearer Authorization Tokens
-  /\bBearer\s+([a-zA-Z0-9\-_.=~+]{20,})\b/gi
+  // Generic Bearer Authorization Tokens (require Authorization header context)
+  /(?:Authorization|authorization|auth)\s*:\s*Bearer\s+([a-zA-Z0-9\-_.=~+]{20,})\b/gi
 ];
 
 function hasSecretContext(line) {
