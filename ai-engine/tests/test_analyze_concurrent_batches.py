@@ -85,6 +85,7 @@ def fake_groq(monkeypatch):
         if is_first_batch:
             payload["generatedReadme"] = "# Fake Readme"
             payload["mermaidDiagram"] = "graph TD\n  A[\"Start\"] --> B[\"End\"]"
+            payload["complexityHeatmap"] = "graph TD\n  A[\"file1.py\"]:::high"
 
         return _make_fake_completion(json.dumps(payload))
 
@@ -127,6 +128,7 @@ def test_analyze_readme_and_mermaid_come_only_from_first_batch(fake_groq):
 
     assert data["generatedReadme"] == "# Fake Readme"
     assert "graph TD" in data["mermaidDiagram"]
+    assert "graph TD" in data["complexityHeatmap"]
 
 
 def test_analyze_single_batch_still_works(fake_groq):

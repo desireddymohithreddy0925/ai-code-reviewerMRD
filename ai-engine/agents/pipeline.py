@@ -77,11 +77,13 @@ async def run_batch_pipeline(
     if is_first_batch:
         readme_mermaid_instructions = (
             "4. Additionally, you MUST construct a valid Mermaid.js flowchart (graph TD) that outlines the file structure, architecture, and import/dependency flows of the codebase. Ensure it compiles cleanly (use simple alphanumeric identifiers for node IDs, and wrap node labels in double quotes, e.g. A[\"label\"]).\n"
-            "5. Generate a highly detailed, professional README.md markdown for the entire repository, outlining installation, folder structure, features, tech stack, and usage guidelines."
+            "5. Generate a Code Complexity Heatmap (Mermaid.js graph TD) based on your estimation of cyclomatic and cognitive complexity of the changed files. Use classes to color nodes (e.g., Red for high risk, Yellow for medium, Green for low) to help reviewers triage the PR.\n"
+            "6. Generate a highly detailed, professional README.md markdown for the entire repository, outlining installation, folder structure, features, tech stack, and usage guidelines."
         )
         readme_mermaid_schema = (
             ",\n  \"generatedReadme\": \"Write a highly detailed, professional README.md markdown...\",\n"
-            "  \"mermaidDiagram\": \"graph TD\\n  A[\\\"Entry Point\\\"] --> B[\\\"Module\\\"]\""
+            "  \"mermaidDiagram\": \"graph TD\\n  A[\\\"Entry Point\\\"] --> B[\\\"Module\\\"]\",\n"
+            "  \"complexityHeatmap\": \"graph TD\\n  A[\\\"file1.py\\\"]:::high\\n  B[\\\"file2.py\\\"]:::low\\n  classDef high fill:#f96,stroke:#333;\\n  classDef low fill:#9f6,stroke:#333;\""
         )
         
     synthesizer_user_prompt = SYNTHESIZER_AGENT_PROMPT.format(
