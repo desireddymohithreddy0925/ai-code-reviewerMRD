@@ -358,7 +358,7 @@ async def global_exception_handler(request, exc):
 
 
 def verify_api_key(x_api_key: str = Header(None)):
-    expected_key = os.getenv("API_KEY")
+    expected_key = API_KEY
     if expected_key and not hmac.compare_digest(x_api_key or "", expected_key):
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
