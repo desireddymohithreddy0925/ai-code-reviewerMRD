@@ -1266,8 +1266,7 @@ async def review_diff(request: ReviewDiffRequest, raw_request: Request):
                 # FIXED: Prompt now explicitly requests a JSON object {"reviews": [...]}
                 custom_rules_text = f"CRITICAL CUSTOM REPOSITORY RULES:\n{request.custom_rules}\n\nYou MUST strictly adhere to the above custom repository rules over any default guidelines.\n" if request.custom_rules else ""
                 
-                review_prompt = """You are a Senior Staff Engineer performing an automated Pull Request code review.
-Analyze the following code additions in the file "{file_path}". 
+
                 if request.security_mode:
                     review_prompt = f"""You are a dedicated DevSecOps engineer performing a rigorous security audit on this Pull Request.
 Analyze the following code additions in the file "{file.path}". 
@@ -1304,7 +1303,7 @@ Format your JSON precisely as:
     }}
   ]
 }}
-If no issues are found, reply with: {{ "reviews": [] }}""".format(file_path=file.path, custom_rules_text=custom_rules_text, changes_text=changes_text)
+If no issues are found, reply with: {{ "reviews": [] }}"""
 
                 try:
                     # We specify response_format={"type": "json_object"} to enforce JSON output. 
