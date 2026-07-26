@@ -46,7 +46,8 @@ def test_analyze_creates_refactoring_pr(monkeypatch):
     mock_client_instance.get = mock_get
     mock_client_instance.post = mock_post
     mock_client_instance.put = mock_put
-    mock_client_instance.__aenter__.return_value = mock_client_instance
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=None)
     
     with patch("httpx.AsyncClient", return_value=mock_client_instance):
         payload = {

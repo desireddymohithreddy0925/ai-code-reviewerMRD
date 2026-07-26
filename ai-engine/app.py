@@ -11,6 +11,7 @@ import unicodedata
 import urllib.parse
 import ipaddress
 import httpx
+import base64
 from collections import OrderedDict
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
