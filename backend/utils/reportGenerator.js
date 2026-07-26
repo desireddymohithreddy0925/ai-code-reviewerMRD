@@ -16,8 +16,11 @@ const SCHEMA_VERSION = '1.0';
 
 function generateJSONReport(repoName, files, reviewResult, outputPath) {
   const allFindings = [];
-  const severityCount = { error: 0, warning: 0, info: 0 };
-  const categoryCount = {};
+  const severityCount = Object.create(null);
+  severityCount.error = 0;
+  severityCount.warning = 0;
+  severityCount.info = 0;
+  const categoryCount = Object.create(null);
 
   if (reviewResult && reviewResult.fileReviews) {
     for (const [filePath, review] of Object.entries(reviewResult.fileReviews)) {
@@ -75,7 +78,10 @@ function generateJSONReport(repoName, files, reviewResult, outputPath) {
 
 function generateHTMLReport(repoName, files, reviewResult, outputPath) {
   const allFindings = [];
-  const severityCount = { error: 0, warning: 0, info: 0 };
+  const severityCount = Object.create(null);
+  severityCount.error = 0;
+  severityCount.warning = 0;
+  severityCount.info = 0;
 
   if (reviewResult && reviewResult.fileReviews) {
     for (const [filePath, review] of Object.entries(reviewResult.fileReviews)) {
