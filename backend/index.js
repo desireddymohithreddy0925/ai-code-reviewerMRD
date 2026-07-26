@@ -791,7 +791,16 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
   try {
     const cloneTimeout = parseInt(process.env.GIT_CLONE_TIMEOUT, 10) || 120000;
     const git = simpleGit({ timeout: { block: cloneTimeout } });
-    await git.clone(repoUrl, clonePath, ['--depth', '1', '--single-branch', `--filter=blob:limit=${maxRepoSizeMB}m`]);
+    try {
+      await git.clone(repoUrl, clonePath, ['--depth', '1', '--single-branch', `--filter=blob:limit=${maxRepoSizeMB}m`]);
+    } catch (partialErr) {
+      if (partialErr.message && partialErr.message.includes('filter') && partialErr.message.includes('not supported')) {
+        console.warn('Partial clone not supported, falling back to shallow clone');
+        await git.clone(repoUrl, clonePath, ['--depth', '1', '--single-branch']);
+      } else {
+        throw partialErr;
+      }
+    }
 
     // Check repository size
     const repoSize = await getFolderSize(clonePath);
