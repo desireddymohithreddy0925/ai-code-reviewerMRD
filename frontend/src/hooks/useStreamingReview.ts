@@ -1,5 +1,7 @@
 import { useState, useCallback } from 'react';
 
+const API_BASE_URL = (typeof __RUNTIME_API_URL__ !== 'undefined' ? __RUNTIME_API_URL__ : import.meta.env.VITE_API_URL) || 'http://localhost:5000';
+
 export const useStreamingReview = () => {
   const [reviewText, setReviewText] = useState<string>('');
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
@@ -12,11 +14,11 @@ export const useStreamingReview = () => {
 
     try {
       const isRequestInit = 'method' in payload || 'body' in payload;
-      const response = await fetch('/api/review/stream', {
+      const response = await fetch(`${API_BASE_URL}/api/review/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': localStorage.getItem('reposage_api_key') || '',
+          'x-api-key': sessionStorage.getItem('reposage_api_key') || '',
         },
         body: isRequestInit ? (payload as RequestInit).body : JSON.stringify(payload),
       });

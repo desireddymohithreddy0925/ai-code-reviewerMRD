@@ -63,6 +63,21 @@ function validateUrlBasic(url) {
   return { valid: true, parsed };
 }
 
+async function _checkRedirect(urlString) {
+  try {
+    const resp = await fetch(urlString, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(5000) });
+    if (resp.status >= 300 && resp.status < 400) {
+      const location = resp.headers.get('location');
+      if (location) {
+        return isSafeUrl(new URL(location, urlString).href);
+      }
+    }
+  } catch {
+    /* no redirect to check */
+  }
+  return { valid: true };
+}
+
 export async function isSafeUrl(url) {
   const basic = validateUrlBasic(url);
   if (!basic.valid) return basic;
@@ -75,6 +90,8 @@ export async function isSafeUrl(url) {
   } catch {
     return { valid: false, reason: `Failed to resolve hostname: ${parsed.hostname}` };
   }
+  const redirectCheck = await _checkRedirect(url);
+  if (!redirectCheck.valid) return redirectCheck;
   return { valid: true };
 }
 

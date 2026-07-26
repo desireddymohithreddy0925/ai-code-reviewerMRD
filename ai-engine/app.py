@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 import bleach
 from bleach.css_sanitizer import CSSSanitizer
 import vectorstore
+import extractor
 from embeddings import is_fallback_active
 from config_loader import load_config_from_files, ConfigValidationError, CONFIG_FILENAME
 from diff_helper import get_changed_files_from_git, filter_files_by_changes, format_diff_header
@@ -227,10 +228,10 @@ def sanitize_mermaid_code(mermaid_text: str) -> str:
     Strips HTML/XML tags and javascript: URIs, and validates the diagram type."""
     if not mermaid_text:
         return ""
-    dangerous = re.compile(r'<[^>]*>|javascript:|vbscript:|data:\s*text/html|\bon\w+\s*=', re.IGNORECASE)
+    dangerous = re.compile(r'<[\s\S]*?>|javascript:|vbscript:|data:\s*text/html|\bon\w+\s*=', re.IGNORECASE)
     if dangerous.search(mermaid_text):
         return "graph TD\n    A[\"Diagram omitted: security concern\"]"
-    valid_start = re.compile(r'^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|gitgraph)\s', re.MULTILINE)
+    valid_start = re.compile(r'^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|gitgraph)\s')
     if not valid_start.search(mermaid_text):
         return "graph TD\n    A[\"Diagram omitted: invalid format\"]"
     return mermaid_text
@@ -318,7 +319,7 @@ async def _call_groq_with_timeout(**kwargs):
     """Run a synchronous Groq completion in a thread-pool executor with a
     configurable wall-clock timeout. Raises HTTP 504 if the LLM does not
     respond within LLM_TIMEOUT_SECONDS seconds, freeing the FastAPI worker. (#786)"""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         return await asyncio.wait_for(
             loop.run_in_executor(None, lambda: groq_client.chat.completions.create(**kwargs)),
@@ -348,8 +349,10 @@ async def global_exception_handler(request, exc):
     key = os.getenv("GROQ_API_KEY") or ""
     sanitized = sanitize_error(str(exc), key)
     import traceback
+    raw_tb = traceback.format_exc()
+    sanitized_tb = sanitize_error(raw_tb, key)
     print(f"Unhandled exception: {sanitized}")
-    print(traceback.format_exc())
+    print(sanitized_tb)
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"},
@@ -357,7 +360,7 @@ async def global_exception_handler(request, exc):
 
 
 def verify_api_key(x_api_key: str = Header(None)):
-    expected_key = os.getenv("API_KEY")
+    expected_key = API_KEY
     if expected_key and not hmac.compare_digest(x_api_key or "", expected_key):
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
@@ -441,8 +444,7 @@ async def rate_limit_middleware(request: Request, call_next):
                 window = _rate_limit_store[client_ip]
             else:
                 if len(_rate_limit_store) >= MAX_RATE_LIMIT_ENTRIES:
-                    evict_count = min(len(_rate_limit_store), BULK_EVICT_BATCH_SIZE)
-                    for _ in range(evict_count):
+                    for _ in range(BULK_EVICT_BATCH_SIZE):
                         try:
                             _rate_limit_store.popitem(last=False)
                         except KeyError:
@@ -529,6 +531,7 @@ class AnalyzeRequest(BaseModel):
     maxTokens: Optional[int] = Field(2048, ge=1, le=32768)
     systemPrompt: Optional[str] = ""
     batchSize: Optional[int] = Field(5, ge=1, le=20)
+    repositoryContext: Optional[dict] = None
     diffOnly: Optional[bool] = False
     baseRef: Optional[str] = None
     headRef: Optional[str] = None
@@ -593,12 +596,13 @@ def _merge_review(combined, file_path, review, batch_idx, review_config=None):
         for category in ["bugs", "security", "optimization", "styling"]:
             existing_items = existing.get(category, [])
             new_items = review.get(category, [])
+            def _nk(v): return str(v) if v is not None else ""
             seen = set()
             for item in existing_items:
-                key = (item.get("type", ""), item.get("line", ""), item.get("description", ""))
+                key = (_nk(item.get("type")), _nk(item.get("line")), _nk(item.get("description")))
                 seen.add(key)
             for item in new_items:
-                key = (item.get("type", ""), item.get("line", ""), item.get("description", ""))
+                key = (_nk(item.get("type")), _nk(item.get("line")), _nk(item.get("description")))
                 if key not in seen:
                     existing_items.append(item)
                     seen.add(key)
@@ -617,6 +621,10 @@ async def analyze_repository(request: AnalyzeRequest):
     temperature = request.temperature if request.temperature is not None else 0.7
     max_tokens = request.maxTokens or 2048
     batch_size = request.batchSize or 5
+    repository_context = request.repositoryContext
+    custom_system_prompt = validate_system_prompt(request.systemPrompt or "")
+    
+    # 1. Prepare global repository structure
     custom_system_prompt = await asyncio.to_thread(validate_system_prompt, request.systemPrompt or "")
 
     # 0. Load .codereviewer.yml if the backend included it in the file list
@@ -671,6 +679,29 @@ async def analyze_repository(request: AnalyzeRequest):
         "context alone, state that clearly and do not speculate. "
         "You MUST follow the JSON output format specified below."
     )
+
+    if repository_context:
+        context_str = "Detected Repository Context:\n"
+        if repository_context.get("frameworks"):
+            context_str += f"- Frameworks: {', '.join(repository_context['frameworks'])}\n"
+        if repository_context.get("codingStyles"):
+            context_str += f"- Coding Styles: {', '.join(repository_context['codingStyles'])}\n"
+        if repository_context.get("configs"):
+            context_str += f"- Configs: {', '.join(repository_context['configs'])}\n"
+        
+        arch = repository_context.get("architecture", {})
+        arch_features = []
+        if arch.get("hasFrontend"): arch_features.append("Frontend")
+        if arch.get("hasBackend"): arch_features.append("Backend")
+        if arch.get("hasDatabase"): arch_features.append("Database")
+        if arch_features:
+            context_str += f"- Architecture: {', '.join(arch_features)}\n"
+        
+        base_prompt = (
+            base_prompt
+            + "\n\n" + context_str
+            + "\nEnsure your review suggestions adhere to these detected frameworks and coding styles."
+        )
 
     if custom_system_prompt:
         # Append custom content AFTER safety instructions with reinforcement
@@ -1413,6 +1444,27 @@ async def get_paginated_chunks(request: PaginatedChunksRequest):
     chunks = get_chunks_paginated(limit=request.limit, offset=request.offset, repo_url=request.repo_url)
     stats = get_collection_stats(repo_url=request.repo_url)
     return PaginatedChunksResponse(chunks=chunks, total_chunks=stats["chunk_count"])
+
+
+class ExtractRequest(BaseModel):
+    files: List[FileItem]
+
+
+class ExtractResponse(BaseModel):
+    chunks: List[dict]
+
+
+# 🟢 Route: Extract code chunks (classes, functions, methods) for Python, JS, Java
+@app.post("/api/extract", response_model=ExtractResponse)
+@app.post("/extract", response_model=ExtractResponse)
+async def extract_code_chunks(request: ExtractRequest):
+    all_chunks = []
+    for file_item in request.files:
+        chunks = extractor.extract_chunks(file_item.name, file_item.content)
+        all_chunks.extend(chunks)
+    return ExtractResponse(chunks=all_chunks)
+
+
 
 
 if __name__ == "__main__":
