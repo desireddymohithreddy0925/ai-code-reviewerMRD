@@ -109,8 +109,8 @@ def test_analyze_merges_fileReviews_from_all_batches(fake_groq):
     for name in ("a.py", "b.py", "c.py"):
         assert data["fileReviews"][name]["bugs"][0]["description"] == f"issue in {name}"
 
-    # 3 files at batchSize=1 means 3 batches, each spawning 4 agents (Security, Performance, Style, Synthesizer)
-    assert len(fake_groq) == 12
+    # 3 files at batchSize=1 means 3 batches, each spawning 5 agents (Security, Performance, Style, Impact, Synthesizer)
+    assert len(fake_groq) == 15
 
 
 def test_analyze_readme_and_mermaid_come_only_from_first_batch(fake_groq):
@@ -142,7 +142,7 @@ def test_analyze_single_batch_still_works(fake_groq):
 
     assert "only.py" in data["fileReviews"]
     assert data["generatedReadme"] == "# Fake Readme"
-    assert len(fake_groq) == 4
+    assert len(fake_groq) == 5
 
 
 def test_analyze_first_batch_failure_aborts_whole_request(monkeypatch):

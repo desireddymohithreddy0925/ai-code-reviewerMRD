@@ -536,8 +536,6 @@ class AnalyzeRequest(BaseModel):
     baseRef: Optional[str] = None
     headRef: Optional[str] = None
 
-    _REF_PATTERN = re.compile(r"^[\w./\-]+$")
-
     @field_validator("baseRef", "headRef")
     @classmethod
     def _validate_ref(cls, v):
@@ -547,7 +545,7 @@ class AnalyzeRequest(BaseModel):
             raise ValueError("Reference must be a string of at most 256 characters")
         if v.startswith("-"):
             raise ValueError("Reference must not start with a hyphen")
-        if not cls._REF_PATTERN.match(v):
+        if not re.match(r"^[\w./\-]+$", v):
             raise ValueError("Reference contains invalid characters (allowed: alphanumeric, underscore, dot, slash, hyphen)")
         return v
     
