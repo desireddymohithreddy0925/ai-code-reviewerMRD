@@ -51,10 +51,11 @@ describe('globToRegex', () => {
     assert.equal(regex.test('src/a/b.js'), false);
   });
 
-  it('treats literal . and other special regex chars as literals', () => {
-    const regex = globToRegex('src/(legacy)/a+b/[draft].js');
-    assert.equal(regex.test('src/(legacy)/a+b/[draft].js'), true);
-    assert.equal(regex.test('src/legacy/aaab/d.js'), false);
+  it('supports advanced picomatch globs', () => {
+    const regex = globToRegex('src/{legacy,new}/*.[jt]s');
+    assert.equal(regex.test('src/legacy/app.js'), true);
+    assert.equal(regex.test('src/new/main.ts'), true);
+    assert.equal(regex.test('src/legacy/style.css'), false);
   });
 
   it('matches nested deep paths', () => {

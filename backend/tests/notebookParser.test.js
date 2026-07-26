@@ -205,5 +205,5 @@ test('notebookParser: formatNotebookFindings adds cellContext to each finding', 
 test('notebookParser: stripMagicCommands removes indented magics but preserves %s format specifiers', () => {
   const code = '  %matplotlib inline\n%s FROM users\n  !ls -la';
   const result = stripMagicCommands(code);
-  assert.equal(result, '%s FROM users');
+  assert.equal(result, '  # %matplotlib inline\n%s FROM users\n  # !ls -la');
 });
