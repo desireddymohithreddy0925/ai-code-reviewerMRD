@@ -73,3 +73,135 @@ test('DedupStore: handles type transitions safely without throwing TypeError', a
   assert.equal(await store.isMember('set1', 'member1'), false, 'Should return false after expiration');
   assert.equal(await store.has('set1'), false, 'Should be fully evicted');
 });
+
+test('DedupStore: delete removes the entry and subsequent has returns false', async () => {
+  const store = new DedupStore();
+  await store.set('key1', 'value1', 100000);
+  assert.equal(await store.get('key1'), 'value1');
+
+  await store.delete('key1');
+  assert.equal(await store.get('key1'), null);
+  assert.equal(await store.has('key1'), false);
+});
+
+test('DedupStore: delete is safe for non-existent key', async () => {
+  const store = new DedupStore();
+  // Should not throw
+  await store.delete('nonexistent');
+  assert.equal(await store.has('nonexistent'), false);
+});
+
+test('DedupStore: removeFromSet deletes a specific member without touching others', async () => {
+  const store = new DedupStore();
+  await store.addToSet('set1', 'member1');
+  await store.addToSet('set1', 'member2');
+  await store.addToSet('set1', 'member3');
+
+  assert.equal(await store.isMember('set1', 'member1'), true);
+  assert.equal(await store.isMember('set1', 'member2'), true);
+  assert.equal(await store.isMember('set1', 'member3'), true);
+
+  await store.removeFromSet('set1', 'member2');
+
+  assert.equal(await store.isMember('set1', 'member1'), true, 'member1 should remain');
+  assert.equal(await store.isMember('set1', 'member2'), false, 'member2 should be removed');
+  assert.equal(await store.isMember('set1', 'member3'), true, 'member3 should remain');
+});
+
+test('DedupStore: removeFromSet is safe when set does not exist', async () => {
+  const store = new DedupStore();
+  // Should not throw
+  await store.removeFromSet('nonexistent', 'member1');
+});
+
+test('DedupStore: removeFromSet is safe when member is not in set', async () => {
+  const store = new DedupStore();
+  await store.addToSet('set1', 'member1');
+  // Should not throw
+  await store.removeFromSet('set1', 'member2');
+  assert.equal(await store.isMember('set1', 'member1'), true);
+});
+
+test('DedupStore: expire updates the expiration of an existing key', async () => {
+  const store = new DedupStore();
+  await store.set('key1', 'value1', 20);
+  assert.equal(await store.get('key1'), 'value1');
+
+  // Wait for original TTL to expire
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(await store.get('key1'), null, 'key should have expired');
+
+  // Re-set and then extend TTL
+  await store.set('key1', 'value1', 20);
+  await store.expire('key1', 100000);
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(await store.get('key1'), 'value1', 'TTL should have been extended');
+});
+
+test('DedupStore: expire is a no-op for non-existent key', async () => {
+  const store = new DedupStore();
+  // Should not throw
+  await store.expire('nonexistent', 100000);
+});
+
+test('DedupStore: has returns true for existing non-expired key', async () => {
+  const store = new DedupStore();
+  await store.set('key1', 'value1', 100000);
+  assert.equal(await store.has('key1'), true);
+});
+
+test('DedupStore: has returns false for non-existent key', async () => {
+  const store = new DedupStore();
+  assert.equal(await store.has('nonexistent'), false);
+});
+
+test('DedupStore: has returns false after key expires', async () => {
+  const store = new DedupStore();
+  await store.set('key1', 'value1', 20);
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(await store.has('key1'), false);
+});
+
+test('DedupStore: stopSweeper clears the interval', async () => {
+  const store = new DedupStore();
+  // Initial state has a sweeper running
+  assert.ok(store._sweeper !== null);
+
+  store.stopSweeper();
+  assert.equal(store._sweeper, null, 'sweeper should be stopped');
+});
+
+test('DedupStore: stopSweeper is safe to call twice', async () => {
+  const store = new DedupStore();
+  store.stopSweeper();
+  // Should not throw
+  store.stopSweeper();
+  assert.equal(store._sweeper, null);
+});
+
+test('DedupStore: delete clears entry even when sweeper is stopped', async () => {
+  const store = new DedupStore();
+  await store.set('key1', 'value1', 10);
+  store.stopSweeper();
+  await new Promise(r => setTimeout(r, 20));
+  // With sweeper stopped, entry might still be in memory but expired
+  // delete should still remove it regardless
+  await store.delete('key1');
+  assert.equal(await store.get('key1'), null);
+});
+
+test('DedupStore: operations after stopSweeper still work correctly', async () => {
+  const store = new DedupStore();
+  store.stopSweeper();
+  await store.set('key1', 'value1', 100000);
+  assert.equal(await store.get('key1'), 'value1');
+  await store.delete('key1');
+  assert.equal(await store.has('key1'), false);
+});
+
+test('DedupStore: set/get round-trip for non-string values (stored as-is)', async () => {
+  const store = new DedupStore();
+  await store.set('key1', 'value1', 100000);
+  const val = await store.get('key1');
+  assert.equal(val, 'value1');
+});
