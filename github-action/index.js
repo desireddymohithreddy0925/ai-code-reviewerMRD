@@ -5,9 +5,12 @@ import { parseDiff } from './utils/diffParser.js';
 import { scanSecretsInChanges } from './utils/secretsScanner.js';
 import { globToRegex } from './utils/globToRegex.js';
 import { cleanAndParseJSON, normalizeReviewLineNumber } from './utils/actionUtils.js';
-
 import { GitHubProvider } from './providers/GitHubProvider.js';
 import { GitLabProvider } from './providers/GitLabProvider.js';
+
+const PARSE_FAILED = { reviews: [], _parseFailed: true };
+
+
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -44,7 +47,8 @@ async function run() {
         }
       }
     }
-    const maxTokens = parseInt(core.getInput('max-tokens') || '4096', 10);
+    const maxTokensInput = parseInt(core.getInput('max-tokens') || '4096', 10);
+    const maxTokens = Number.isFinite(maxTokensInput) ? maxTokensInput : 4096;
     const autoApprove = core.getInput('auto-approve')?.toLowerCase() === 'true';
 
     const excludePatterns = excludePathsInput
@@ -70,6 +74,7 @@ async function run() {
     }
     provider.init();
     
+    const octokit = github.getOctokit(githubToken);
     const groq = new Groq({ apiKey: groqApiKey });
 
     // 3. Verify Context
@@ -139,10 +144,14 @@ async function run() {
         continue;
       }
 
-      const ext = file.path.split('.').pop()?.toLowerCase();
-      if (!ext || !validExtensions.includes(ext)) {
-        console.log(`skip non-code file: ${file.path}`);
-        continue;
+      const fileName = file.path.split('/').pop() || file.path;
+      const hasExt = fileName.includes('.');
+      if (hasExt) {
+        const ext = fileName.split('.').pop()?.toLowerCase() || '';
+        if (!validExtensions.includes(ext)) {
+          console.log(`skip non-code file: ${file.path}`);
+          continue;
+        }
       }
 
       if (file.changes.length === 0) continue;
@@ -233,32 +242,40 @@ If no issues are found, reply with: { "reviews": [] }`;
         try {
           const completion = await groq.chat.completions.create({
             model: 'llama-3.3-70b-versatile',
-            messages: [{ role: 'user', content: reviewPrompt }],
+            messages: [
+              { role: 'system', content: 'You are a code reviewer. Always output valid JSON matching the schema { "reviews": [{"line": int, "type": "bug|security|optimization|style", "comment": "string"}] }.' },
+              { role: 'user', content: reviewPrompt }
+            ],
             temperature: 0.2,
             max_tokens: maxTokens,
             response_format: { type: 'json_object' },
           });
 
-          const content = completion.choices[0].message.content;
-          if (!content || typeof content !== 'string' || !content.trim()) {
-            emptyOrUnparseable = true;
-          }
-          let parsed = cleanAndParseJSON(content);
-          successfulReviewsCount++;
-          
-          let issues = [];
-          if (Array.isArray(parsed)) {
-            issues = parsed;
-          } else if (parsed && typeof parsed === 'object') {
-            for (const key of Object.keys(parsed)) {
-              if (Array.isArray(parsed[key])) {
-                issues = parsed[key];
-                break;
-              }
+        const content = completion.choices[0].message.content;
+        let parsed = cleanAndParseJSON(content);
+        successfulReviewsCount++;
+        
+        if (parsed?._parseFailed) {
+          failedReviewsCount++;
+          successfulReviewsCount--;
+          core.error(`❌ LLM response for ${file.path} could not be parsed. Skipping file. Raw response logged.`);
+          return;
+        }
+
+        let issues = [];
+        if (Array.isArray(parsed)) {
+          issues = parsed;
+        } else if (parsed && typeof parsed === 'object') {
+          for (const key of Object.keys(parsed)) {
+            if (Array.isArray(parsed[key])) {
+              issues = parsed[key];
+              break;
             }
           }
+        }
+        reviewedFilesCount++;
 
-          if (issues.length > 0) {
+        if (issues.length > 0) {
             console.log(`✅ AI review returned ${issues.length} comments for ${file.path}`);
             for (const issue of issues) {
               const issueLine = normalizeReviewLineNumber(issue.line);
@@ -296,7 +313,6 @@ If no issues are found, reply with: { "reviews": [] }`;
         }
       }));
 
-      reviewedFilesCount += batch.length;
       totalIssuesFound += batchComments.length;
 
       if (batchComments.length > 0) {
@@ -444,11 +460,9 @@ Please review my feedback and suggestions below. Happy coding! 🚀
       const truncationWarning = diffTruncated
         ? `\n\nWARNING: **Partial Review:** This PR exceeded the review limit of ${MAX_REVIEW_FILES} files (${totalReviewableFiles} reviewable). The remaining files were **not** analyzed, so this is **not** a full approval of all changes. Please review them manually or split the PR.`
         : '';
-      const issuesText = failedReviewsCount === 0
-        ? (emptyOrUnparseable
-            ? `⚠️ The AI review returned an empty or unparseable response for some files (${successfulReviewsCount} attempted). No automatic approval was granted — please review this PR manually.`
-            : `🎉 Outstanding work! I have scanned the PR and found **0 issues**. Your changes look pristine, clean, and optimized! Approved! 🚀`)
-        : `⚠️ I have scanned **${successfulReviewsCount}** files and found **0 issues** in them. However, **${failedReviewsCount}** files could not be reviewed due to errors.`;
+      const issuesText = reviewEvent === 'APPROVE'
+        ? `🎉 Outstanding work! I have scanned the PR and found **0 issues**. Approved! 🚀`
+        : `✅ Review complete. Found 0 issues.`;
         
       await provider.createReview({
         event: reviewEvent,

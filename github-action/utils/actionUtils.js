@@ -3,6 +3,10 @@
  * Supports: * (non-slash wildcard), ** (recursive), ? (single char), . (escaped).
  */
 export function globToRegex(pattern) {
+  if (pattern.length > 1024) {
+    throw new Error(`Glob pattern too long (${pattern.length} chars, max 1024)`);
+  }
+
   let regexStr = '^';
   let i = 0;
   while (i < pattern.length) {
@@ -21,11 +25,11 @@ export function globToRegex(pattern) {
     } else if (ch === '?') {
       regexStr += '[^/]';
       i++;
-    } else if (ch === '.') {
-      regexStr += '\\.';
-      i++;
     } else if (ch === '/') {
       regexStr += '/';
+      i++;
+    } else if ('\\.+*?^${}()|[]'.includes(ch)) {
+      regexStr += '\\' + ch;
       i++;
     } else {
       regexStr += ch;
@@ -43,17 +47,14 @@ export function globToRegex(pattern) {
 export function cleanAndParseJSON(responseText) {
   try {
     let cleaned = responseText.trim();
-    if (cleaned.startsWith('```json')) {
-      cleaned = cleaned.substring(7);
-    } else if (cleaned.startsWith('```')) {
-      cleaned = cleaned.substring(3);
+    const jsonStart = cleaned.indexOf('{');
+    const jsonEnd = cleaned.lastIndexOf('}');
+    if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+      cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
     }
-    if (cleaned.endsWith('```')) {
-      cleaned = cleaned.substring(0, cleaned.length - 3);
-    }
-    return JSON.parse(cleaned.trim());
+    return JSON.parse(cleaned);
   } catch {
-    return { reviews: [] };
+    return null;
   }
 }
 
