@@ -23,6 +23,10 @@ inputs:
     description: 'Maximum tokens for the AI model response.'
     required: false
     default: '4096'
+  max-review-files:
+    description: 'Maximum number of changed files to review before marking the review as partial.'
+    required: false
+    default: '50'
   auto-approve:
     description: 'Whether to automatically approve PRs with no issues found.'
     required: false
