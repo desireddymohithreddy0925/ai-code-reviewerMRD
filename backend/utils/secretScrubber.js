@@ -18,6 +18,10 @@ const SECRET_DETECTION_RULES = [
   /\bBearer\s+([a-zA-Z0-9\-_.=~+]{20,})\b/gi
 ];
 
+function hasSecretContext(line) {
+  return /(?:AWS|Secret|secret|aws|access\s*key|private\s*key)/.test(line);
+}
+
 /**
  * Iterates through regex rules to scrub sensitive credentials from the repository payload.
  * @param {string} codebaseString - The aggregated raw source code to be sanitized.
@@ -34,6 +38,14 @@ function scrubRepositoryPayload(codebaseString) {
     sanitizedPayload = sanitizedPayload.replace(rule, (match, capturedGroup) => {
       if (capturedGroup && match.includes(capturedGroup)) {
         return match.replace(capturedGroup, '[REDACTED_SECRET]');
+      }
+      // Context check: only redact 40-char base64 strings on lines with secret keywords
+      if (!capturedGroup && match.length === 40 && /^[A-Za-z0-9\/+=]{40}$/.test(match)) {
+        const lineMatch = sanitizedPayload.match(new RegExp('^.*' + match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '.*$', 'm'));
+        const line = lineMatch ? lineMatch[0] : '';
+        if (!hasSecretContext(line)) {
+          return match;
+        }
       }
       return '[REDACTED_SECRET]';
     });
