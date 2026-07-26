@@ -10,7 +10,7 @@ services:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=${ANONYMIZED_TELEMETRY:-FALSE}
     healthcheck:
-      test: ["CMD", "wget", "--spider", "http://localhost:8000/api/v1/health"]
+      test: ["CMD", "wget", "--spider", "http://localhost:8000/api/v1/heartbeat"]
       interval: 10s
       timeout: 5s
       retries: 5
