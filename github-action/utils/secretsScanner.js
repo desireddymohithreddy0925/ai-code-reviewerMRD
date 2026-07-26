@@ -82,20 +82,34 @@ export const rules = [
   }
 ];
 
-const MAX_LINE_LENGTH = (n => Number.isFinite(n) ? n : 2000)(parseInt(process.env.SECRETS_MAX_LINE_LENGTH, 10));
-const SCAN_TIMEOUT_MS = (n => Number.isFinite(n) ? n : 100)(parseInt(process.env.SECRETS_SCAN_TIMEOUT_MS, 10));
+function getMaxLineLength() {
+  const n = parseInt(process.env.SECRETS_MAX_LINE_LENGTH, 10);
+  return Number.isFinite(n) ? n : 2000;
+}
+
+function getScanTimeoutMs() {
+  const n = parseInt(process.env.SECRETS_SCAN_TIMEOUT_MS, 10);
+  return Number.isFinite(n) ? n : 100;
+}
+
+function getMaxChangesProcessed() {
+  const n = parseInt(process.env.SECRETS_MAX_CHANGES, 10);
+  return Number.isFinite(n) ? n : 500;
+}
 
 export function scanSecrets(fileContent) {
   if (typeof fileContent !== 'string') return [];
+  const maxLineLength = getMaxLineLength();
+  const scanTimeoutMs = getScanTimeoutMs();
   const findings = [];
   const lines = fileContent.split('\n');
   const startTime = Date.now();
   for (let idx = 0; idx < lines.length; idx++) {
-    if (Date.now() - startTime > SCAN_TIMEOUT_MS) break;
+    if (Date.now() - startTime > scanTimeoutMs) break;
     const line = lines[idx];
-    if (line.length > MAX_LINE_LENGTH) continue;
+    if (line.length > maxLineLength) continue;
     for (const rule of rules) {
-      if (Date.now() - startTime > SCAN_TIMEOUT_MS) break;
+      if (Date.now() - startTime > scanTimeoutMs) break;
       rule.regex.lastIndex = 0;
       let match;
       while ((match = rule.regex.exec(line)) !== null) {
@@ -115,10 +129,11 @@ export function scanSecrets(fileContent) {
   return findings;
 }
 
-const MAX_CHANGES_PROCESSED = (n => Number.isFinite(n) ? n : 500)(parseInt(process.env.SECRETS_MAX_CHANGES, 10));
-
 export function scanSecretsInChanges(changes) {
   if (!Array.isArray(changes)) return { findings: [], truncated: false, totalChanges: 0, skippedReason: null };
+  const maxLineLength = getMaxLineLength();
+  const scanTimeoutMs = getScanTimeoutMs();
+  const maxChanges = getMaxChangesProcessed();
   const findings = [];
   const startTime = Date.now();
   let changesProcessed = 0;
@@ -126,23 +141,23 @@ export function scanSecretsInChanges(changes) {
   let reason = null;
 
   for (const change of changes) {
-    if (changesProcessed >= MAX_CHANGES_PROCESSED) {
+    if (changesProcessed >= maxChanges) {
       stoppedEarly = true;
-      reason = `Reached maximum of ${MAX_CHANGES_PROCESSED} changes processed.`;
+      reason = `Reached maximum of ${maxChanges} changes processed.`;
       break;
     }
-    if (Date.now() - startTime > SCAN_TIMEOUT_MS) {
+    if (Date.now() - startTime > scanTimeoutMs) {
       stoppedEarly = true;
-      reason = `Scan timeout of ${SCAN_TIMEOUT_MS}ms exceeded.`;
+      reason = `Scan timeout of ${scanTimeoutMs}ms exceeded.`;
       break;
     }
     changesProcessed++;
     if (!change || typeof change.content !== 'string') continue;
-    if (change.content.length > MAX_LINE_LENGTH) continue;
+    if (change.content.length > maxLineLength) continue;
     for (const rule of rules) {
-      if (Date.now() - startTime > SCAN_TIMEOUT_MS) {
+      if (Date.now() - startTime > scanTimeoutMs) {
         stoppedEarly = true;
-        reason = `Scan timeout of ${SCAN_TIMEOUT_MS}ms exceeded.`;
+        reason = `Scan timeout of ${scanTimeoutMs}ms exceeded.`;
         break;
       }
       rule.regex.lastIndex = 0;

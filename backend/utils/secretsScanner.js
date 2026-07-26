@@ -26,7 +26,7 @@ export const rules = [
   },
   {
     type: "Slack Incoming Webhook",
-    regex: /https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]{8}\/B[A-Z0-9]{8}\/[A-Za-z0-9]{24}/g,
+    regex: /https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]{8,11}\/B[A-Z0-9]{8,11}\/[A-Za-z0-9]{24,32}/g,
     description: "Hardcoded Slack Incoming Webhook detected. Allows external parties to send spam or phish users inside your workspace channels."
   },
   {
@@ -102,10 +102,17 @@ export function scanSecrets(fileContent) {
   const startTime = Date.now();
   const maxLineLength = getMaxLineLength();
   const scanTimeoutMs = getScanTimeoutMs();
+  let truncationWarningLogged = false;
   for (let idx = 0; idx < lines.length; idx++) {
     if (Date.now() - startTime > scanTimeoutMs) break;
     const line = lines[idx];
-    if (line.length > maxLineLength) continue;
+    if (line.length > maxLineLength) {
+      if (!truncationWarningLogged) {
+        console.warn(`Secret scan truncated: line ${idx + 1} exceeds max length of ${maxLineLength} chars. Subsequent long lines also skipped.`);
+        truncationWarningLogged = true;
+      }
+      continue;
+    }
     for (const rule of rules) {
       if (Date.now() - startTime > scanTimeoutMs) break;
       rule.regex.lastIndex = 0;
@@ -166,7 +173,11 @@ export function scanSecretsInChanges(changes) {
         break;
       }
       const lineContent = lines[lineIdx];
-      if (lineContent.length > maxLineLen) continue;
+      if (lineContent.length > maxLineLen) {
+        stoppedEarly = true;
+        if (!reason) reason = `Line exceeds max length of ${maxLineLen} chars; scan truncated.`;
+        continue;
+      }
       for (const rule of rules) {
         if (Date.now() - startTime > timeoutMs) {
           stoppedEarly = true;

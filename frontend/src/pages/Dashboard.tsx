@@ -46,6 +46,7 @@ import { sanitizeAuditEntry } from "../utils/sanitize";
 // Path resolves correctly: pages/ -> ../utils/api -> frontend/src/utils/api
 import { apiFetch } from "../utils/api";
 import { usePersistentReport } from '../hooks/usePersistentReport';
+import { useStreamingReview } from "../hooks/useStreamingReview";
 
 const LazyMetricsChart = React.lazy(() =>
   import('../components/MetricsChart').then((module) => ({ default: module.MetricsChart }))
@@ -116,6 +117,7 @@ export interface BackendResponse {
   filesReviewedCount: number;
   analysis: AnalysisData;
   sessionId?: string;
+  sessionOwnerToken?: string;
   sessionPersisted?: boolean;
   _mock?: boolean;
   partial_review?: boolean;
@@ -134,7 +136,9 @@ export interface AuditHistoryEntry {
   response: BackendResponse;
 }
 
+
 export default function Dashboard() {
+  const { reviewText, isStreaming, error: streamError, startStream } = useStreamingReview();
   const [showSettings, setShowSettings] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
@@ -148,7 +152,7 @@ export default function Dashboard() {
 
   // Loading & Flow State
   const [isLoading, setIsLoading] = useState(false);
-  const [loadingStep, setLoadingStep] = useState("");
+  const [loadingStep, _setLoadingStep] = useState("");
 
   // Response & View State
   const { analysisResult, setAnalysisResult, selectedFile, setSelectedFile, chatHistory, setChatHistory } = useStore();
@@ -363,7 +367,7 @@ export default function Dashboard() {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [apiError, setChatHistory]);
+  }, [apiError, setChatHistory, downloadReadme, setShowSettings, setShowShortcutsHelp]);
 
   const isValidAuditEntry = (entry: unknown): entry is AuditHistoryEntry => {
     if (!entry || typeof entry !== 'object') return false;
@@ -600,7 +604,7 @@ export default function Dashboard() {
               if (!raw) continue;
               const data = JSON.parse(raw);
               if (Array.isArray(data) && data.length > 0) {
-                const evicted = data.slice(data.length <= 1 ? 0 : 1);
+                const evicted = data.slice(Math.max(1, Math.ceil(data.length * 0.5)));
                 localStorage.setItem(storageKey, JSON.stringify(evicted));
               }
             } catch { /* ignore corrupt entries */ }
@@ -635,6 +639,8 @@ export default function Dashboard() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatHistory, isChatLoading]);
+  const chatHistoryRef = useRef<ChatMessage[]>(chatHistory);
+  chatHistoryRef.current = chatHistory;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -645,7 +651,7 @@ export default function Dashboard() {
         const history = await response.json();
 
         if (history && !controller.signal.aborted) {
-          setAuditHistory(history);
+          setAuditHistory(history.history || []);
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -664,11 +670,10 @@ export default function Dashboard() {
     const userMessage = chatInput;
     setChatInput("");
 
-    // Build the updated history array locally FIRST so it includes the user's
-    // current message when sent to the API, rather than relying on the stale
-    // chatHistory closure value (which would be one message behind).
+    // Use chatHistoryRef to avoid stale closure — the ref always holds the latest
+    // Zustand state, so rapid successive sends never drop messages.
     const updatedHistory = truncateChatHistory([
-      ...(chatHistory || []),
+      ...(chatHistoryRef.current || []),
       { role: "user" as const, content: userMessage }
     ]);
     setChatHistory(updatedHistory);
@@ -703,7 +708,7 @@ export default function Dashboard() {
       setChatHistory((prev) => {
         const updated = truncateChatHistory([
           ...prev,
-          { role: "assistant" as const, content: data.response, sources: sources.length > 0 ? sources : undefined },
+          { role: "assistant" as const, content: data.response ?? data.message ?? "", sources: sources.length > 0 ? sources : undefined },
         ]);
         if (!safeSetItem(CHAT_HISTORY_KEY, JSON.stringify(updated))) setStorageWarning(true);
         return updated;
@@ -836,6 +841,12 @@ export default function Dashboard() {
     });
   };
 
+  useEffect(() => {
+    if (analysisResult) {
+      persistAuditHistory(analysisResult);
+    }
+  }, [analysisResult]);
+
   const loadAuditFromHistory = (entry: AuditHistoryEntry) => {
     setRepoUrl(entry.repoUrl);
     setAnalysisResult(entry.response);
@@ -860,34 +871,15 @@ export default function Dashboard() {
     e.preventDefault();
     if (!repoUrl.trim()) return;
 
-    setIsLoading(true);
     setApiError(null);
     setAnalysisResult(null);
     setSelectedFile(null);
     setChatHistory([]);
     try { localStorage.removeItem('reposage_chat_history'); } catch {};
 
-    // Simulate structured loading steps for GSSoC wow factor
-    const steps = [
-      "🔍 Authenticating connection...",
-      "📥 Cloning GitHub repository locally...",
-      "📁 Traversing directory tree & parsing modules...",
-      "🧠 Running LLM analysis using selected AI Model...",
-      "📜 Generating custom repository README.md...",
-      "🎉 Formatting reports...",
-    ];
-
-    let currentStep = 0;
-    setLoadingStep(steps[0]);
-    const stepInterval = setInterval(() => {
-      currentStep++;
-      if (currentStep < steps.length) {
-        setLoadingStep(steps[currentStep]);
-      }
-    }, 1200);
     try {
       const aiSettings = getSavedAiSettings();
-      const response = await apiFetch("/api/analyze", {
+      await startStream({
         method: "POST",
         body: JSON.stringify({
           repoUrl,
@@ -932,9 +924,6 @@ export default function Dashboard() {
         setShowSettings(true);
       }
       setApiError(errMsg);
-    } finally {
-      clearInterval(stepInterval);
-      setIsLoading(false);
     }
   };
 
@@ -945,13 +934,21 @@ export default function Dashboard() {
     const file = new Blob([analysisResult.analysis?.generatedReadme || ''], {
       type: "text/plain",
     });
-    element.href = URL.createObjectURL(file);
+    const url = URL.createObjectURL(file);
+    element.href = url;
     element.download = "GENERATED_README.md";
-    document.body.appendChild(element);
+    let appended = false;
+    try {
+      document.body.appendChild(element);
+      appended = true;
       element.click();
-      document.body.removeChild(element);
-      URL.revokeObjectURL(element.href);
-    };
+    } finally {
+      if (appended) {
+        document.body.removeChild(element);
+      }
+      URL.revokeObjectURL(url);
+    }
+  };
 
   const chatInputEmpty = !chatInput.trim();
 
@@ -1243,8 +1240,90 @@ export default function Dashboard() {
             </div>
           )}
 
+          {streamError && (
+            <div
+              style={{
+                background: "rgba(239, 68, 68, 0.1)",
+                border: "1px solid rgba(239, 68, 68, 0.3)",
+                borderRadius: "8px",
+                padding: "14px 20px",
+                color: "#fca5a5",
+                fontSize: "13px",
+                display: "flex",
+                alignItems: "center",
+                gap: "12px",
+                marginBottom: "20px",
+              }}
+            >
+              <AlertOctagon size={20} style={{ color: "#ef4444" }} />
+              <div>
+                <strong style={{ display: "block" }}>Streaming Error</strong>
+                <span>{streamError}</span>
+              </div>
+            </div>
+          )}
+
+          {(isStreaming || reviewText) && (
+            <div
+              ref={reportRef}
+              className="glass-panel"
+              style={{
+                flexGrow: 1,
+                display: "flex",
+                flexDirection: "column",
+                padding: "24px",
+                boxSizing: "border-box",
+                overflowY: "auto",
+                maxHeight: "80vh",
+              }}
+            >
+              <h2 style={{ color: "#f3f4f6", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "12px" }}>
+                {isStreaming ? "Streaming AI Review..." : "AI Code Review Complete"}
+              </h2>
+              {isStreaming && <div className="spin-slow" style={{ width: "24px", height: "24px", border: "2px solid rgba(168,85,247,0.1)", borderTopColor: "#a855f7", borderRadius: "50%", margin: "12px 0" }}></div>}
+              <ReactMarkdown
+                components={{
+                  code({ node, inline, className, children, ...props }: any) {
+                    const match = /language-(\w+)/.exec(className || "");
+                    return !inline && match ? (
+                      <SyntaxHighlighter
+                        style={vscDarkPlus as any}
+                        language={match[1]}
+                        PreTag="div"
+                        customStyle={{
+                          margin: 0,
+                          borderRadius: "6px",
+                          background: "#1e1e1e",
+                          fontSize: "12px",
+                        }}
+                        {...props}
+                      >
+                        {String(children).replace(/\n$/, "")}
+                      </SyntaxHighlighter>
+                    ) : (
+                      <code
+                        style={{
+                          background: "rgba(255,255,255,0.1)",
+                          padding: "2px 4px",
+                          borderRadius: "4px",
+                          fontSize: "12px",
+                          color: "#d8b4fe",
+                        }}
+                        {...props}
+                      >
+                        {children}
+                      </code>
+                    );
+                  },
+                }}
+              >
+                {reviewText}
+              </ReactMarkdown>
+            </div>
+          )}
+
           {/* 4. The Complete Analysis Dashboard (Split Audit View) */}
-          {!isLoading && analysisResult && (
+          {!isLoading && analysisResult && !isStreaming && !reviewText && (
             <div
               ref={reportRef}
               style={{
