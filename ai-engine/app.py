@@ -950,6 +950,9 @@ You must obey the JSON output format above."""
                 elif isinstance(reviews, dict):
                     for file_path, review in reviews.items():
                         _merge_review(combined_result, file_path, review, idx, review_config)
+            
+            if "refactoring_suggestions" in batch_result:
+                combined_result.setdefault("refactoring_suggestions", []).extend(batch_result["refactoring_suggestions"])
 
             truncated_files.extend(local_truncated_files)
 
