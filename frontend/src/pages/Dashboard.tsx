@@ -45,6 +45,7 @@ import { handleMarkdownExport, handleHtmlExport, handlePdfExport } from "../util
 import { sanitizeAuditEntry } from "../utils/sanitize";
 // Path resolves correctly: pages/ -> ../utils/api -> frontend/src/utils/api
 import { apiFetch } from "../utils/api";
+import { usePersistentReport } from '../hooks/usePersistentReport';
 import { useStreamingReview } from "../hooks/useStreamingReview";
 
 const LazyMetricsChart = React.lazy(() =>
@@ -137,7 +138,7 @@ export interface AuditHistoryEntry {
 
 
 export default function Dashboard() {
-  const { reviewText, isStreaming, error: streamError, startStream } = useStreamingReview();
+  const { reviewText, isStreaming, error: streamError } = useStreamingReview();
   const [showSettings, setShowSettings] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
@@ -631,6 +632,13 @@ export default function Dashboard() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [useRag, setUseRag] = useState(false);
 
+  const { isHydrating, saveReport } = usePersistentReport(setRepoUrl, setSessionId);
+
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatHistory, isChatLoading]);
   const chatHistoryRef = useRef<ChatMessage[]>(chatHistory);
   chatHistoryRef.current = chatHistory;
 
@@ -869,9 +877,11 @@ export default function Dashboard() {
     setChatHistory([]);
     try { localStorage.removeItem('reposage_chat_history'); } catch {};
 
+    setIsLoading(true);
+
     try {
       const aiSettings = getSavedAiSettings();
-      await startStream({
+      const response = await apiFetch("/api/analyze", {
         method: "POST",
         body: JSON.stringify({
           repoUrl,
@@ -884,6 +894,27 @@ export default function Dashboard() {
           batchSize: aiSettings.batchSize ?? 5,
         }),
       });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error || "Server error occurred during analysis.",
+        );
+      }
+
+      const data: BackendResponse = await response.json();
+      const currentSessionId = data.sessionPersisted === true ? data.sessionId ?? null : null;
+      setSessionId(currentSessionId);
+      await saveReport(data, repoUrl, currentSessionId);
+      setAnalysisResult(data);
+      persistAuditHistory(data);
+      setChatHistory([]);
+
+      // Select the first file reviewed automatically
+      const filesList = Object.keys(data.analysis?.fileReviews || {});
+      if (filesList.length > 0) {
+        setSelectedFile(filesList[0]);
+      }
     } catch (err: unknown) {
       console.error(err);
       let errMsg = (err instanceof Error ? err.message : String(err)) || "Could not connect to the backend server. Make sure node backend is running on port 5000.";
@@ -894,6 +925,8 @@ export default function Dashboard() {
         setShowSettings(true);
       }
       setApiError(errMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -921,6 +954,15 @@ export default function Dashboard() {
   };
 
   const chatInputEmpty = !chatInput.trim();
+
+  if (isHydrating) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', flexDirection: 'column', background: 'var(--bg-color)' }}>
+         <div className="spin-slow" style={{ width: "40px", height: "40px", border: "3px solid rgba(168,85,247,0.2)", borderTopColor: "#a855f7", borderRadius: "50%", marginBottom: "16px" }}></div>
+         <p style={{ color: '#9ca3af', fontSize: '14px', fontWeight: 500 }}>Restoring previous analysis...</p>
+      </div>
+    );
+  }
 
   return (
     <div
