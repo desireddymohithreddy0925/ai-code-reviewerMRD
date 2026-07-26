@@ -13,6 +13,8 @@ async def _run_agent(agent_name: str, system_prompt: str, user_prompt: str, llm_
         return await llm_caller(system_prompt, user_prompt)
     except Exception as e:
         print(f"⚠️ {agent_name} Agent failed: {e}")
+        if agent_name == "Synthesizer":
+            raise
         return {}
 
 async def run_batch_pipeline(
