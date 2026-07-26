@@ -138,7 +138,7 @@ export interface AuditHistoryEntry {
 
 
 export default function Dashboard() {
-  const { reviewText, isStreaming, error: streamError, startStream } = useStreamingReview();
+  const { reviewText, isStreaming, error: streamError } = useStreamingReview();
   const [showSettings, setShowSettings] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
@@ -877,9 +877,11 @@ export default function Dashboard() {
     setChatHistory([]);
     try { localStorage.removeItem('reposage_chat_history'); } catch {};
 
+    setIsLoading(true);
+
     try {
       const aiSettings = getSavedAiSettings();
-      await startStream({
+      const response = await apiFetch("/api/analyze", {
         method: "POST",
         body: JSON.stringify({
           repoUrl,
@@ -893,8 +895,6 @@ export default function Dashboard() {
         }),
       });
 
-      clearInterval(stepInterval);
-
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(
@@ -906,6 +906,7 @@ export default function Dashboard() {
       const currentSessionId = data.sessionPersisted === true ? data.sessionId ?? null : null;
       setSessionId(currentSessionId);
       await saveReport(data, repoUrl, currentSessionId);
+      setAnalysisResult(data);
       persistAuditHistory(data);
       setChatHistory([]);
 
@@ -924,6 +925,8 @@ export default function Dashboard() {
         setShowSettings(true);
       }
       setApiError(errMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
