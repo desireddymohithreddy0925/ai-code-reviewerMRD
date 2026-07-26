@@ -579,7 +579,7 @@ def health_check():
 
 # 🟢 Route: Analyze Code Files and Generate Reviews & README
 def _merge_review(combined, file_path, review, batch_idx, review_config=None):
-    for category in ["bugs", "security", "optimization", "styling"]:
+    for category in ["bugs", "security", "optimization", "styling", "impact"]:
         kept_items = []
         for item in review.get(category, []):
             if "suggestion" in item:
@@ -593,7 +593,7 @@ def _merge_review(combined, file_path, review, batch_idx, review_config=None):
     if file_path in combined["fileReviews"]:
         print(f"WARNING: Merging findings for {file_path} from batch {batch_idx + 1} (already exists from a previous batch)")
         existing = combined["fileReviews"][file_path]
-        for category in ["bugs", "security", "optimization", "styling"]:
+        for category in ["bugs", "security", "optimization", "styling", "impact"]:
             existing_items = existing.get(category, [])
             new_items = review.get(category, [])
             def _nk(v): return str(v) if v is not None else ""
@@ -881,7 +881,7 @@ You must obey the JSON output format above."""
                 if isinstance(reviews, list):
                     for entry in reviews:
                         file_path = entry.get("filePath", "unknown")
-                        review = {k: entry.get(k, []) for k in ("bugs", "security", "optimization", "styling")}
+                        review = {k: entry.get(k, []) for k in ("bugs", "security", "optimization", "styling", "impact")}
                         _merge_review(combined_result, file_path, review, idx, review_config)
                 elif isinstance(reviews, dict):
                     for file_path, review in reviews.items():
@@ -1266,8 +1266,7 @@ async def review_diff(request: ReviewDiffRequest, raw_request: Request):
                 # FIXED: Prompt now explicitly requests a JSON object {"reviews": [...]}
                 custom_rules_text = f"CRITICAL CUSTOM REPOSITORY RULES:\n{request.custom_rules}\n\nYou MUST strictly adhere to the above custom repository rules over any default guidelines.\n" if request.custom_rules else ""
                 
-                review_prompt = """You are a Senior Staff Engineer performing an automated Pull Request code review.
-Analyze the following code additions in the file "{file_path}". 
+
                 if request.security_mode:
                     review_prompt = f"""You are a dedicated DevSecOps engineer performing a rigorous security audit on this Pull Request.
 Analyze the following code additions in the file "{file.path}". 
@@ -1304,7 +1303,7 @@ Format your JSON precisely as:
     }}
   ]
 }}
-If no issues are found, reply with: {{ "reviews": [] }}""".format(file_path=file.path, custom_rules_text=custom_rules_text, changes_text=changes_text)
+If no issues are found, reply with: {{ "reviews": [] }}"""
 
                 try:
                     # We specify response_format={"type": "json_object"} to enforce JSON output. 
