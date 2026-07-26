@@ -93,6 +93,9 @@ export async function recordAnalysis(record) {
             optimization: record.optimization || 0,
             styling: record.styling || 0,
             filesCount: record.filesCount || 0,
+            cyclomaticComplexity: record.cyclomaticComplexity || 0,
+            halsteadComplexity: record.halsteadComplexity || 0,
+            complexityScore: record.complexityScore || 0,
         });
 
         const trimmed = records.slice(-MAX_RECORDS);
@@ -104,4 +107,14 @@ export async function recordAnalysis(record) {
 
 export function getTrends() {
     return readStore();
+}
+
+export function getPreviousMetrics(repoName) {
+    const records = readStore();
+    for (let i = records.length - 1; i >= 0; i--) {
+        if (records[i].repoName === repoName) {
+            return records[i];
+        }
+    }
+    return null;
 }
