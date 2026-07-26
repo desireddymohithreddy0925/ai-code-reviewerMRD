@@ -385,11 +385,11 @@ app.post('/api/session', requireApiKey, async (req, res) => {
 });
 
 // Logout endpoint ΓÇö clears session and CSRF token
-app.post('/api/logout', requireApiKey, (req, res) => {
+app.post('/api/logout', requireApiKey, async (req, res) => {
   const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
   if (cookieToken) {
-    csrfTokenStore.delete(cookieToken);
-    csrfGraceTokenStore.delete(cookieToken);
+    await csrfTokenStore.delete(cookieToken);
+    await csrfGraceTokenStore.delete(cookieToken);
   }
   res.clearCookie(CSRF_COOKIE_NAME, { path: '/' });
   res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
