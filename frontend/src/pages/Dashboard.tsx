@@ -875,31 +875,14 @@ export default function Dashboard() {
     setAnalysisResult(null);
     setSelectedFile(null);
     setChatHistory([]);
-    setIsLoading(true);
-    _setLoadingStep("Cloning repository...");
     try { localStorage.removeItem('reposage_chat_history'); } catch {};
+
+    setIsLoading(true);
 
     try {
       const aiSettings = getSavedAiSettings();
-      
-      const steps = [
-        "Cloning repository...",
-        "Analyzing files...",
-        "Generating review...",
-        "Applying security checks..."
-      ];
-      let stepIndex = 1;
-      const stepInterval = setInterval(() => {
-        _setLoadingStep(steps[stepIndex]);
-        stepIndex = (stepIndex + 1) % steps.length;
-      }, 2000);
-
-      const response = await fetch(`${API_BASE_URL}/api/analyze`, {
+      const response = await apiFetch("/api/analyze", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": sessionStorage.getItem("reposage_api_key") || "",
-        },
         body: JSON.stringify({
           repoUrl,
           company,
@@ -912,8 +895,6 @@ export default function Dashboard() {
         }),
       });
 
-      clearInterval(stepInterval);
-
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(
@@ -922,14 +903,14 @@ export default function Dashboard() {
       }
 
       const data: BackendResponse = await response.json();
-      setAnalysisResult(data);
       const currentSessionId = data.sessionPersisted === true ? data.sessionId ?? null : null;
       setSessionId(currentSessionId);
-      
       await saveReport(data, repoUrl, currentSessionId);
+      setAnalysisResult(data);
       persistAuditHistory(data);
       setChatHistory([]);
 
+      // Select the first file reviewed automatically
       const filesList = Object.keys(data.analysis?.fileReviews || {});
       if (filesList.length > 0) {
         setSelectedFile(filesList[0]);
@@ -944,6 +925,8 @@ export default function Dashboard() {
         setShowSettings(true);
       }
       setApiError(errMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
