@@ -2218,7 +2218,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       const aiResponse = await fetchWithTimeout(`${baseUrl}/review-diff`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
-        body: JSON.stringify({ files: filesToReview, security_mode: securityMode, custom_prompt: customPrompt, custom_rules: customRules })
+        body: JSON.stringify({ files: filesToReview, security_mode: securityMode, custom_prompt: customPrompt, custom_rules: customRules, repo_url: `https://github.com/${owner}/${repo}` })
       }, 60000);
 
       if (aiResponse.ok) {
