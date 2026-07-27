@@ -1633,7 +1633,7 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
     return res.status(401).json({ error: 'Missing X-Hub-Signature-256 header.' });
   }
 
-  if (!verifyWebhookSignature(req.rawBody, signature, webhookSecret, 5000)) {
+  if (!verifyWebhookSignature(req.rawBody, signature, webhookSecret)) {
     return res.status(401).json({ error: 'Invalid signature' });
   }
   
@@ -1643,9 +1643,6 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
   
   if (!req.body || !req.body.action) {
     return res.status(400).json({ error: 'Invalid webhook payload' });
-  }
-    console.warn('Γ¥î Webhook signature verification failed');
-    return res.status(401).json({ error: 'Invalid webhook signature' });
   }
 
   const event = req.headers['x-github-event'];
