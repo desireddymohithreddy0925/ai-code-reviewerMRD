@@ -581,21 +581,26 @@ def health_check():
 
 # 🟢 Route: Analyze Code Files and Generate Reviews & README
 def _merge_review(combined, file_path, review, batch_idx, review_config=None):
-    for category in ["bugs", "security", "optimization", "styling", "impact"]:
+    for category in ["bugs", "security", "optimization", "styling", "impact", "tests"]:
         kept_items = []
         for item in review.get(category, []):
             if "suggestion" in item:
                 item["suggestion"] = sanitize_ai_output(item["suggestion"])
             if "description" in item:
                 item["description"] = sanitize_ai_output(item["description"])
+            
+            # Apply language and path-based review config rule exclusions if config is provided
             if review_config and item.get("type") and review_config.is_rule_off(_rule_key(item["type"])):
                 continue
+            
             kept_items.append(item)
+            
         review[category] = kept_items
+
     if file_path in combined["fileReviews"]:
         print(f"WARNING: Merging findings for {file_path} from batch {batch_idx + 1} (already exists from a previous batch)")
         existing = combined["fileReviews"][file_path]
-        for category in ["bugs", "security", "optimization", "styling", "impact"]:
+        for category in ["bugs", "security", "optimization", "styling", "impact", "tests"]:
             existing_items = existing.get(category, [])
             new_items = review.get(category, [])
             def _nk(v): return str(v) if v is not None else ""
@@ -946,7 +951,7 @@ You must obey the JSON output format above."""
                 if isinstance(reviews, list):
                     for entry in reviews:
                         file_path = entry.get("filePath", "unknown")
-                        review = {k: entry.get(k, []) for k in ("bugs", "security", "optimization", "styling", "impact")}
+                        review = {k: entry.get(k, []) for k in ("bugs", "security", "optimization", "styling", "impact", "tests")}
                         _merge_review(combined_result, file_path, review, idx, review_config)
                 elif isinstance(reviews, dict):
                     for file_path, review in reviews.items():

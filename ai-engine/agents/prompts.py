@@ -115,6 +115,9 @@ Format your JSON precisely as:
       ],
       "impact": [
         {{ "type": "breaking change", "line": 5, "description": "...", "suggestion": "..." }}
+      ],
+      "tests": [
+        {{ "type": "missing test", "line": 10, "description": "...", "suggestion": "..." }}
       ]
     }}
   }},
@@ -156,11 +159,11 @@ Format your JSON precisely as:
 
 You must obey the JSON output format above."""
 
-IMPACT_ANALYSIS_AGENT_PROMPT = """Target Company Persona: {company}
+TEST_GENERATION_AGENT_PROMPT = """Target Company Persona: {company}
 Response Language: {language}
 
-Review this repository codebase batch focusing strictly on CROSS-REPOSITORY DEPENDENCY IMPACT. Look for backwards-incompatible API changes, removed exports, signature modifications, or any changes that could break downstream repositories relying on these contracts.
-Ignore other aspects like styling, security, or general performance.
+Review this repository codebase batch focusing strictly on MISSING UNIT TESTS. If you detect logic changes in a function or a complex new function without corresponding tests, you should automatically generate the missing unit test code or suggest updates to existing tests.
+Ignore styling, security, and general performance.
 
 Here is the repository structure for context:
 {structure_text}
@@ -173,60 +176,8 @@ Format your JSON precisely as:
 {{
   "fileReviews": {{
     "file_path_1": {{
-      "impact": [
-        {{ "type": "breaking change", "line": 5, "description": "...", "suggestion": "..." }}
-      ]
-    }}
-  }}
-}}
-
-You must obey the JSON output format above."""
-
-IMPACT_ANALYSIS_AGENT_PROMPT = """Target Company Persona: {company}
-Response Language: {language}
-
-Review this repository codebase batch focusing strictly on CROSS-REPOSITORY DEPENDENCY IMPACT. Look for backwards-incompatible API changes, removed exports, signature modifications, or any changes that could break downstream repositories relying on these contracts.
-Ignore other aspects like styling, security, or general performance.
-
-Here is the repository structure for context:
-{structure_text}
-
-Here is the contents of files for this batch:
-{contents_text}
-
-You MUST reply ONLY in a valid JSON format. Do not write markdown wrapping, do not write explanations before or after.
-Format your JSON precisely as:
-{{
-  "fileReviews": {{
-    "file_path_1": {{
-      "impact": [
-        {{ "type": "breaking change", "line": 5, "description": "...", "suggestion": "..." }}
-      ]
-    }}
-  }}
-}}
-
-You must obey the JSON output format above."""
-
-IMPACT_ANALYSIS_AGENT_PROMPT = """Target Company Persona: {company}
-Response Language: {language}
-
-Review this repository codebase batch focusing strictly on CROSS-REPOSITORY DEPENDENCY IMPACT. Look for backwards-incompatible API changes, removed exports, signature modifications, or any changes that could break downstream repositories relying on these contracts.
-Ignore other aspects like styling, security, or general performance.
-
-Here is the repository structure for context:
-{structure_text}
-
-Here is the contents of files for this batch:
-{contents_text}
-
-You MUST reply ONLY in a valid JSON format. Do not write markdown wrapping, do not write explanations before or after.
-Format your JSON precisely as:
-{{
-  "fileReviews": {{
-    "file_path_1": {{
-      "impact": [
-        {{ "type": "breaking change", "line": 5, "description": "...", "suggestion": "..." }}
+      "tests": [
+        {{ "type": "missing test", "line": 10, "description": "...", "suggestion": "..." }}
       ]
     }}
   }}
