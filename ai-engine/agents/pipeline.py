@@ -109,5 +109,7 @@ async def run_batch_pipeline(
     # Run synthesizer
     print(f"⏳ Synthesizing specialized agent findings...")
     synthesized_result = await _run_agent("Synthesizer", base_prompt, synthesizer_user_prompt, llm_caller)
+    if not synthesized_result:
+        raise RuntimeError("Synthesizer agent failed to produce a valid response.")
     
     return synthesized_result
