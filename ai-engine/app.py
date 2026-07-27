@@ -532,6 +532,7 @@ class AnalyzeRequest(BaseModel):
     systemPrompt: Optional[str] = ""
     batchSize: Optional[int] = Field(5, ge=1, le=20)
     repositoryContext: Optional[dict] = None
+    repoUrl: Optional[str] = None
     diffOnly: Optional[bool] = False
     baseRef: Optional[str] = None
     headRef: Optional[str] = None
@@ -865,7 +866,8 @@ You must obey the JSON output format above."""
                 contents_text=contents_text,
                 is_first_batch=is_first_batch,
                 base_prompt=base_prompt,
-                llm_caller=_call_llm
+                llm_caller=_call_llm,
+                repo_url=req.repoUrl
             )
 
             # Merge results
@@ -1266,8 +1268,6 @@ async def review_diff(request: ReviewDiffRequest, raw_request: Request):
                 # FIXED: Prompt now explicitly requests a JSON object {"reviews": [...]}
                 custom_rules_text = f"CRITICAL CUSTOM REPOSITORY RULES:\n{request.custom_rules}\n\nYou MUST strictly adhere to the above custom repository rules over any default guidelines.\n" if request.custom_rules else ""
                 
-                review_prompt = """You are a Senior Staff Engineer performing an automated Pull Request code review.
-Analyze the following code additions in the file "{file_path}". 
                 if request.security_mode:
                     review_prompt = f"""You are a dedicated DevSecOps engineer performing a rigorous security audit on this Pull Request.
 Analyze the following code additions in the file "{file.path}". 
@@ -1289,7 +1289,7 @@ Identify any logical bugs, security threats (API key leaks, hardcoded credential
 
 You must answer strictly based on the provided code additions. Do not use any external knowledge, assumptions, or information beyond the code changes shown above. If you cannot identify any issues in the provided code, return an empty array inside the reviews object.
 """
-                review_prompt += f"""
+                review_prompt += """
 Code additions with line numbers:
 {changes_text}
 
