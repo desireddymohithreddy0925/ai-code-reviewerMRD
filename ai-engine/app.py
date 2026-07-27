@@ -1194,6 +1194,8 @@ async def summarize_pr(request: SummarizeRequest):
 Generate a concise, high-level summary of the architectural and functional changes in this Pull Request based on the following diff.
 Use a bulleted list. Limit to 3-5 concise bullet points. Avoid extremely minor details unless they are critical.
 
+ALSO: If the PR appears to touch multiple unrelated semantic goals or contains a highly disjointed dependency graph (e.g., frontend UI changes mixed with unrelated database migrations), create a concrete plan to split this PR into up to 3 smaller, independently deployable PRs. If the PR is cohesive, return null for the split plan.
+
 Diff:
 ```
 {request.diff}
@@ -1201,14 +1203,15 @@ Diff:
 
 Format your JSON precisely as:
 {{
-  "summary": "- Added new feature X\n- Refactored component Y"
+  "summary": "- Added new feature X\\n- Refactored component Y",
+  "pr_split_plan": "This PR touches disjoint features. Suggested Split:\\n1. PR 1: ...\\n2. PR 2: ..."
 }}
 """
     try:
         completion = await _call_groq_with_timeout(
             model=groq_model,
             messages=[
-                {"role": "system", "content": "You are a code reviewer. Always output valid JSON matching the schema {'summary': 'string'}."},
+                {"role": "system", "content": "You are a code reviewer. Always output valid JSON matching the schema {'summary': 'string', 'pr_split_plan': 'string' or null}."},
                 {"role": "user", "content": summary_prompt}
             ],
             temperature=0.3,
@@ -1219,7 +1222,10 @@ Format your JSON precisely as:
             raise HTTPException(status_code=502, detail="Groq returned empty response.")
         
         data = json.loads(content)
-        return {"summary": data.get("summary", "")}
+        return {
+            "summary": data.get("summary", ""),
+            "pr_split_plan": data.get("pr_split_plan")
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

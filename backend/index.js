@@ -2302,7 +2302,12 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
         let currentBody = pullRequest.body || '';
         const summaryStartTag = '<!-- RepoSage Summary -->';
         const summaryEndTag = '<!-- End RepoSage Summary -->';
-        const newSummaryBlock = `${summaryStartTag}\n### 🤖 RepoSage PR Summary\n${summaryData.summary}\n${summaryEndTag}`;
+        
+        let newSummaryBlock = `${summaryStartTag}\n### 🤖 RepoSage PR Summary\n${summaryData.summary}`;
+        if (summaryData.pr_split_plan) {
+          newSummaryBlock += `\n\n### ✂️ Recommended PR Split Plan\n${summaryData.pr_split_plan}`;
+        }
+        newSummaryBlock += `\n${summaryEndTag}`;
         
         let newBody;
         const startIndex = currentBody.indexOf(summaryStartTag);
