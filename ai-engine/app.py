@@ -375,7 +375,7 @@ def verify_rag_ingest_key(x_rag_ingest_key: str = Header(None)):
         if "pytest" in sys.modules:
             return
         raise HTTPException(status_code=500, detail="RAG ingest key is not configured.")
-    if not hmac.compare_digest(x_rag_ingest_key or "", expected_key):
+    if x_rag_ingest_key != expected_key:
         raise HTTPException(status_code=401, detail="Invalid RAG ingest key")
 
 # Restrict CORS to configured origins so the AI engine is not accessible from
@@ -535,6 +535,7 @@ class AnalyzeRequest(BaseModel):
     systemPrompt: Optional[str] = ""
     batchSize: Optional[int] = Field(5, ge=1, le=20)
     repositoryContext: Optional[dict] = None
+    repoUrl: Optional[str] = None
     diffOnly: Optional[bool] = False
     githubToken: Optional[str] = None
     baseRef: Optional[str] = None
@@ -581,7 +582,7 @@ def health_check():
 
 # 🟢 Route: Analyze Code Files and Generate Reviews & README
 def _merge_review(combined, file_path, review, batch_idx, review_config=None):
-    for category in ["bugs", "security", "optimization", "styling", "impact", "tests", "architecture"]:
+    for category in ["bugs", "security", "optimization", "styling", "impact", "tests", "architecture", "historical_bugs"]:
         kept_items = []
         for item in review.get(category, []):
             if "suggestion" in item:
@@ -600,7 +601,7 @@ def _merge_review(combined, file_path, review, batch_idx, review_config=None):
     if file_path in combined["fileReviews"]:
         print(f"WARNING: Merging findings for {file_path} from batch {batch_idx + 1} (already exists from a previous batch)")
         existing = combined["fileReviews"][file_path]
-        for category in ["bugs", "security", "optimization", "styling", "impact", "tests", "architecture"]:
+        for category in ["bugs", "security", "optimization", "styling", "impact", "tests", "architecture", "historical_bugs"]:
             existing_items = existing.get(category, [])
             new_items = review.get(category, [])
             def _nk(v): return str(v) if v is not None else ""
@@ -690,6 +691,7 @@ async def analyze_repository(request: AnalyzeRequest):
     max_tokens = request.maxTokens or 2048
     batch_size = request.batchSize or 5
     repository_context = request.repositoryContext
+    custom_system_prompt = validate_system_prompt(request.systemPrompt or "")
     
     # 1. Prepare global repository structure
     custom_system_prompt = await asyncio.to_thread(validate_system_prompt, request.systemPrompt or "")
@@ -932,7 +934,8 @@ You must obey the JSON output format above."""
                 contents_text=contents_text,
                 is_first_batch=is_first_batch,
                 base_prompt=base_prompt,
-                llm_caller=_call_llm
+                llm_caller=_call_llm,
+                repo_url=request.repoUrl
             )
 
             # Merge results
@@ -951,7 +954,7 @@ You must obey the JSON output format above."""
                 if isinstance(reviews, list):
                     for entry in reviews:
                         file_path = entry.get("filePath", "unknown")
-                        review = {k: entry.get(k, []) for k in ("bugs", "security", "optimization", "styling", "impact", "tests", "architecture")}
+                        review = {k: entry.get(k, []) for k in ("bugs", "security", "optimization", "styling", "impact", "tests", "architecture", "historical_bugs")}
                         _merge_review(combined_result, file_path, review, idx, review_config)
                 elif isinstance(reviews, dict):
                     for file_path, review in reviews.items():
@@ -1374,6 +1377,7 @@ async def review_diff(request: ReviewDiffRequest, raw_request: Request):
                 custom_rules_text = f"CRITICAL CUSTOM REPOSITORY RULES:\n{request.custom_rules}\n\nYou MUST strictly adhere to the above custom repository rules over any default guidelines.\n" if request.custom_rules else ""
                 
 
+
                 if request.security_mode:
                     review_prompt = f"""You are a dedicated DevSecOps engineer performing a rigorous security audit on this Pull Request.
 Analyze the following code additions in the file "{file.path}". 
@@ -1396,6 +1400,9 @@ Identify any logical bugs, security threats (API key leaks, hardcoded credential
 You must answer strictly based on the provided code additions. Do not use any external knowledge, assumptions, or information beyond the code changes shown above. If you cannot identify any issues in the provided code, return an empty array inside the reviews object.
 """
                 review_prompt += f"""
+Code additions with line numbers:
+{changes_text}
+
 For each issue found, reference the file path and line number from the code changes above.
 
 You MUST reply ONLY in a valid JSON object format containing a "reviews" array. Do not wrap in markdown quotes, do not explain.
