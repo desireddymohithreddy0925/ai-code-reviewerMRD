@@ -9,8 +9,6 @@ from .prompts import (
     HISTORICAL_BUG_AGENT_PROMPT
 )
 import rag
-from .security_utils import detect_high_entropy_strings
-
 async def _run_agent(agent_name: str, system_prompt: str, user_prompt: str, llm_caller: Callable[[str, str], Awaitable[Dict[Any, Any]]]) -> Dict[Any, Any]:
     try:
         return await llm_caller(system_prompt, user_prompt)
