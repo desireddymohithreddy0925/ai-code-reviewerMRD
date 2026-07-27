@@ -62,11 +62,11 @@ services:
     environment:
       - PORT=5000
       - AI_ENGINE_URL=http://ai-engine:8000
-      - AI_ENGINE_API_KEY=${AI_ENGINE_API_KEY}
-      - REPOSAGE_API_KEY=${REPOSAGE_API_KEY:-docker-dev-key}
-      - SESSION_SECRET=${SESSION_SECRET:-reposage-docker-dev-secret-key-change-in-prod-long-enough}
       - GITHUB_PAT=${GITHUB_PAT}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - REPOSAGE_API_KEY=${REPOSAGE_API_KEY:-docker-dev-key}
+      - AI_ENGINE_API_KEY=${AI_ENGINE_API_KEY}
+      - SESSION_SECRET=${SESSION_SECRET:-reposage-docker-dev-secret-key-change-in-prod-long-enough}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
       - GIT_CLONE_TIMEOUT=${GIT_CLONE_TIMEOUT:-120000}
       - MAX_REPO_SIZE_MB=${MAX_REPO_SIZE_MB:-100}
