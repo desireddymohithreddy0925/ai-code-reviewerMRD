@@ -786,7 +786,8 @@ async def analyze_repository(request: AnalyzeRequest):
     combined_result = {
         "fileReviews": {},
         "generatedReadme": "",
-        "mermaidDiagram": ""
+        "mermaidDiagram": "",
+        "complexityHeatmap": ""
     }
 
     # 3. Process batches concurrently (bounded by GROQ_CONCURRENCY_LIMIT) instead
@@ -936,6 +937,9 @@ You must obey the JSON output format above."""
                 if "mermaidDiagram" in batch_result:
                     sanitized = sanitize_ai_output(batch_result["mermaidDiagram"])
                     combined_result["mermaidDiagram"] = sanitize_mermaid_code(sanitized)
+                if "complexityHeatmap" in batch_result:
+                    sanitized = sanitize_ai_output(batch_result["complexityHeatmap"])
+                    combined_result["complexityHeatmap"] = sanitize_mermaid_code(sanitized)
                 if "generatedReadme" in batch_result:
                     combined_result["generatedReadme"] = sanitize_ai_output(batch_result["generatedReadme"])
 
