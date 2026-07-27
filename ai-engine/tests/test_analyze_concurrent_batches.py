@@ -76,6 +76,7 @@ def fake_groq(monkeypatch):
                 "security": [],
                 "optimization": [],
                 "styling": [],
+                "impact": []
             }
             for name in filenames
         }
@@ -197,7 +198,7 @@ def test_analyze_non_first_batch_failure_is_skipped_not_fatal(monkeypatch):
         if filenames == ["b.py"]:
             raise RuntimeError("transient failure on batch 2")
         payload = {
-            "fileReviews": {name: {"bugs": [], "security": [], "optimization": [], "styling": []} for name in filenames},
+            "fileReviews": {name: {"bugs": [], "security": [], "optimization": [], "styling": [], "impact": []} for name in filenames},
             "generatedReadme": "# Fake Readme",
             "mermaidDiagram": "graph TD\n  A[\"S\"] --> B[\"E\"]",
         }

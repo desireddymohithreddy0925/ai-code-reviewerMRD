@@ -907,6 +907,9 @@ export default function Dashboard() {
       setSessionId(currentSessionId);
       await saveReport(data, repoUrl, currentSessionId);
       setAnalysisResult(data);
+      if (data.sessionPersisted === true && data.sessionOwnerToken) {
+        localStorage.setItem("sessionOwnerToken", data.sessionOwnerToken);
+      }
       persistAuditHistory(data);
       setChatHistory([]);
 
