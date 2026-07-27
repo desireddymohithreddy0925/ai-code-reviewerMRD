@@ -53,9 +53,31 @@ def fake_groq(monkeypatch):
                 "security": [],
                 "optimization": [],
                 "styling": [],
+                "historical_bugs": []
             }
             for name in filenames
         }
+        
+        # If this is the synthesizer call, the filenames will be empty because we don't pass contents_text.
+        # So we look into agent_findings instead.
+        if "You are the Synthesizer Agent" in messages[0]["content"]:
+            import json as json_lib
+            # Try to extract agent_findings JSON from user_prompt
+            # which is basically combined_findings
+            file_reviews = {}
+            for line in messages[1]["content"].splitlines():
+                if "issue in " in line:
+                    import re
+                    match = re.search(r'issue in (.*?)"', line)
+                    if match:
+                        name = match.group(1)
+                        file_reviews[name] = {
+                            "bugs": [{"type": "test-bug", "line": 1, "description": f"issue in {name}", "suggestion": "fix it"}],
+                            "security": [],
+                            "optimization": [],
+                            "styling": [],
+                            "historical_bugs": []
+                        }
 
         payload = {"fileReviews": file_reviews}
         if is_first_batch:
@@ -126,10 +148,10 @@ def test_analyze_single_batch_still_works(fake_groq):
 def test_analyze_first_batch_failure_aborts_whole_request(monkeypatch):
     monkeypatch.setattr(app_module, "groq_client", MagicMock())
 
-    async def failing_call(**kwargs):
+    async def failing_pipeline(**kwargs):
         raise RuntimeError("groq is down")
 
-    monkeypatch.setattr(app_module, "_call_groq_with_timeout", failing_call)
+    monkeypatch.setattr(app_module, "run_batch_pipeline", failing_pipeline)
 
     payload = {
         "files": [{"name": "a.py", "content": "print(1)"}],
@@ -143,19 +165,29 @@ def test_analyze_first_batch_failure_aborts_whole_request(monkeypatch):
 def test_analyze_non_first_batch_failure_is_skipped_not_fatal(monkeypatch):
     monkeypatch.setattr(app_module, "groq_client", MagicMock())
 
-    async def flaky_call(**kwargs):
-        messages = kwargs["messages"]
-        filenames = _extract_batch_filenames(messages)
+    # Instead of mocking groq, mock run_batch_pipeline which is what app.py calls
+    async def flaky_pipeline(**kwargs):
+        contents_text = kwargs["contents_text"]
+        
+        # Determine which file this batch is processing
+        import re
+        filenames = []
+        for line in contents_text.splitlines():
+            if line.startswith("--- File: ") and line.endswith(" ---"):
+                filenames.append(line[len("--- File: "):-len(" ---")])
+                
         if filenames == ["b.py"]:
             raise RuntimeError("transient failure on batch 2")
-        payload = {
-            "fileReviews": {name: {"bugs": [], "security": [], "optimization": [], "styling": []} for name in filenames},
+            
+        file_reviews = {name: {"bugs": [], "security": [], "optimization": [], "styling": []} for name in filenames}
+        
+        return {
+            "fileReviews": file_reviews,
             "generatedReadme": "# Fake Readme",
-            "mermaidDiagram": "graph TD\n  A[\"S\"] --> B[\"E\"]",
+            "mermaidDiagram": "graph TD\n  A[\"S\"] --> B[\"E\"]"
         }
-        return _make_fake_completion(json.dumps(payload))
 
-    monkeypatch.setattr(app_module, "_call_groq_with_timeout", flaky_call)
+    monkeypatch.setattr(app_module, "run_batch_pipeline", flaky_pipeline)
 
     payload = {
         "files": [
