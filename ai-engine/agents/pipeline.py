@@ -8,6 +8,7 @@ from .prompts import (
     IMPACT_ANALYSIS_AGENT_PROMPT,
     SYNTHESIZER_AGENT_PROMPT
 )
+from .security_utils import detect_high_entropy_strings
 
 async def _run_agent(agent_name: str, system_prompt: str, user_prompt: str, llm_caller: Callable[[str, str], Awaitable[Dict[Any, Any]]]) -> Dict[Any, Any]:
     try:
@@ -27,13 +28,25 @@ async def run_batch_pipeline(
     base_prompt: str,
     llm_caller: Callable[[str, str], Awaitable[Dict[Any, Any]]]
 ) -> Dict[Any, Any]:
+    
+    # 1. Detect high-entropy strings for Security Context
+    high_entropy_strings = detect_high_entropy_strings(contents_text)
+    entropy_context = ""
+    if high_entropy_strings:
+        entropy_context = "\n\n### Potential Secrets (High Shannon Entropy Detected):\n"
+        for s, ent in high_entropy_strings:
+            # Safely truncate string to avoid massive token bloat
+            s_trunc = s if len(s) < 100 else s[:97] + "..."
+            entropy_context += f"- String: `{s_trunc}` (Entropy: {ent:.2f})\n"
+        entropy_context += "\nPlease semantically analyze these high-entropy strings. Determine if they are true cryptographic secrets/keys or benign (e.g., test tokens, hashes, UUIDs)."
+
     # Construct prompts for sub-agents
     security_user_prompt = SECURITY_AGENT_PROMPT.format(
         company=company,
         language=language,
         structure_text=structure_text,
         contents_text=contents_text
-    )
+    ) + entropy_context
     performance_user_prompt = PERFORMANCE_AGENT_PROMPT.format(
         company=company,
         language=language,

@@ -539,8 +539,6 @@ class AnalyzeRequest(BaseModel):
     baseRef: Optional[str] = None
     headRef: Optional[str] = None
 
-    _REF_PATTERN = re.compile(r"^[\w./\-]+$")
-
     @field_validator("baseRef", "headRef")
     @classmethod
     def _validate_ref(cls, v):
