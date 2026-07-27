@@ -302,6 +302,7 @@ async function run() {
         const reviewPrompt = `You are a Senior Staff Engineer performing an automated Pull Request code review.${personaPromptExtension}
 Analyze the following code additions in the file "${file.path}". 
 Identify any logical bugs, security threats (API key leaks, hardcoded credentials, SQL injection, null references), naming/style issues, or performance optimization opportunities.${packageContext}
+Pay special attention to ALGORITHMIC COMPLEXITY and CLOUD COST PROFILING (e.g. N+1 queries, expensive loops over S3/network calls). If an O(N^2) or worse complexity is found, estimate potential latency and dollar cost increases at scale.
 
 CRITICAL: When reviewing TypeScript files, recognize advanced and modern TypeScript features (like mapped types, conditional types, and deeply nested generics). Do NOT flag valid complex TypeScript as syntax errors. If you are not absolutely certain that a complex type definition is invalid, abstain from commenting on it to prevent false positives.
 

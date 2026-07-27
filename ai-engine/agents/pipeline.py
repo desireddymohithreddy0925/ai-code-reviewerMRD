@@ -5,6 +5,7 @@ from .prompts import (
     SECURITY_AGENT_PROMPT,
     PERFORMANCE_AGENT_PROMPT,
     STYLE_AGENT_PROMPT,
+    PROFILING_AGENT_PROMPT,
     SYNTHESIZER_AGENT_PROMPT
 )
 
@@ -43,22 +44,30 @@ async def run_batch_pipeline(
         structure_text=structure_text,
         contents_text=contents_text
     )
+    profiling_user_prompt = PROFILING_AGENT_PROMPT.format(
+        company=company,
+        language=language,
+        structure_text=structure_text,
+        contents_text=contents_text
+    )
 
     # Dispatch concurrently
-    print(f"⏳ Dispatching Security, Performance, and Style agents concurrently...")
+    print(f"⏳ Dispatching Security, Performance, Style, and Profiling agents concurrently...")
     results = await asyncio.gather(
         _run_agent("Security", base_prompt, security_user_prompt, llm_caller),
         _run_agent("Performance", base_prompt, performance_user_prompt, llm_caller),
-        _run_agent("Style", base_prompt, style_user_prompt, llm_caller)
+        _run_agent("Style", base_prompt, style_user_prompt, llm_caller),
+        _run_agent("Profiling", base_prompt, profiling_user_prompt, llm_caller)
     )
     
-    security_res, performance_res, style_res = results
+    security_res, performance_res, style_res, profiling_res = results
     
     # Combine findings to send to Synthesizer
     combined_findings = {
         "security_findings": security_res.get("fileReviews", {}),
         "performance_findings": performance_res.get("fileReviews", {}),
-        "style_findings": style_res.get("fileReviews", {})
+        "style_findings": style_res.get("fileReviews", {}),
+        "profiling_findings": profiling_res.get("fileReviews", {})
     }
     
     readme_mermaid_instructions = ""

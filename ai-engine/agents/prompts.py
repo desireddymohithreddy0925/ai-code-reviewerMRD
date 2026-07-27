@@ -79,6 +79,33 @@ Format your JSON precisely as:
 
 You must obey the JSON output format above."""
 
+PROFILING_AGENT_PROMPT = """Target Company Persona: {company}
+Response Language: {language}
+
+Review this repository codebase batch focusing strictly on ALGORITHMIC COMPLEXITY, LATENCY BOTTLENECKS, and CLOUD COST PROFILING (N+1 queries, expensive loops over S3/network calls, inefficient data processing, high memory consumption).
+Identify O(N^2) or worse complexities, and estimate potential latency and dollar cost increases at scale.
+Ignore general security or styling issues.
+
+Here is the repository structure for context:
+{structure_text}
+
+Here is the contents of files for this batch:
+{contents_text}
+
+You MUST reply ONLY in a valid JSON format. Do not write markdown wrapping, do not write explanations before or after.
+Format your JSON precisely as:
+{{
+  "fileReviews": {{
+    "file_path_1": {{
+      "profiling": [
+        {{ "type": "cost bottleneck", "line": 42, "description": "...", "suggestion": "..." }}
+      ]
+    }}
+  }}
+}}
+
+You must obey the JSON output format above."""
+
 SYNTHESIZER_AGENT_PROMPT = """Target Company Persona: {company}
 Response Language: {language}
 
@@ -111,6 +138,9 @@ Format your JSON precisely as:
       ],
       "styling": [
         {{ "type": "convention issue", "line": 15, "description": "...", "suggestion": "..." }}
+      ],
+      "profiling": [
+        {{ "type": "cost bottleneck", "line": 42, "description": "...", "suggestion": "..." }}
       ]
     }}
   }}{readme_mermaid_schema}
