@@ -1223,6 +1223,12 @@ Format your JSON precisely as:
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class DependencyImpactRequest(BaseModel):
+    pr_title: str
+    pr_body: str
+    repo_url: Optional[str] = None
+    model: Optional[str] = "llama-3.3-70b-versatile"
+
 # 🟢 Route: Simulate Dependency Update Impact
 @app.post("/simulate-dependency-impact")
 async def simulate_dependency_impact(request: DependencyImpactRequest):
@@ -1436,11 +1442,6 @@ class SplitRequest(BaseModel):
     repo_url: Optional[str] = None
 
 
-class DependencyImpactRequest(BaseModel):
-    pr_title: str
-    pr_body: str
-    repo_url: Optional[str] = None
-    model: Optional[str] = "llama-3.3-70b-versatile"
 
 
 class SplitResponse(BaseModel):
