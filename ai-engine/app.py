@@ -25,7 +25,6 @@ import extractor
 from embeddings import is_fallback_active
 from config_loader import load_config_from_files, ConfigValidationError, CONFIG_FILENAME
 from diff_helper import get_changed_files_from_git, filter_files_by_changes, format_diff_header
-from utils.ignoreHelper import filter_ignored_files, apply_repo_ignore_rules
 from utils.dependency_graph import smart_batch_files
 from agents.pipeline import run_batch_pipeline
 
