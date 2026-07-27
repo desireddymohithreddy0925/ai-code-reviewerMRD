@@ -25,6 +25,8 @@ import extractor
 from embeddings import is_fallback_active
 from config_loader import load_config_from_files, ConfigValidationError, CONFIG_FILENAME
 from diff_helper import get_changed_files_from_git, filter_files_by_changes, format_diff_header
+from utils.ignoreHelper import filter_ignored_files, apply_repo_ignore_rules
+from utils.dependency_graph import smart_batch_files
 from agents.pipeline import run_batch_pipeline
 
 try:
@@ -715,9 +717,8 @@ async def analyze_repository(request: AnalyzeRequest):
     groq_model = get_groq_model(request.model)
     print(f"📡 Forwarding batched analysis request to Groq using model: {groq_model} (Batch size: {batch_size})")
 
-    # 2. Sort files deterministically before chunking into batches
-    files.sort(key=lambda f: f.name)
-    batches = [files[i:i + batch_size] for i in range(0, len(files), batch_size)]
+    # 2. Dynamically chunk into smart batches based on AST dependency graph
+    batches = smart_batch_files(files, batch_size)
 
     combined_result = {
         "fileReviews": {},
