@@ -2073,8 +2073,42 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
   });
 
   if (!diff) {
-    console.warn("ΓÜá∩╕Å No diff found for this PR.");
+    console.warn("⚠️ No diff found for this PR.");
     return;
+  }
+
+  // AI-Powered Dependency Update Impact Simulation for Dependabot PRs
+  if (pullRequest.user && pullRequest.user.login && pullRequest.user.login.includes('dependabot')) {
+    console.log(`🤖 Dependabot PR detected! Simulating dependency impact...`);
+    try {
+      const baseUrl = (process.env.AI_ENGINE_URL || 'http://localhost:8000').replace(/\/+$/, '');
+      const impactResponse = await fetchWithTimeout(`${baseUrl}/simulate-dependency-impact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
+        body: JSON.stringify({ 
+          pr_title: pullRequest.title || '',
+          pr_body: pullRequest.body || '',
+          repo_url: `https://github.com/${owner}/${repo}`
+        })
+      }, 60000);
+
+      if (impactResponse.ok) {
+        const impactData = await impactResponse.json();
+        if (impactData.impact_report) {
+          await octokit.rest.issues.createComment({
+            owner,
+            repo,
+            issue_number: pullNumber,
+            body: `### 🚨 AI Dependency Impact Simulation\n\n${impactData.impact_report}`
+          });
+          console.log(`✅ Posted AI Dependency Impact Simulation report to PR #${pullNumber}`);
+        }
+      } else {
+        console.warn(`⚠️ Failed to simulate dependency impact, API returned ${impactResponse.status}`);
+      }
+    } catch (e) {
+      console.warn(`⚠️ Error during dependency impact simulation: ${e.message}`);
+    }
   }
 
   // Fetch .ai-ignore patterns once

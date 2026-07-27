@@ -1223,6 +1223,70 @@ Format your JSON precisely as:
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# 🟢 Route: Simulate Dependency Update Impact
+@app.post("/simulate-dependency-impact")
+async def simulate_dependency_impact(request: DependencyImpactRequest):
+    if not groq_client:
+        raise HTTPException(status_code=500, detail="Groq API client is not configured on this engine.")
+    
+    groq_model = get_groq_model(request.model)
+    
+    # 1. Extract package name from title
+    package_name = request.pr_title
+    match = re.search(r"bump ([\w\-@/]+) from", request.pr_title, re.IGNORECASE)
+    if match:
+        package_name = match.group(1)
+        
+    # 2. Query RAG for usage
+    code_context = ""
+    try:
+        from vectorstore import query_chunks
+        # Simple search for the package name
+        results = query_chunks(package_name, n_results=5, repo_url=request.repo_url)
+        if results and len(results) > 0:
+            for i, chunk in enumerate(results):
+                code_context += f"--- Snippet {i+1} ---\n{chunk.get('content', '')}\n\n"
+    except Exception as e:
+        print(f"⚠️ RAG query failed during dependency simulation: {e}")
+        
+    # 3. Analyze impact
+    impact_prompt = f"""You are a Senior Staff Security and Architecture Engineer analyzing a dependency update.
+A Dependabot PR has been opened.
+PR Title: {request.pr_title}
+Release Notes / Body:
+{request.pr_body}
+
+The following code snippets from the repository were found using RAG search for '{package_name}':
+{code_context if code_context else "No direct usages found or RAG search unavailable."}
+
+Analyze the release notes for any breaking changes, deprecated APIs, or behavioral modifications. 
+Cross-reference them with the provided code snippets (if any) to determine the impact on the repository.
+Output a concrete, actionable risk assessment report.
+
+Format your JSON precisely as:
+{{
+  "impact_report": "..."
+}}
+"""
+    try:
+        completion = await _call_groq_with_timeout(
+            model=groq_model,
+            messages=[
+                {"role": "system", "content": "You are a code reviewer analyzing dependencies. Always output valid JSON matching the schema {'impact_report': 'string'}."},
+                {"role": "user", "content": impact_prompt}
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+        content = completion.choices[0].message.content
+        if not content:
+            raise HTTPException(status_code=502, detail="Groq returned empty response.")
+        
+        data = json.loads(content)
+        return {"impact_report": data.get("impact_report", "No impact report generated.")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # 🟢 Route: AI Pull Request Review (Reviews specific file code additions/diffs)
 @app.post("/review-diff")
 async def review_diff(request: ReviewDiffRequest, raw_request: Request):
@@ -1370,6 +1434,13 @@ class SplitRequest(BaseModel):
     chunk_size: Optional[int] = Field(None, ge=1, le=100000)
     chunk_overlap: Optional[int] = Field(None, ge=0, le=99999)
     repo_url: Optional[str] = None
+
+
+class DependencyImpactRequest(BaseModel):
+    pr_title: str
+    pr_body: str
+    repo_url: Optional[str] = None
+    model: Optional[str] = "llama-3.3-70b-versatile"
 
 
 class SplitResponse(BaseModel):
