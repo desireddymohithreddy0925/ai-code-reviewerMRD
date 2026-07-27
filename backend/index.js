@@ -887,28 +887,6 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
         return res.status(400).json({ error: 'No supportable source code files found in the repository.' });
       }
 
-      console.log(`📁 Found ${files.length} valid source files. Sending to AI engine...`);
-      
-      const repositoryContext = buildRepositoryContext(files);
-
-      // 2. Mocking AI Response for initial setup (or forward to FastAPI AI Engine)
-      // This is a perfect placeholder where contributors can connect the FastAPI server!
-      const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
-      
-      let reviewResult;
-      const baseUrl = aiEngineUrl.replace(/\/+$/, '');
-      try {
-        const aiResponse = await fetch(`${baseUrl}/analyze`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ files, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt, batchSize, repositoryContext })
-        });
-        
-        if (aiResponse.ok) {
-          reviewResult = await aiResponse.json();
-          reviewResult._mock = false;
-        } else {
-          throw new Error('AI engine responded with error');
       console.log(`≡ƒôü Found ${files.length} valid source files. Checking cache...`);
 
       // 1.3. Scan files for prompt injection patterns
@@ -1644,9 +1622,6 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
   if (!req.body || !req.body.action) {
     return res.status(400).json({ error: 'Invalid webhook payload' });
   }
-    console.warn('Γ¥î Webhook signature verification failed');
-    return res.status(401).json({ error: 'Invalid webhook signature' });
-  }
 
   const event = req.headers['x-github-event'];
   const payload = req.body;
@@ -1679,7 +1654,7 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
   if (!payload || typeof payload !== 'object') {
     return res.status(400).json({ error: 'Invalid webhook payload.' });
   }
-  const validEvents = ['pull_request', 'push', 'ping', 'issue_comment', 'pull_request_review_comment'];
+  const validEvents = ['pull_request', 'push', 'ping', 'issue_comment', 'pull_request_review_comment', 'pull_request_review_thread'];
   if (!validEvents.includes(event)) {
     return res.status(400).json({ error: `Unsupported webhook event: ${event}` });
   }
@@ -1775,6 +1750,41 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
     }
     
     return res.json({ message: 'Review comment event processed' });
+  }
+
+  
+  if (event === 'pull_request_review_thread') {
+    if (payload.action === 'resolved' && payload.thread && payload.thread.comments) {
+      const comments = payload.thread.comments;
+      if (comments.length > 0) {
+        const firstComment = comments[0];
+        const isBot = firstComment.user?.type === 'Bot' || firstComment.user?.login?.includes('reposage') || firstComment.user?.login?.includes('bot');
+        if (isBot) {
+          try {
+            const path = require('path');
+            const dataDir = path.join(process.cwd(), 'data');
+            fs.mkdirSync(dataDir, { recursive: true });
+            
+            const telemetryFile = path.join(dataDir, 'telemetry.jsonl');
+            const telemetryEntry = {
+              timestamp: new Date().toISOString(),
+              repo: payload.repository?.full_name,
+              pull_number: payload.pull_request?.number,
+              action: 'resolved',
+              diff_hunk: firstComment.diff_hunk,
+              path: firstComment.path,
+              ai_comment: firstComment.body
+            };
+            
+            fs.appendFileSync(telemetryFile, JSON.stringify(telemetryEntry) + '\n');
+            console.log(`📈 Telemetry logged: AI review comment resolved on PR #${payload.pull_request?.number}`);
+          } catch (e) {
+            console.error('Failed to log telemetry:', e);
+          }
+        }
+      }
+    }
+    return res.json({ message: "Processed pull_request_review_thread event" });
   }
 
   if (event === 'push') {
