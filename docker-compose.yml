@@ -30,6 +30,7 @@ services:
     environment:
       - PORT=8000
       - GROQ_API_KEY=${GROQ_API_KEY}
+      - REPOSAGE_API_KEY=${REPOSAGE_API_KEY}
       - AI_ENGINE_API_KEY=${AI_ENGINE_API_KEY}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
       - CHROMA_HOST=${CHROMA_HOST:-chromadb}
