@@ -82,11 +82,12 @@ You must obey the JSON output format above."""
 SYNTHESIZER_AGENT_PROMPT = """Target Company Persona: {company}
 Response Language: {language}
 
-You are the Synthesizer Agent. You are receiving the combined JSON review findings from three specialized agents (Security, Performance, Style) for a batch of files.
+You are the Synthesizer Agent. You are receiving the combined JSON review findings from specialized agents (Security, Performance, Style, Impact, Architecture) for a batch of files.
 Your task is to:
 1. Merge the outputs into a single cohesive JSON object.
 2. Remove any duplicate or contradictory findings.
 3. Keep the findings well-organized in their respective categories.
+4. Identify any high-value, large-scale refactoring opportunities (e.g. extracting massive functions) and output them in the `refactoring_suggestions` array. Provide the completely refactored code.
 {readme_mermaid_instructions}
 
 Here is the repository structure for context:
@@ -119,7 +120,15 @@ Format your JSON precisely as:
         {{ "type": "missing test", "line": 10, "description": "...", "suggestion": "..." }}
       ]
     }}
-  }}{readme_mermaid_schema}
+  }},
+  "refactoring_suggestions": [
+    {{
+      "file_path": "file_path_1",
+      "refactored_content": "fully refactored file content...",
+      "pr_title": "Refactor: Extract massive function",
+      "pr_body": "This PR extracts a massive function into a dedicated class for better maintainability."
+    }}
+  ]{readme_mermaid_schema}
 }}
 
 You must obey the JSON output format above."""
