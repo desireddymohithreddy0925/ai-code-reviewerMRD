@@ -9,6 +9,7 @@ from .prompts import (
     SYNTHESIZER_AGENT_PROMPT,
     HISTORICAL_BUG_AGENT_PROMPT
 )
+from .security_utils import detect_high_entropy_strings
 import rag
 async def _run_agent(agent_name: str, system_prompt: str, user_prompt: str, llm_caller: Callable[[str, str], Awaitable[Dict[Any, Any]]]) -> Dict[Any, Any]:
     try:
@@ -29,13 +30,25 @@ async def run_batch_pipeline(
     llm_caller: Callable[[str, str], Awaitable[Dict[Any, Any]]],
     repo_url: str = None
 ) -> Dict[Any, Any]:
+    
+    # 1. Detect high-entropy strings for Security Context
+    high_entropy_strings = detect_high_entropy_strings(contents_text)
+    entropy_context = ""
+    if high_entropy_strings:
+        entropy_context = "\n\n### Potential Secrets (High Shannon Entropy Detected):\n"
+        for s, ent in high_entropy_strings:
+            # Safely truncate string to avoid massive token bloat
+            s_trunc = s if len(s) < 100 else s[:97] + "..."
+            entropy_context += f"- String: `{s_trunc}` (Entropy: {ent:.2f})\n"
+        entropy_context += "\nPlease semantically analyze these high-entropy strings. Determine if they are true cryptographic secrets/keys or benign (e.g., test tokens, hashes, UUIDs)."
+
     # Construct prompts for sub-agents
     security_user_prompt = SECURITY_AGENT_PROMPT.format(
         company=company,
         language=language,
         structure_text=structure_text,
         contents_text=contents_text
-    )
+    ) + entropy_context
     performance_user_prompt = PERFORMANCE_AGENT_PROMPT.format(
         company=company,
         language=language,
@@ -54,7 +67,6 @@ async def run_batch_pipeline(
         structure_text=structure_text,
         contents_text=contents_text
     )
-
     # Query RAG for historical bugs
     historical_bugs_context = "No historical bugs found."
     if repo_url:
@@ -99,11 +111,13 @@ async def run_batch_pipeline(
     if is_first_batch:
         readme_mermaid_instructions = (
             "4. Additionally, you MUST construct a valid Mermaid.js flowchart (graph TD) that outlines the file structure, architecture, and import/dependency flows of the codebase. Ensure it compiles cleanly (use simple alphanumeric identifiers for node IDs, and wrap node labels in double quotes, e.g. A[\"label\"]).\n"
-            "5. Generate a highly detailed, professional README.md markdown for the entire repository, outlining installation, folder structure, features, tech stack, and usage guidelines."
+            "5. Generate a Code Complexity Heatmap (Mermaid.js graph TD) based on your estimation of cyclomatic and cognitive complexity of the changed files. Use classes to color nodes (e.g., Red for high risk, Yellow for medium, Green for low) to help reviewers triage the PR.\n"
+            "6. Generate a highly detailed, professional README.md markdown for the entire repository, outlining installation, folder structure, features, tech stack, and usage guidelines."
         )
         readme_mermaid_schema = (
             ",\n  \"generatedReadme\": \"Write a highly detailed, professional README.md markdown...\",\n"
-            "  \"mermaidDiagram\": \"graph TD\\n  A[\\\"Entry Point\\\"] --> B[\\\"Module\\\"]\""
+            "  \"mermaidDiagram\": \"graph TD\\n  A[\\\"Entry Point\\\"] --> B[\\\"Module\\\"]\",\n"
+            "  \"complexityHeatmap\": \"graph TD\\n  A[\\\"file1.py\\\"]:::high\\n  B[\\\"file2.py\\\"]:::low\\n  classDef high fill:#f96,stroke:#333;\\n  classDef low fill:#9f6,stroke:#333;\""
         )
         
     synthesizer_user_prompt = SYNTHESIZER_AGENT_PROMPT.format(
