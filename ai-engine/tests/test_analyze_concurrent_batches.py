@@ -43,8 +43,31 @@ def fake_groq(monkeypatch):
 
     async def fake_call_groq_with_timeout(**kwargs):
         messages = kwargs["messages"]
-        is_first_batch = "MUST construct a valid Mermaid.js flowchart" in messages[1]["content"]
-        filenames = _extract_batch_filenames(messages)
+        system_content = messages[0]["content"]
+        user_content = messages[1]["content"]
+
+        is_synthesizer = "You are the Synthesizer Agent" in user_content
+        is_first_batch = "MUST construct a valid Mermaid.js flowchart" in user_content
+        
+        filenames = []
+        if is_synthesizer:
+            start_marker = "Here are the specialized agent findings:\n"
+            end_marker = "\n\nYou MUST reply ONLY in a valid JSON format."
+            start = user_content.find(start_marker)
+            end = user_content.find(end_marker)
+            if start != -1 and end != -1:
+                findings_str = user_content[start + len(start_marker):end]
+                try:
+                    findings = json.loads(findings_str)
+                    if "security_findings" in findings:
+                        filenames = list(findings["security_findings"].keys())
+                except:
+                    pass
+        else:
+            for line in user_content.splitlines():
+                if line.startswith("--- File: ") and line.endswith(" ---"):
+                    filenames.append(line[len("--- File: "):-len(" ---")])
+        
         call_log.append(filenames)
 
         file_reviews = {
@@ -53,7 +76,8 @@ def fake_groq(monkeypatch):
                 "security": [],
                 "optimization": [],
                 "styling": [],
-                "historical_bugs": []
+                "historical_bugs": [],
+                "impact": []
             }
             for name in filenames
         }
@@ -108,9 +132,9 @@ def test_analyze_merges_fileReviews_from_all_batches(fake_groq):
         assert data["fileReviews"][name]["bugs"][0]["description"] == f"issue in {name}"
 
     # 3 files at batchSize=1 means 3 batches.
-    # Each batch runs 4 specialized agents + 1 Synthesizer = 5 Groq calls.
-    # Total = 3 batches * 5 calls = 15 calls.
-    assert len(fake_groq) == 15
+    # Each batch runs 5 specialized agents + 1 Synthesizer = 6 Groq calls.
+    # Total = 3 batches * 6 calls = 18 calls.
+    assert len(fake_groq) == 18
 
 
 def test_analyze_readme_and_mermaid_come_only_from_first_batch(fake_groq):
@@ -142,7 +166,7 @@ def test_analyze_single_batch_still_works(fake_groq):
 
     assert "only.py" in data["fileReviews"]
     assert data["generatedReadme"] == "# Fake Readme"
-    assert len(fake_groq) == 5
+    assert len(fake_groq) == 6
 
 
 def test_analyze_first_batch_failure_aborts_whole_request(monkeypatch):
@@ -164,6 +188,7 @@ def test_analyze_first_batch_failure_aborts_whole_request(monkeypatch):
 
 def test_analyze_non_first_batch_failure_is_skipped_not_fatal(monkeypatch):
     monkeypatch.setattr(app_module, "groq_client", MagicMock())
+    call_log = []
 
     # Instead of mocking groq, mock run_batch_pipeline which is what app.py calls
     async def flaky_pipeline(**kwargs):
@@ -179,7 +204,7 @@ def test_analyze_non_first_batch_failure_is_skipped_not_fatal(monkeypatch):
         if filenames == ["b.py"]:
             raise RuntimeError("transient failure on batch 2")
             
-        file_reviews = {name: {"bugs": [], "security": [], "optimization": [], "styling": []} for name in filenames}
+        file_reviews = {name: {"bugs": [], "security": [], "optimization": [], "styling": [], "historical_bugs": [], "impact": []} for name in filenames}
         
         return {
             "fileReviews": file_reviews,

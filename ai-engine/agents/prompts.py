@@ -114,6 +114,9 @@ Format your JSON precisely as:
       ],
       "historical_bugs": [
         {{ "type": "historical bug regression", "line": 10, "description": "...", "suggestion": "..." }}
+      ],
+      "impact": [
+        {{ "type": "breaking change", "line": 5, "description": "...", "suggestion": "..." }}
       ]
     }}
   }}{readme_mermaid_schema}
@@ -128,6 +131,13 @@ Review this repository codebase batch focusing strictly on Historical Bug Patter
 You will be provided with a list of historical, closed bugs from this repository that were retrieved via RAG similarity search.
 Your job is to determine if the CURRENT code changes re-introduce or violate the same domain-specific patterns seen in these historical bugs (e.g. missing tenant ID, uncaught edge case, etc.).
 Ignore security, style, and performance unless they directly relate to the retrieved historical bugs.
+"""
+
+IMPACT_ANALYSIS_AGENT_PROMPT = """Target Company Persona: {company}
+Response Language: {language}
+
+Review this repository codebase batch focusing strictly on CROSS-REPOSITORY DEPENDENCY IMPACT. Look for backwards-incompatible API changes, removed exports, signature modifications, or any changes that could break downstream repositories relying on these contracts.
+Ignore other aspects like styling, security, or general performance.
 
 Here is the repository structure for context:
 {structure_text}
@@ -145,6 +155,9 @@ Format your JSON precisely as:
     "file_path_1": {{
       "historical_bugs": [
         {{ "type": "historical bug regression", "line": 10, "description": "...", "suggestion": "..." }}
+      ],
+      "impact": [
+        {{ "type": "breaking change", "line": 5, "description": "...", "suggestion": "..." }}
       ]
     }}
   }}
