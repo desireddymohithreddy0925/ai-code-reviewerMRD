@@ -9,6 +9,7 @@ import { GitHubProvider } from './providers/GitHubProvider.js';
 import { GitLabProvider } from './providers/GitLabProvider.js';
 
 const PARSE_FAILED = { reviews: [], _parseFailed: true };
+import yaml from 'yaml';
 
 
 
@@ -111,6 +112,39 @@ async function run() {
         console.log(`✅ Loaded ${ignoreLines.length} patterns from .ai-ignore`);
       } catch (e) {
         // file doesn't exist, ignore
+      }
+    }
+
+    let personaPromptExtension = '';
+    const prAuthor = github.context.payload.pull_request?.user?.login;
+    if (prAuthor && headSha) {
+      try {
+        const { data: personaFile } = await octokit.rest.repos.getContent({
+          owner,
+          repo,
+          path: '.ai-reviewer-personas.yml',
+          ref: headSha
+        });
+        const personaContent = Buffer.from(personaFile.content, 'base64').toString('utf8');
+        const parsedPersonas = yaml.parse(personaContent);
+        
+        if (parsedPersonas && parsedPersonas.users && parsedPersonas.personas) {
+          const userLevel = parsedPersonas.users[prAuthor];
+          if (userLevel && parsedPersonas.personas[userLevel]) {
+            const profile = parsedPersonas.personas[userLevel];
+            let extensions = [];
+            if (profile.tone) extensions.push(`Tone: ${profile.tone}`);
+            if (profile.verbosity) extensions.push(`Verbosity: ${profile.verbosity}`);
+            if (profile.strictness) extensions.push(`Strictness: ${profile.strictness}`);
+            
+            if (extensions.length > 0) {
+              personaPromptExtension = `\nCRITICAL PERSONA ADJUSTMENT FOR AUTHOR @${prAuthor}:\n` + extensions.join('\n') + `\nAdjust your review style to match these constraints strictly.`;
+              console.log(`✅ Loaded persona '${userLevel}' for author @${prAuthor}`);
+            }
+          }
+        }
+      } catch (e) {
+        // file doesn't exist or parse error, ignore
       }
     }
 
@@ -265,7 +299,7 @@ async function run() {
           frameworkContext = '\nCRITICAL: This is a Svelte component. It contains HTML, CSS, and JavaScript/TypeScript in a single file. Do NOT flag valid Svelte syntax (like $: reactive statements or HTML tags) as JavaScript syntax errors. Consider Svelte reactivity rules.';
         }
 
-        const reviewPrompt = `You are a Senior Staff Engineer performing an automated Pull Request code review.
+        const reviewPrompt = `You are a Senior Staff Engineer performing an automated Pull Request code review.${personaPromptExtension}
 Analyze the following code additions in the file "${file.path}". 
 Identify any logical bugs, security threats (API key leaks, hardcoded credentials, SQL injection, null references), naming/style issues, or performance optimization opportunities.${packageContext}
 
@@ -431,7 +465,7 @@ If no issues are found, reply with: { "reviews": [] }`;
         const prTitle = pullRequest.title || '';
         const prBody = pullRequest.body || '';
 
-        const summaryPrompt = `You are a Senior Staff Engineer.
+        const summaryPrompt = `You are a Senior Staff Engineer.${personaPromptExtension}
 Generate a concise, high-level summary of the architectural and functional changes in this Pull Request based on the following diff.
 Also, evaluate if the current PR Title and Description accurately reflect the actual code changes.
 If they are poor (e.g. "fixed bug") or inaccurate, suggest a comprehensively rewritten title and description.
