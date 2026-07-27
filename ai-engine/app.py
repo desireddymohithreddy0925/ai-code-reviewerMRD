@@ -10,6 +10,8 @@ import uuid
 import unicodedata
 import urllib.parse
 import ipaddress
+import httpx
+import base64
 from collections import OrderedDict
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +27,7 @@ import extractor
 from embeddings import is_fallback_active
 from config_loader import load_config_from_files, ConfigValidationError, CONFIG_FILENAME
 from diff_helper import get_changed_files_from_git, filter_files_by_changes, format_diff_header
+from utils.dependency_graph import smart_batch_files
 from agents.pipeline import run_batch_pipeline
 
 try:
@@ -372,7 +375,7 @@ def verify_rag_ingest_key(x_rag_ingest_key: str = Header(None)):
         if "pytest" in sys.modules:
             return
         raise HTTPException(status_code=500, detail="RAG ingest key is not configured.")
-    if not hmac.compare_digest(x_rag_ingest_key or "", expected_key):
+    if x_rag_ingest_key != expected_key:
         raise HTTPException(status_code=401, detail="Invalid RAG ingest key")
 
 # Restrict CORS to configured origins so the AI engine is not accessible from
@@ -532,11 +535,11 @@ class AnalyzeRequest(BaseModel):
     systemPrompt: Optional[str] = ""
     batchSize: Optional[int] = Field(5, ge=1, le=20)
     repositoryContext: Optional[dict] = None
+    repoUrl: Optional[str] = None
     diffOnly: Optional[bool] = False
+    githubToken: Optional[str] = None
     baseRef: Optional[str] = None
     headRef: Optional[str] = None
-
-    _REF_PATTERN = re.compile(r"^[\w./\-]+$")
 
     @field_validator("baseRef", "headRef")
     @classmethod
@@ -547,7 +550,7 @@ class AnalyzeRequest(BaseModel):
             raise ValueError("Reference must be a string of at most 256 characters")
         if v.startswith("-"):
             raise ValueError("Reference must not start with a hyphen")
-        if not cls._REF_PATTERN.match(v):
+        if not re.match(r"^[\w./\-]+$", v):
             raise ValueError("Reference contains invalid characters (allowed: alphanumeric, underscore, dot, slash, hyphen)")
         return v
     
@@ -579,21 +582,26 @@ def health_check():
 
 # 🟢 Route: Analyze Code Files and Generate Reviews & README
 def _merge_review(combined, file_path, review, batch_idx, review_config=None):
-    for category in ["bugs", "security", "optimization", "styling"]:
+    for category in ["bugs", "security", "optimization", "styling", "impact", "tests", "architecture", "historical_bugs"]:
         kept_items = []
         for item in review.get(category, []):
             if "suggestion" in item:
                 item["suggestion"] = sanitize_ai_output(item["suggestion"])
             if "description" in item:
                 item["description"] = sanitize_ai_output(item["description"])
+            
+            # Apply language and path-based review config rule exclusions if config is provided
             if review_config and item.get("type") and review_config.is_rule_off(_rule_key(item["type"])):
                 continue
+            
             kept_items.append(item)
+            
         review[category] = kept_items
+
     if file_path in combined["fileReviews"]:
         print(f"WARNING: Merging findings for {file_path} from batch {batch_idx + 1} (already exists from a previous batch)")
         existing = combined["fileReviews"][file_path]
-        for category in ["bugs", "security", "optimization", "styling"]:
+        for category in ["bugs", "security", "optimization", "styling", "impact", "tests", "architecture", "historical_bugs"]:
             existing_items = existing.get(category, [])
             new_items = review.get(category, [])
             def _nk(v): return str(v) if v is not None else ""
@@ -610,6 +618,67 @@ def _merge_review(combined, file_path, review, batch_idx, review_config=None):
     else:
         combined["fileReviews"][file_path] = review
 
+async def _create_refactoring_pr(github_token: str, owner: str, repo: str, head_ref: str, file_path: str, new_content: str, pr_title: str, pr_body: str) -> str:
+    """Creates a new branch off head_ref, updates the file, and opens a child PR."""
+    headers = {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github.v3+json",
+        "X-GitHub-Api-Version": "2022-11-28"
+    }
+    
+    async with httpx.AsyncClient() as client:
+        # 1. Get the current commit SHA of the head_ref
+        ref_url = f"https://api.github.com/repos/{owner}/{repo}/git/ref/heads/{head_ref}"
+        res = await client.get(ref_url, headers=headers)
+        if res.status_code != 200:
+            print(f"⚠️ Failed to get head ref: {res.text}")
+            return None
+        base_sha = res.json()["object"]["sha"]
+        
+        # 2. Create a new branch
+        new_branch = f"ai-refactor/{head_ref}-{uuid.uuid4().hex[:8]}"
+        create_ref_url = f"https://api.github.com/repos/{owner}/{repo}/git/refs"
+        res = await client.post(create_ref_url, headers=headers, json={"ref": f"refs/heads/{new_branch}", "sha": base_sha})
+        if res.status_code != 201:
+            print(f"⚠️ Failed to create branch: {res.text}")
+            return None
+            
+        # 3. Get file blob SHA if it exists
+        file_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}?ref={new_branch}"
+        res = await client.get(file_url, headers=headers)
+        file_sha = None
+        if res.status_code == 200:
+            file_sha = res.json()["sha"]
+            
+        # 4. Update the file
+        update_data = {
+            "message": f"AI Refactor: {pr_title}",
+            "content": base64.b64encode(new_content.encode("utf-8")).decode("utf-8"),
+            "branch": new_branch
+        }
+        if file_sha:
+            update_data["sha"] = file_sha
+            
+        res = await client.put(file_url, headers=headers, json=update_data)
+        if res.status_code not in (200, 201):
+            print(f"⚠️ Failed to update file: {res.text}")
+            return None
+            
+        # 5. Create Pull Request
+        pr_url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+        pr_data = {
+            "title": pr_title,
+            "body": pr_body,
+            "head": new_branch,
+            "base": head_ref
+        }
+        res = await client.post(pr_url, headers=headers, json=pr_data)
+        if res.status_code != 201:
+            print(f"⚠️ Failed to open PR: {res.text}")
+            return None
+            
+        return res.json().get("html_url")
+
 @app.post("/analyze")
 async def analyze_repository(request: AnalyzeRequest):
     if not groq_client:
@@ -622,6 +691,7 @@ async def analyze_repository(request: AnalyzeRequest):
     max_tokens = request.maxTokens or 2048
     batch_size = request.batchSize or 5
     repository_context = request.repositoryContext
+    custom_system_prompt = validate_system_prompt(request.systemPrompt or "")
     
     # 1. Prepare global repository structure
     custom_system_prompt = await asyncio.to_thread(validate_system_prompt, request.systemPrompt or "")
@@ -715,14 +785,14 @@ async def analyze_repository(request: AnalyzeRequest):
     groq_model = get_groq_model(request.model)
     print(f"📡 Forwarding batched analysis request to Groq using model: {groq_model} (Batch size: {batch_size})")
 
-    # 2. Sort files deterministically before chunking into batches
-    files.sort(key=lambda f: f.name)
-    batches = [files[i:i + batch_size] for i in range(0, len(files), batch_size)]
+    # 2. Dynamically chunk into smart batches based on AST dependency graph
+    batches = smart_batch_files(files, batch_size)
 
     combined_result = {
         "fileReviews": {},
         "generatedReadme": "",
-        "mermaidDiagram": ""
+        "mermaidDiagram": "",
+        "complexityHeatmap": ""
     }
 
     # 3. Process batches concurrently (bounded by GROQ_CONCURRENCY_LIMIT) instead
@@ -864,7 +934,8 @@ You must obey the JSON output format above."""
                 contents_text=contents_text,
                 is_first_batch=is_first_batch,
                 base_prompt=base_prompt,
-                llm_caller=_call_llm
+                llm_caller=_call_llm,
+                repo_url=request.repoUrl
             )
 
             # Merge results
@@ -872,6 +943,9 @@ You must obey the JSON output format above."""
                 if "mermaidDiagram" in batch_result:
                     sanitized = sanitize_ai_output(batch_result["mermaidDiagram"])
                     combined_result["mermaidDiagram"] = sanitize_mermaid_code(sanitized)
+                if "complexityHeatmap" in batch_result:
+                    sanitized = sanitize_ai_output(batch_result["complexityHeatmap"])
+                    combined_result["complexityHeatmap"] = sanitize_mermaid_code(sanitized)
                 if "generatedReadme" in batch_result:
                     combined_result["generatedReadme"] = sanitize_ai_output(batch_result["generatedReadme"])
 
@@ -880,11 +954,14 @@ You must obey the JSON output format above."""
                 if isinstance(reviews, list):
                     for entry in reviews:
                         file_path = entry.get("filePath", "unknown")
-                        review = {k: entry.get(k, []) for k in ("bugs", "security", "optimization", "styling")}
+                        review = {k: entry.get(k, []) for k in ("bugs", "security", "optimization", "styling", "impact", "tests", "architecture", "historical_bugs")}
                         _merge_review(combined_result, file_path, review, idx, review_config)
                 elif isinstance(reviews, dict):
                     for file_path, review in reviews.items():
                         _merge_review(combined_result, file_path, review, idx, review_config)
+            
+            if "refactoring_suggestions" in batch_result:
+                combined_result.setdefault("refactoring_suggestions", []).extend(batch_result["refactoring_suggestions"])
 
             truncated_files.extend(local_truncated_files)
 
@@ -917,6 +994,36 @@ You must obey the JSON output format above."""
             "baseRef": request.baseRef,
             "headRef": request.headRef
         }
+
+    # 4. Handle Refactoring PR Generation
+    if request.githubToken and request.repositoryContext and request.headRef:
+        owner = request.repositoryContext.get("owner")
+        repo = request.repositoryContext.get("repo")
+        if owner and repo and "refactoring_suggestions" in combined_result:
+            pr_links = []
+            for suggestion in combined_result["refactoring_suggestions"]:
+                file_path = suggestion.get("file_path")
+                new_content = suggestion.get("refactored_content")
+                pr_title = suggestion.get("pr_title")
+                pr_body = suggestion.get("pr_body")
+                if file_path and new_content and pr_title and pr_body:
+                    try:
+                        pr_url = await _create_refactoring_pr(
+                            github_token=request.githubToken,
+                            owner=owner,
+                            repo=repo,
+                            head_ref=request.headRef,
+                            file_path=file_path,
+                            new_content=new_content,
+                            pr_title=pr_title,
+                            pr_body=pr_body
+                        )
+                        if pr_url:
+                            pr_links.append(pr_url)
+                    except Exception as e:
+                        print(f"⚠️ Failed to create refactoring PR for {file_path}: {e}")
+            if pr_links:
+                combined_result["generated_pr_links"] = pr_links
     return combined_result
 
 # 🟢 Route: AI Chat with Repository Context
@@ -1179,6 +1286,8 @@ Please respond directly to the developer's message, keeping your tone helpful, c
         
         data = json.loads(content)
         return {"reply": data.get("reply", "I couldn't process that request.")}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1220,6 +1329,8 @@ Format your JSON precisely as:
         
         data = json.loads(content)
         return {"summary": data.get("summary", "")}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1266,6 +1377,7 @@ async def review_diff(request: ReviewDiffRequest, raw_request: Request):
                 custom_rules_text = f"CRITICAL CUSTOM REPOSITORY RULES:\n{request.custom_rules}\n\nYou MUST strictly adhere to the above custom repository rules over any default guidelines.\n" if request.custom_rules else ""
                 
 
+
                 if request.security_mode:
                     review_prompt = f"""You are a dedicated DevSecOps engineer performing a rigorous security audit on this Pull Request.
 Analyze the following code additions in the file "{file.path}". 
@@ -1290,6 +1402,8 @@ You must answer strictly based on the provided code additions. Do not use any ex
                 review_prompt += f"""
 Code additions with line numbers:
 {changes_text}
+
+For each issue found, reference the file path and line number from the code changes above.
 
 You MUST reply ONLY in a valid JSON object format containing a "reviews" array. Do not wrap in markdown quotes, do not explain.
 Format your JSON precisely as:
