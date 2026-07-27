@@ -2190,63 +2190,61 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
   let reviewDiffTruncated = false;
 
   if (filesToReview.length > 0) {
+    console.log(`🧠 Querying AI engine for ${filesToReview.length} files...`);
+    const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+    
+    let securityMode = false;
+    let customPrompt = '';
+    let autoFixTrivial = false;
+    let severityOverrides = null;
     let customRules = null;
+
     try {
-      let customRulesResponse;
+      let configFileResponse;
       try {
-        customRulesResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.ai-reviewer.yml', ref: headSha });
+        configFileResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.ai-reviewer.yml', ref: headSha });
       } catch (err) {
         if (err.status === 404) {
           try {
-            customRulesResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.github/ai-reviewer.md', ref: headSha });
+            configFileResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.github/ai-reviewer.md', ref: headSha });
           } catch (err2) {
             // Not found
           }
         }
       }
-      
-      if (customRulesResponse && customRulesResponse.data && customRulesResponse.data.content) {
-        customRules = Buffer.from(customRulesResponse.data.content, 'base64').toString('utf8');
-        console.log('✅ Found custom repository rules.');
-      }
-    } catch (err) {
-      console.warn('⚠️ Error fetching custom rules:', err.message);
-    }
 
-    console.log(`🧠 Querying AI engine for ${filesToReview.length} files...`);
-    const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
-    
-    try {
-      // Look for .ai-reviewer.yml to check security mode
-      // Look for .ai-reviewer.yml to check custom configurations
-      let securityMode = false;
-      let customPrompt = '';
-      let autoFixTrivial = false;
-      let severityOverrides = null;
-
-      try {
-        const { data: configFile } = await octokit.rest.repos.getContent({
-          owner,
-          repo,
-          path: '.ai-reviewer.yml',
-          ref: headSha
-        });
-        const content = Buffer.from(configFile.content, 'base64').toString('utf8');
-        const config = yaml.load(content);
-        if (config) {
-          securityMode = !!config.security_mode;
-          if (securityMode) {
-            console.log(`🔒 Dedicated Security Mode enabled for ${owner}/${repo}`);
+      if (configFileResponse && configFileResponse.data && configFileResponse.data.content) {
+        const content = Buffer.from(configFileResponse.data.content, 'base64').toString('utf8');
+        if (configFileResponse.data.name.endsWith('.yml') || configFileResponse.data.name.endsWith('.yaml')) {
+          const config = yaml.load(content);
+          if (config) {
+            securityMode = !!config.security_mode;
+            if (securityMode) {
+              console.log(`🔒 Dedicated Security Mode enabled for ${owner}/${repo}`);
+            }
+            customPrompt = config.custom_prompt || '';
+            autoFixTrivial = !!config.auto_fix_trivial;
+            if (config.severity) {
+              severityOverrides = config.severity;
+            }
+            if (config.custom_rules) {
+              if (Array.isArray(config.custom_rules)) {
+                customRules = config.custom_rules.map(r => `- ${r}`).join('\n');
+              } else {
+                customRules = String(config.custom_rules);
+              }
+              console.log('✅ Found custom repository rules in YAML config.');
+            }
           }
-          customPrompt = config.custom_prompt || '';
-          autoFixTrivial = !!config.auto_fix_trivial;
-          if (config.severity) {
-            severityOverrides = config.severity;
-          }
+        } else {
+          // Fallback for .github/ai-reviewer.md
+          customRules = content;
+          console.log('✅ Found custom repository rules in Markdown file.');
         }
-      } catch (e) {
-        // file doesn't exist, ignore
       }
+    } catch (e) {
+      console.warn('⚠️ Error fetching/parsing custom rules:', e.message);
+    }
 
       const baseUrl = aiEngineUrl.replace(/\/+$/, '');
       const aiResponse = await fetchWithTimeout(`${baseUrl}/review-diff`, {

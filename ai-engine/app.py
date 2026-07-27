@@ -1333,7 +1333,7 @@ async def review_diff(request: ReviewDiffRequest, raw_request: Request):
                 changes_text = sanitize_file_content(changes_text)
         
                 # FIXED: Prompt now explicitly requests a JSON object {"reviews": [...]}
-                custom_rules_text = f"CRITICAL CUSTOM REPOSITORY RULES:\n{request.custom_rules}\n\nYou MUST strictly adhere to the above custom repository rules over any default guidelines.\n" if request.custom_rules else ""
+                custom_rules_text = f"CRITICAL CUSTOM REPOSITORY RULES (Written in Natural Language):\n{request.custom_rules}\n\nYou MUST rigorously evaluate the code against these custom repository rules. If the code violates any of these custom rules, flag it prominently in your review.\n" if request.custom_rules else ""
                 
 
                 if request.security_mode:
