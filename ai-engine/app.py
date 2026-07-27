@@ -867,7 +867,7 @@ You must obey the JSON output format above."""
                 is_first_batch=is_first_batch,
                 base_prompt=base_prompt,
                 llm_caller=_call_llm,
-                repo_url=req.repoUrl
+                repo_url=request.repoUrl
             )
 
             # Merge results
