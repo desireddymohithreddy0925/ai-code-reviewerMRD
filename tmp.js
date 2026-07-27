@@ -1633,7 +1633,7 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
     return res.status(401).json({ error: 'Missing X-Hub-Signature-256 header.' });
   }
 
-  if (!verifyWebhookSignature(req.rawBody, signature, webhookSecret)) {
+  if (!verifyWebhookSignature(req.rawBody, signature, webhookSecret, 5000)) {
     return res.status(401).json({ error: 'Invalid signature' });
   }
   
@@ -1643,6 +1643,9 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
   
   if (!req.body || !req.body.action) {
     return res.status(400).json({ error: 'Invalid webhook payload' });
+  }
+    console.warn('Γ¥î Webhook signature verification failed');
+    return res.status(401).json({ error: 'Invalid webhook signature' });
   }
 
   const event = req.headers['x-github-event'];
@@ -2070,8 +2073,42 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
   });
 
   if (!diff) {
-    console.warn("ΓÜá∩╕Å No diff found for this PR.");
+    console.warn("⚠️ No diff found for this PR.");
     return;
+  }
+
+  // AI-Powered Dependency Update Impact Simulation for Dependabot PRs
+  if (pullRequest.user && pullRequest.user.login && pullRequest.user.login.includes('dependabot')) {
+    console.log(`🤖 Dependabot PR detected! Simulating dependency impact...`);
+    try {
+      const baseUrl = (process.env.AI_ENGINE_URL || 'http://localhost:8000').replace(/\/+$/, '');
+      const impactResponse = await fetchWithTimeout(`${baseUrl}/simulate-dependency-impact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
+        body: JSON.stringify({ 
+          pr_title: pullRequest.title || '',
+          pr_body: pullRequest.body || '',
+          repo_url: `https://github.com/${owner}/${repo}`
+        })
+      }, 60000);
+
+      if (impactResponse.ok) {
+        const impactData = await impactResponse.json();
+        if (impactData.impact_report) {
+          await octokit.rest.issues.createComment({
+            owner,
+            repo,
+            issue_number: pullNumber,
+            body: `### 🚨 AI Dependency Impact Simulation\n\n${impactData.impact_report}`
+          });
+          console.log(`✅ Posted AI Dependency Impact Simulation report to PR #${pullNumber}`);
+        }
+      } else {
+        console.warn(`⚠️ Failed to simulate dependency impact, API returned ${impactResponse.status}`);
+      }
+    } catch (e) {
+      console.warn(`⚠️ Error during dependency impact simulation: ${e.message}`);
+    }
   }
 
   // Fetch .ai-ignore patterns once
@@ -2153,63 +2190,61 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
   let reviewDiffTruncated = false;
 
   if (filesToReview.length > 0) {
+    console.log(`🧠 Querying AI engine for ${filesToReview.length} files...`);
+    const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+    
+    let securityMode = false;
+    let customPrompt = '';
+    let autoFixTrivial = false;
+    let severityOverrides = null;
     let customRules = null;
+
     try {
-      let customRulesResponse;
+      let configFileResponse;
       try {
-        customRulesResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.ai-reviewer.yml', ref: headSha });
+        configFileResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.ai-reviewer.yml', ref: headSha });
       } catch (err) {
         if (err.status === 404) {
           try {
-            customRulesResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.github/ai-reviewer.md', ref: headSha });
+            configFileResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.github/ai-reviewer.md', ref: headSha });
           } catch (err2) {
             // Not found
           }
         }
       }
-      
-      if (customRulesResponse && customRulesResponse.data && customRulesResponse.data.content) {
-        customRules = Buffer.from(customRulesResponse.data.content, 'base64').toString('utf8');
-        console.log('✅ Found custom repository rules.');
-      }
-    } catch (err) {
-      console.warn('⚠️ Error fetching custom rules:', err.message);
-    }
 
-    console.log(`🧠 Querying AI engine for ${filesToReview.length} files...`);
-    const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
-    
-    try {
-      // Look for .ai-reviewer.yml to check security mode
-      // Look for .ai-reviewer.yml to check custom configurations
-      let securityMode = false;
-      let customPrompt = '';
-      let autoFixTrivial = false;
-      let severityOverrides = null;
-
-      try {
-        const { data: configFile } = await octokit.rest.repos.getContent({
-          owner,
-          repo,
-          path: '.ai-reviewer.yml',
-          ref: headSha
-        });
-        const content = Buffer.from(configFile.content, 'base64').toString('utf8');
-        const config = yaml.load(content);
-        if (config) {
-          securityMode = !!config.security_mode;
-          if (securityMode) {
-            console.log(`🔒 Dedicated Security Mode enabled for ${owner}/${repo}`);
+      if (configFileResponse && configFileResponse.data && configFileResponse.data.content) {
+        const content = Buffer.from(configFileResponse.data.content, 'base64').toString('utf8');
+        if (configFileResponse.data.name.endsWith('.yml') || configFileResponse.data.name.endsWith('.yaml')) {
+          const config = yaml.load(content);
+          if (config) {
+            securityMode = !!config.security_mode;
+            if (securityMode) {
+              console.log(`🔒 Dedicated Security Mode enabled for ${owner}/${repo}`);
+            }
+            customPrompt = config.custom_prompt || '';
+            autoFixTrivial = !!config.auto_fix_trivial;
+            if (config.severity) {
+              severityOverrides = config.severity;
+            }
+            if (config.custom_rules) {
+              if (Array.isArray(config.custom_rules)) {
+                customRules = config.custom_rules.map(r => `- ${r}`).join('\n');
+              } else {
+                customRules = String(config.custom_rules);
+              }
+              console.log('✅ Found custom repository rules in YAML config.');
+            }
           }
-          customPrompt = config.custom_prompt || '';
-          autoFixTrivial = !!config.auto_fix_trivial;
-          if (config.severity) {
-            severityOverrides = config.severity;
-          }
+        } else {
+          // Fallback for .github/ai-reviewer.md
+          customRules = content;
+          console.log('✅ Found custom repository rules in Markdown file.');
         }
-      } catch (e) {
-        // file doesn't exist, ignore
       }
+    } catch (e) {
+      console.warn('⚠️ Error fetching/parsing custom rules:', e.message);
+    }
 
       const baseUrl = aiEngineUrl.replace(/\/+$/, '');
       const aiResponse = await fetchWithTimeout(`${baseUrl}/review-diff`, {
