@@ -423,9 +423,22 @@ If no issues are found, reply with: { "reviews": [] }`;
       if (fullDiff.length > 0) {
         const truncatedDiff = fullDiff.length > 15000 ? fullDiff.substring(0, 15000) + '\n...[Diff truncated]' : fullDiff;
         
+        const { data: pullRequest } = await octokit.rest.pulls.get({
+          owner,
+          repo,
+          pull_number: pullNumber
+        });
+        const prTitle = pullRequest.title || '';
+        const prBody = pullRequest.body || '';
+
         const summaryPrompt = `You are a Senior Staff Engineer.
 Generate a concise, high-level summary of the architectural and functional changes in this Pull Request based on the following diff.
-Use a bulleted list. Limit to 3-5 concise bullet points. Avoid extremely minor details unless they are critical.
+Also, evaluate if the current PR Title and Description accurately reflect the actual code changes.
+If they are poor (e.g. "fixed bug") or inaccurate, suggest a comprehensively rewritten title and description.
+Additionally, propose an inline edit to CHANGELOG.md based on semantic versioning conventions.
+
+Current PR Title: ${prTitle}
+Current PR Description: ${prBody}
 
 Diff:
 \`\`\`
@@ -434,17 +447,21 @@ ${truncatedDiff}
 
 Format your JSON precisely as:
 {
-  "summary": "- Added new feature X\\n- Refactored component Y"
+  "summary": "- Added new feature X\\n- Refactored component Y",
+  "needsRewrite": true or false,
+  "suggestedTitle": "New Title",
+  "suggestedDescription": "New Description...",
+  "suggestedChangelog": "### Added\\n- Feature X"
 }`;
 
         const summaryCompletion = await groq.chat.completions.create({
           messages: [
-            { role: 'system', content: 'You are a code reviewer. Always output valid JSON matching the schema {"summary": "string"}.' },
+            { role: 'system', content: 'You are a code reviewer. Always output valid JSON matching the schema {"summary": "string", "needsRewrite": boolean, "suggestedTitle": "string", "suggestedDescription": "string", "suggestedChangelog": "string"}.' },
             { role: 'user', content: summaryPrompt }
           ],
           model: 'llama-3.3-70b-versatile',
           temperature: 0.3,
-          max_tokens: 500,
+          max_tokens: 1000,
           response_format: { type: 'json_object' }
         });
         
@@ -452,25 +469,28 @@ Format your JSON precisely as:
         if (summaryContent) {
           const summaryData = JSON.parse(summaryContent);
           if (summaryData.summary) {
-            const { data: pullRequest } = await octokit.rest.pulls.get({
-              owner,
-              repo,
-              pull_number: pullNumber
-            });
             
-            let currentBody = pullRequest.body || '';
             const summaryStartTag = '<!-- RepoSage Summary -->';
             const summaryEndTag = '<!-- End RepoSage Summary -->';
-            const newSummaryBlock = `${summaryStartTag}\n### 🤖 RepoSage PR Summary\n${summaryData.summary}\n${summaryEndTag}`;
+            let newSummaryBlock = `${summaryStartTag}\n### 🤖 RepoSage PR Summary\n${summaryData.summary}\n`;
+
+            if (summaryData.needsRewrite && summaryData.suggestedTitle && summaryData.suggestedDescription) {
+              newSummaryBlock += `\n#### 📝 Suggested PR Description Update\n**Title:** \`${summaryData.suggestedTitle}\`\n**Description:**\n${summaryData.suggestedDescription}\n`;
+            }
+            if (summaryData.suggestedChangelog) {
+              newSummaryBlock += `\n#### 📑 Suggested CHANGELOG.md Entry\n\`\`\`markdown\n${summaryData.suggestedChangelog}\n\`\`\`\n`;
+            }
+            
+            newSummaryBlock += `\n${summaryEndTag}`;
             
             let newBody;
-            const startIndex = currentBody.indexOf(summaryStartTag);
-            const endIndex = currentBody.indexOf(summaryEndTag);
+            const startIndex = prBody.indexOf(summaryStartTag);
+            const endIndex = prBody.indexOf(summaryEndTag);
             
             if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-              newBody = currentBody.substring(0, startIndex) + newSummaryBlock + currentBody.substring(endIndex + summaryEndTag.length);
+              newBody = prBody.substring(0, startIndex) + newSummaryBlock + prBody.substring(endIndex + summaryEndTag.length);
             } else {
-              newBody = currentBody + (currentBody ? '\n\n' : '') + newSummaryBlock;
+              newBody = prBody + (prBody ? '\n\n' : '') + newSummaryBlock;
             }
             
             await octokit.rest.pulls.update({
@@ -479,7 +499,7 @@ Format your JSON precisely as:
               pull_number: pullNumber,
               body: newBody
             });
-            console.log(`✅ Updated PR #${pullNumber} description with AI summary`);
+            console.log(`✅ Updated PR #${pullNumber} description with AI summary and sync suggestions`);
           }
         }
       }
