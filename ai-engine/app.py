@@ -1240,7 +1240,7 @@ async def simulate_dependency_impact(request: DependencyImpactRequest):
     # 2. Query RAG for usage
     code_context = ""
     try:
-        from vectorstore import query_chunks
+        from rag import query_chunks
         # Simple search for the package name
         results = query_chunks(package_name, n_results=5, repo_url=request.repo_url)
         if results and len(results) > 0:
