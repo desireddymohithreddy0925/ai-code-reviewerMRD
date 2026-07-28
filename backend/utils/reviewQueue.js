@@ -85,15 +85,30 @@ class ReviewQueue {
         while (queue.length > 0) {
           const item = queue.shift();
           const circuitBreaker = this._getCircuitBreaker(key);
+          let permanentlyFailed = false;
+
           for (let attempt = 0; attempt <= this._maxRetries; attempt++) {
             try {
               await circuitBreaker.call(() => processor(item));
               break;
             } catch (err) {
               if (err.name === 'CircuitBreakerOpenError') {
-                console.error(`ReviewQueue: circuit breaker OPEN for "${key}", scheduling retry after cooldown`);
-                await new Promise(r => setTimeout(r, Math.min(circuitBreaker._cooldownMs || 30000, 5000)));
-                queue.push(item);
+                const cooldownRemaining = Math.max(
+                  (circuitBreaker._cooldownMs || 30000) - (Date.now() - circuitBreaker._lastFailureTime),
+                  0
+                );
+                console.error(
+                  `ReviewQueue: circuit breaker OPEN for "${key}", ` +
+                  `waiting ${Math.ceil(cooldownRemaining / 1000)}s before retry`
+                );
+
+                if (queue.length > 0) {
+                  queue.unshift(item);
+                  break;
+                }
+
+                await new Promise(r => setTimeout(r, cooldownRemaining + 1000));
+                queue.unshift(item);
                 break;
               }
               if (attempt < this._maxRetries) {
@@ -103,8 +118,13 @@ class ReviewQueue {
               } else {
                 console.error(`ReviewQueue: item permanently failed for "${key}" after ${this._maxRetries + 1} attempts:`, err);
                 circuitBreaker.onFailure();
+                permanentlyFailed = true;
               }
             }
+          }
+
+          if (permanentlyFailed) {
+            continue;
           }
         }
         // Two-phase check: only delete the queue if it is still empty.
@@ -127,10 +147,8 @@ class ReviewQueue {
   // for the same key before starting the new one. This prevents lost updates and
   // race conditions from concurrent read-modify-write on shared resources.
   async runExclusive(key, fn) {
-    const existing = this._exclusiveLocks.get(key);
-    if (existing) {
-      // Wait for the existing operation to complete before starting a new one
-      await existing;
+    while (this._exclusiveLocks.has(key)) {
+      await this._exclusiveLocks.get(key);
     }
     const next = (async () => {
       try {
