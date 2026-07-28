@@ -15,7 +15,7 @@ import rateLimit from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
 import Redis from 'ioredis';
 import { scanSecrets, scanSecretsInChanges } from './utils/secretsScanner.js';
-import { llmAnalysisLimiter } from './middleware/rateLimiter.js';
+import { llmAnalysisLimiter, concurrencyThrottleMiddleware } from './middleware/rateLimiter.js';
 import { scrubRepositoryPayload } from './utils/secretScrubber.js';
 import { recordAnalysis as recordFileAnalytics } from './utils/analyticsStore.js';
 import { loadIgnorePatterns, readFilesRecursively } from './utils/ignoreHelper.js';
@@ -717,9 +717,9 @@ app.post('/api/user/settings', requireApiKey, express.json(), async (req, res) =
 });
 
 // 🚀 Route: Stream AI Review (SSE)
-app.post('/api/review/stream', requireApiKey, requireJsonContentType, llmAnalysisLimiter, streamReview);
+app.post('/api/review/stream', requireApiKey, requireJsonContentType, concurrencyThrottleMiddleware, llmAnalysisLimiter, streamReview);
 // ≡ƒƒó Route: GitHub Import & AI Review
-app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimiter, async (req, res) => {
+app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrottleMiddleware, llmAnalysisLimiter, async (req, res) => {
   let { repoUrl, company = 'General', language = 'English', model, temperature = 0.7,
      maxTokens = 2048, systemPrompt = '', batchSize = 5, githubToken
    } = req.body;
@@ -1281,7 +1281,7 @@ if (reviewResult?.fileReviews) {
 });
 
 // ≡ƒƒó Route: Direct File Analysis (for VS Code extension and single-file use cases)
-app.post('/api/analyze-file', requireApiKey, requireJsonContentType, llmAnalysisLimiter, async (req, res) => {
+app.post('/api/analyze-file', requireApiKey, requireJsonContentType, concurrencyThrottleMiddleware, llmAnalysisLimiter, async (req, res) => {
   try {
     let { files, company = 'General', language = 'English', model, temperature = 0.7, maxTokens = 2048, systemPrompt = '', batchSize = 5 } = req.body;
 
