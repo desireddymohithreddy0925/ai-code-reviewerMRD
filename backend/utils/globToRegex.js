@@ -7,10 +7,12 @@ export function globToRegex(pattern) {
     const ch = pattern[i];
     if (ch === '*') {
       if (i + 1 < pattern.length && pattern[i + 1] === '*') {
-        regexStr += '.*';
-        i += 2;
-        if (i < pattern.length && pattern[i] === '/') {
-          i++;
+        if (i + 2 < pattern.length && pattern[i + 2] === '/') {
+          regexStr += '(?:.*/)?';
+          i += 3;
+        } else {
+          regexStr += '.*';
+          i += 2;
         }
       } else {
         regexStr += '[^/]*';
