@@ -903,42 +903,46 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ files, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt, batchSize, repositoryContext })
         });
-        
+
         if (aiResponse.ok) {
           reviewResult = await aiResponse.json();
           reviewResult._mock = false;
         } else {
           throw new Error('AI engine responded with error');
-      console.log(`≡ƒôü Found ${files.length} valid source files. Checking cache...`);
-
-      // 1.3. Scan files for prompt injection patterns
-      const fileWarnings = [];
-      for (const file of files) {
-        const fileScanWarnings = scanFileContentForWarnings(file.content);
-        for (const warning of fileScanWarnings) {
-          fileWarnings.push({ file: file.name, warning });
         }
-      }
-      if (fileWarnings.length > 0) {
-        console.warn(`ΓÜá∩╕Å Found ${fileWarnings.length} potential prompt injection patterns across ${files.length} files`);
-      }
-
-      // 1.5. Check analysis cache to avoid redundant LLM calls for identical analyses
-      const CONFIG_FILENAME = '.codereviewer.yml';
-      const scrubbedFiles = files
-        .filter(f => f.name !== CONFIG_FILENAME)
-        .map(file => ({
-        ...file,
-        content: scrubRepositoryPayload(file.content)
-      }));
-
-      const cacheKey = analysisCache.generateKey(repoUrl, scrubbedFiles, { model, language, company, systemPrompt: validatedPrompt, temperature, maxTokens, batchSize });
-      let cacheHit = !!analysisCache.get(cacheKey);
-      if (cacheHit) {
-        console.log(`🎯 Using cached analysis result for this repository and configuration`);
+      } catch (err) {
+        console.warn('⚠️ FastAPI engine error, falling back...');
       }
 
-      let reviewResult = await analysisCache.getOrSet(cacheKey, async () => {
+      if (!reviewResult) {
+        console.log(`📁 Found ${files.length} valid source files. Checking cache...`);
+
+        const fileWarnings = [];
+        for (const file of files) {
+          const fileScanWarnings = scanFileContentForWarnings(file.content);
+          for (const warning of fileScanWarnings) {
+            fileWarnings.push({ file: file.name, warning });
+          }
+        }
+        if (fileWarnings.length > 0) {
+          console.warn(`⚠️ Found ${fileWarnings.length} potential prompt injection patterns across ${files.length} files`);
+        }
+
+        const CONFIG_FILENAME = '.codereviewer.yml';
+        const scrubbedFiles = files
+          .filter(f => f.name !== CONFIG_FILENAME)
+          .map(file => ({
+          ...file,
+          content: scrubRepositoryPayload(file.content)
+        }));
+
+        const cacheKey = analysisCache.generateKey(repoUrl, scrubbedFiles, { model, language, company, systemPrompt: validatedPrompt, temperature, maxTokens, batchSize });
+        let cacheHit = !!analysisCache.get(cacheKey);
+        if (cacheHit) {
+          console.log(`🎯 Using cached analysis result for this repository and configuration`);
+        }
+
+        reviewResult = await analysisCache.getOrSet(cacheKey, async () => {
         // 2. Mocking AI Response for initial setup (or forward to FastAPI AI Engine)
         const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
         const baseUrl = aiEngineUrl.replace(/\/+$/, '');
