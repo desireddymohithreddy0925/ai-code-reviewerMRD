@@ -938,7 +938,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimit
         console.log(`🎯 Using cached analysis result for this repository and configuration`);
       }
 
-      let reviewResult = await analysisCache.getOrSet(cacheKey, async () => {
+      reviewResult = await analysisCache.getOrSet(cacheKey, async () => {
         // 2. Mocking AI Response for initial setup (or forward to FastAPI AI Engine)
         const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
         const baseUrl = aiEngineUrl.replace(/\/+$/, '');
