@@ -2845,6 +2845,14 @@ app.get('/api/analytics/trends', requireApiKey, async (req, res) => {
   }
 });
 
+async function verifyAnalyticsOwnership(recordId, clientId) {
+  const record = await Analytics.findOne({ _id: recordId, clientId });
+  if (!record) {
+    return null;
+  }
+  return record;
+}
+
 app.get("/api/review-history", requireApiKey, async (req, res) => {
 
     try {
@@ -2924,16 +2932,13 @@ app.get("/api/review-history/compare/:id1/:id2", requireApiKey, async (req, res)
           return res.status(400).json({ error: 'Invalid ID format.' });
         }
 
-        const first = await Analytics.findOne({ _id: req.params.id1, clientId: req.clientId });
-
-        const second = await Analytics.findOne({ _id: req.params.id2, clientId: req.clientId });
+        const first = await verifyAnalyticsOwnership(req.params.id1, req.clientId);
+        const second = await verifyAnalyticsOwnership(req.params.id2, req.clientId);
 
         if (!first || !second) {
-
             return res.status(404).json({
                 error: "Review not found."
             });
-
         }
 
         res.json({
