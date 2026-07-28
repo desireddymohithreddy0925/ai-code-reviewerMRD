@@ -1,7 +1,4 @@
-export function globToRegex(pattern) {
-  let regexStr = '^';
-  let i = 0;
-  const escapeRegex = (ch) => ch.replace(/[\\^$+?.()|[\]{}]/g, '\\$&');
+import picomatch from 'picomatch';
 
   while (i < pattern.length) {
     const ch = pattern[i];
@@ -28,8 +25,11 @@ export function globToRegex(pattern) {
       regexStr += escapeRegex(ch);
       i++;
     }
+export function globToRegex(pattern) {
+  try {
+    return picomatch.makeRe(pattern);
+  } catch (err) {
+    console.warn(`[globToRegex] Failed to parse pattern: ${pattern}. Falling back to default regex.`, err.message);
+    return new RegExp(`^${pattern.replace(/[\\^$+?.()|[\]{}]/g, '\\$&').replace(/\*/g, '.*')}$`);
   }
-
-  regexStr += '$';
-  return new RegExp(regexStr);
 }
