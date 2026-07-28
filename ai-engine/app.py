@@ -89,6 +89,7 @@ if not loaded:
 MAX_FILE_CHARS_PER_FILE = int(os.getenv("MAX_FILE_CHARS_PER_FILE", "1500"))
 MAX_CHAT_FILES = int(os.getenv("MAX_CHAT_FILES", "20"))
 MAX_MESSAGE_LENGTH = int(os.getenv("MAX_MESSAGE_LENGTH", "10000"))
+MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE_BYTES", "100000"))  # 100 KB per file
 # Maximum seconds to wait for a single LLM API response before returning 504 (#786)
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
 # Maximum seconds for the entire /analyze endpoint to complete before 504 (#2173)
@@ -1339,9 +1340,19 @@ Format your JSON precisely as:
 async def review_diff(request: ReviewDiffRequest, raw_request: Request):
     if not groq_client:
         raise HTTPException(status_code=500, detail="Groq API client is not configured on this engine.")
-    
+
     files = request.files
     comments = []
+
+    # Validate file sizes to prevent unbounded LLM token consumption and OOM
+    for file in files:
+        changes_text = "\n".join([f"Line {c.line}: {c.content}" for c in file.changes])
+        file_size = len(changes_text.encode('utf-8'))
+        if file_size > MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File '{file.path}' exceeds {MAX_FILE_SIZE_BYTES} byte limit (got {file_size} bytes). Split into smaller files or increase MAX_FILE_SIZE_BYTES."
+            )
 
     # Cap the number of files reviewed per PR so a single oversized diff cannot
     # silently leave files unreviewed without anyone noticing. Files beyond the
