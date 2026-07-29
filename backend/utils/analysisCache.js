@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { registerTimer } from './timerRegistry.js';
 
 /**
  * In-memory cache for code analysis results with TTL support.
@@ -254,7 +255,7 @@ class AnalysisCache {
    */
   _startSweeper(intervalMs = 60000) {
     if (this._sweeper) return;
-    this._sweeper = setInterval(() => {
+    this._sweeper = registerTimer(setInterval(() => {
       const now = Date.now();
       for (const [key, entry] of this.cache) {
         // Check absolute max TTL first — entries that have lived too long
@@ -284,7 +285,7 @@ class AnalysisCache {
         }
       }
       this._cleanupIdleLocks();
-    }, intervalMs);
+    }, intervalMs));
     if (this._sweeper.unref) this._sweeper.unref();
   }
 

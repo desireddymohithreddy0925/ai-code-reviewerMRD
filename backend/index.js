@@ -40,6 +40,7 @@ import { loadConfigFile, applySeverityConfig } from './utils/severityConfig.js';
 import AnalysisCache from './utils/analysisCache.js';
 import { getPriorReviewIds, storeReviewIds, clearReviewIds, supersedePriorReviews } from './utils/reviewTracker.js';
 import DedupStore from './utils/dedupStore.js';
+import { registerTimer, clearAllTimers } from './utils/timerRegistry.js';
 import mongoose from 'mongoose';
 import Analytics from './models/Analytics.js';
 import Session, { estimateSessionSize } from './models/Session.js';
@@ -241,7 +242,7 @@ const csrfGraceTokenStore = redisClient ? {
 
 // Periodic cleanup of expired CSRF tokens (only needed for in-memory store)
 if (!redisClient) {
-  setInterval(() => {
+  const csrfCleanupTimer = setInterval(() => {
     const now = Date.now();
     for (const [token, expiry] of csrfTokenStore) {
       if (now > expiry) csrfTokenStore.delete(token);
@@ -249,7 +250,9 @@ if (!redisClient) {
     for (const [token, expiry] of csrfGraceTokenStore) {
       if (now > expiry) csrfGraceTokenStore.delete(token);
     }
-  }, 5 * 60 * 1000).unref();
+  }, 5 * 60 * 1000);
+  csrfCleanupTimer.unref();
+  registerTimer(csrfCleanupTimer);
 }
 
 async function generateCsrfToken() {
@@ -585,20 +588,20 @@ const DELIVERY_REDIS_TTL = 300;
 const shaDedupMemoryMap = new Map();
 const SHA_DEDUP_MAX_SIZE = 10000;
 
-const cacheMetricsTimer = setInterval(() => {
+const cacheMetricsTimer = registerTimer(setInterval(() => {
   const stats = analysisCache.getStats();
   console.log(`[cache] entries=${stats.size}/${stats.maxEntries} mock=${stats.mockCount} avgAge=${stats.avgAgeMs}ms hitRate=${stats.hitRate}`);
-}, 5 * 60 * 1000);
+}, 5 * 60 * 1000));
 cacheMetricsTimer.unref();
 
 // Proactive AI Engine health probe ΓÇö when the engine recovers, clear mock cache entries
 const AI_ENGINE_HEALTH_INTERVAL = 30000;
 let aiEngineHealthy = true;
 
-const aiEngineHealthTimer = setInterval(async () => {
+const aiEngineHealthTimer = registerTimer(setInterval(async () => {
   const baseUrl = (process.env.AI_ENGINE_URL || 'http://localhost:8000').replace(/\/+$/, '');
   try {
-    const resp = await fetchWithTimeout(`${baseUrl}/health`, {}, 5000);
+    const resp = await fetchWithTimeout(`${baseUrl}/health`, { validate: false }, 5000);
     if (resp.ok && !aiEngineHealthy) {
       console.log('≡ƒƒó AI Engine recovered ΓÇö clearing mock cache entries');
       analysisCache.clearMockEntries();
@@ -610,20 +613,20 @@ const aiEngineHealthTimer = setInterval(async () => {
     }
     aiEngineHealthy = false;
   }
-}, AI_ENGINE_HEALTH_INTERVAL);
+}, AI_ENGINE_HEALTH_INTERVAL));
 aiEngineHealthTimer.unref();
 
 // Periodic sweeper for stale exclusive locks to prevent unbounded memory growth
 const EXCLUSIVE_LOCK_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const EXCLUSIVE_LOCK_TTL = 30 * 60 * 1000;
-const exclusiveLockCleanupTimer = setInterval(() => {
+const exclusiveLockCleanupTimer = registerTimer(setInterval(() => {
   reviewQueue.cleanupStaleExclusiveLocks(EXCLUSIVE_LOCK_TTL);
-}, EXCLUSIVE_LOCK_CLEANUP_INTERVAL);
+}, EXCLUSIVE_LOCK_CLEANUP_INTERVAL));
 exclusiveLockCleanupTimer.unref();
 
 // Periodic sweeper for the SHA dedup memory map to prevent unbounded memory growth
 const SHA_DEDUP_CLEANUP_INTERVAL = 60 * 1000;
-const shaDedupCleanupTimer = setInterval(() => {
+const shaDedupCleanupTimer = registerTimer(setInterval(() => {
   const now = Date.now();
   const ttl = DELIVERY_REDIS_TTL * 1000;
   for (const [key, timestamp] of shaDedupMemoryMap) {
@@ -631,7 +634,7 @@ const shaDedupCleanupTimer = setInterval(() => {
       shaDedupMemoryMap.delete(key);
     }
   }
-}, SHA_DEDUP_CLEANUP_INTERVAL);
+}, SHA_DEDUP_CLEANUP_INTERVAL));
 shaDedupCleanupTimer.unref();
 
 function cleanupTimers() {
@@ -639,6 +642,7 @@ function cleanupTimers() {
   if (typeof aiEngineHealthTimer !== 'undefined') clearInterval(aiEngineHealthTimer);
   if (typeof exclusiveLockCleanupTimer !== 'undefined') clearInterval(exclusiveLockCleanupTimer);
   if (typeof shaDedupCleanupTimer !== 'undefined') clearInterval(shaDedupCleanupTimer);
+  clearAllTimers();
 }
 
   // Loaded from shared-safety-config.json via dangerousPhrases.js
@@ -1567,14 +1571,16 @@ app.post('/api/rag/query', requireApiKey, async (req, res) => {
 const repoRequestCounts = new Map();
 const REPO_WINDOW_MS = 60 * 1000;
 const REPO_MAX_REQUESTS = 5;
-setInterval(() => {
+const repoCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, { count, windowStart }] of repoRequestCounts) {
     if (now - windowStart > REPO_WINDOW_MS) {
       repoRequestCounts.delete(key);
     }
   }
-}, 60 * 1000).unref();
+}, 60 * 1000);
+repoCleanupTimer.unref();
+registerTimer(repoCleanupTimer);
 
 const webhookLimiter = rateLimit({
   windowMs: 60 * 1000,
