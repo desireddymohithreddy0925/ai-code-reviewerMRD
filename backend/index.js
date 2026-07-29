@@ -472,10 +472,8 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Utility: fetch with configurable timeout using AbortController and optional SSRF check
 async function fetchWithTimeout(url, options = {}, timeoutMs = 120000) {
-  if (options.validate !== false && options.validate !== true) {
-    // default: skip validation for explicitly trusted URLs; validate only when requested
-  }
-  if (options.validate === true) {
+  const validate = options.validate !== false;
+  if (validate) {
     const safe = await isSafeUrl(url);
     if (!safe.valid) {
       throw new Error(`SSRF validation failed: ${safe.reason}`);
@@ -598,7 +596,7 @@ let aiEngineHealthy = true;
 const aiEngineHealthTimer = setInterval(async () => {
   const baseUrl = (process.env.AI_ENGINE_URL || 'http://localhost:8000').replace(/\/+$/, '');
   try {
-    const resp = await fetchWithTimeout(`${baseUrl}/health`, {}, 5000);
+    const resp = await fetchWithTimeout(`${baseUrl}/health`, { validate: false }, 5000);
     if (resp.ok && !aiEngineHealthy) {
       console.log('≡ƒƒó AI Engine recovered ΓÇö clearing mock cache entries');
       analysisCache.clearMockEntries();
@@ -948,6 +946,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
         const baseUrl = aiEngineUrl.replace(/\/+$/, '');
         try {
           const aiResponse = await fetchWithTimeout(`${baseUrl}/analyze`, {
+            validate: false,
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
             body: JSON.stringify({ files: scrubbedFiles, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt, batchSize })
@@ -1058,6 +1057,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
         try {
           const baseUrl = (process.env.AI_ENGINE_URL || 'http://localhost:8000').replace(/\/+$/, '');
         const splitResp = await fetchWithTimeout(`${baseUrl}/api/rag/split`, {
+          validate: false,
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
           body: JSON.stringify({ files: storedFiles, repo_url: repoUrl })
@@ -1069,6 +1069,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
           for (let attempt = 1; attempt <= 3; attempt++) {
             try {
               const ingestResp = await fetchWithTimeout(`${baseUrl}/api/rag/ingest`, {
+                validate: false,
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '', 'x-rag-ingest-key': process.env.RAG_INGEST_KEY || '' },
                 body: JSON.stringify({ repo_url: repoUrl, chunks })
@@ -1078,6 +1079,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
                 // Post-ingestion verification: check chunks are stored
                 try {
                   const verifyResp = await fetchWithTimeout(`${baseUrl}/api/rag/chunks`, {
+                    validate: false,
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
                     body: JSON.stringify({ repo_url: repoUrl, limit: 1, offset: 0 })
@@ -1346,6 +1348,7 @@ app.post('/api/analyze-file', requireApiKey, requireJsonContentType, concurrency
     let reviewResult;
     try {
       const aiResponse = await fetchWithTimeout(`${baseUrl}/analyze`, {
+        validate: false,
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
         body: JSON.stringify({ files, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt, batchSize })
@@ -1494,6 +1497,7 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
       try {
         const baseUrl = aiEngineUrl.replace(/\/+$/, '');
         const aiResponse = await fetchWithTimeout(`${baseUrl}/chat`, {
+          validate: false,
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
           body: JSON.stringify({
@@ -1545,6 +1549,7 @@ app.post('/api/rag/query', requireApiKey, async (req, res) => {
   try {
     const baseUrl = aiEngineUrl.replace(/\/+$/, '');
     const aiResponse = await fetchWithTimeout(`${baseUrl}/api/rag/query`, {
+      validate: false,
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
       body: JSON.stringify({ question, repo_url: repoUrl })
@@ -1735,6 +1740,7 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
         const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
         const baseUrl = aiEngineUrl.replace(/\/+$/, '');
         const aiResponse = await fetchWithTimeout(`${baseUrl}/chat-inline`, {
+          validate: false,
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
           body: JSON.stringify({
@@ -2217,6 +2223,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
 
       const baseUrl = aiEngineUrl.replace(/\/+$/, '');
       const aiResponse = await fetchWithTimeout(`${baseUrl}/review-diff`, {
+        validate: false,
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
         body: JSON.stringify({ files: filesToReview, security_mode: securityMode, custom_prompt: customPrompt, custom_rules: customRules })
@@ -2292,6 +2299,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     const truncatedDiff = diff.length > 15000 ? diff.substring(0, 15000) + '\n...[Diff truncated]' : diff;
     
     const summaryResponse = await fetchWithTimeout(`${baseUrl}/summarize-pr`, {
+      validate: false,
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
       body: JSON.stringify({ diff: truncatedDiff })

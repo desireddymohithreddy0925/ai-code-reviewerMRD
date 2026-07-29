@@ -18,33 +18,54 @@ function isPrivateIP(ip) {
     if (normalized === '::1') return true;
     if (normalized.startsWith('fe80:')) return true;
     if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
+    if (normalized.startsWith('::ffff:')) {
+      const v4Mapped = normalized.replace('::ffff:', '');
+      if (net.isIPv4(v4Mapped)) {
+        return isPrivateIPv4(v4Mapped);
+      }
+    }
+    if (normalized.startsWith('::') && normalized.endsWith('.ip6.arpa')) return true;
     return false;
   }
 
   if (!net.isIPv4(ip)) return false;
 
+  return isPrivateIPv4(ip);
+}
+
+function isPrivateIPv4(ip) {
   const parts = ip.split('.').map(Number);
   if (parts.length !== 4 || parts.some(isNaN)) return false;
 
   const first = parts[0];
   const second = parts[1];
 
-  // 127.0.0.0/8 (Loopback)
-  if (first === 127) return true;
+  // 0.0.0.0/8 (Local/Broadcast)
+  if (first === 0) return true;
   // 10.0.0.0/8 (Private)
   if (first === 10) return true;
-  // 192.168.0.0/16 (Private)
-  if (first === 192 && second === 168) return true;
-  // 172.16.0.0/12 (Private range: 172.16.0.0 - 172.31.255.255)
-  if (first === 172 && second >= 16 && second <= 31) return true;
-  // 0.0.0.0/8 (Broadcast/Local)
-  if (first === 0) return true;
-  // 100.64.0.0/10 (Shared Address Space: 100.64.0.0 - 100.127.255.255)
+  // 100.64.0.0/10 (Carrier-grade NAT: 100.64.0.0 - 100.127.255.255)
   if (first === 100 && second >= 64 && second <= 127) return true;
-  // 198.18.0.0/15 (Benchmark: 198.18.0.0 - 198.19.255.255)
-  if (first === 198 && second >= 18 && second <= 19) return true;
+  // 127.0.0.0/8 (Loopback)
+  if (first === 127) return true;
   // 169.254.0.0/16 (Link Local)
   if (first === 169 && second === 254) return true;
+  // 172.16.0.0/12 (Private: 172.16.0.0 - 172.31.255.255)
+  if (first === 172 && second >= 16 && second <= 31) return true;
+  // 192.0.2.0/24 (Documentation/Test)
+  if (first === 192 && second === 0 && parts[2] === 2) return true;
+  // 192.168.0.0/16 (Private)
+  if (first === 192 && second === 168) return true;
+  // 198.18.0.0/15 (Benchmark: 198.18.0.0 - 198.19.255.255)
+  if (first === 198 && second >= 18 && second <= 19) return true;
+  // 198.51.100.0/24 (Documentation)
+  if (first === 198 && second === 51 && parts[2] === 100) return true;
+  // 203.0.113.0/24 (Documentation)
+  if (first === 203 && second === 0 && parts[2] === 113) return true;
+  // 224.0.0.0/4 (Multicast)
+  if (first >= 224 && first <= 239) return true;
+  // 240.0.0.0/4 (Reserved/Future use)
+  if (first >= 240) return true;
 
   return false;
 }
