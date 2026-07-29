@@ -99,6 +99,7 @@ BATCH_TIMEOUT_SECONDS = float(os.getenv("BATCH_TIMEOUT_SECONDS", "60"))
 # Maximum number of Groq batch requests to run concurrently during /analyze.
 # Bounds fan-out so large repositories don't blow past Groq's rate limits. (#1675)
 GROQ_CONCURRENCY_LIMIT = int(os.getenv("GROQ_CONCURRENCY_LIMIT", "10"))
+GITHUB_WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 
 # Single source of truth — loaded from shared-safety-config.json
 _SHARED_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'shared-safety-config.json')
@@ -1623,6 +1624,31 @@ async def extract_code_chunks(request: ExtractRequest):
     return ExtractResponse(chunks=all_chunks)
 
 
+# 🟢 Route: GitHub webhook with HMAC signature verification
+@app.post("/webhook/github")
+async def github_webhook(request: Request):
+    if not GITHUB_WEBHOOK_SECRET:
+        raise HTTPException(
+            status_code=400,
+            detail="Webhook secret not configured (GITHUB_WEBHOOK_SECRET not set)"
+        )
+
+    body = await request.body()
+    signature_header = request.headers.get("x-hub-signature-256", "")
+
+    if not signature_header:
+        raise HTTPException(status_code=401, detail="Missing X-Hub-Signature-256 header")
+
+    expected_signature = "sha256=" + hmac.new(
+        GITHUB_WEBHOOK_SECRET.encode(),
+        body,
+        "sha256"
+    ).hexdigest()
+
+    if not hmac.compare_digest(signature_header, expected_signature):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":
