@@ -47,7 +47,7 @@ class AnalysisCache {
     this.pending = new Map();
     this._locks = new Map();
     this._repoUrlIndex = new Map();
-    this.stats = { hits: 0, misses: 0, dedupSaves: 0, absoluteExpiries: 0, slidingExpiries: 0 };
+    this.stats = { hits: 0, misses: 0, dedupSaves: 0, absoluteExpiries: 0, slidingExpiries: 0, evictions: 0 };
     this._startSweeper();
   }
 
@@ -114,7 +114,7 @@ class AnalysisCache {
 
     // Cache hit — promote to MRU position and extend TTL
     this.cache.delete(key);
-    entry.expiresAt = now + this.ttlMs;
+    entry.expiresAt = now + (entry.isMock ? this.mockTtlMs : this.ttlMs);
     this.cache.set(key, entry);
     this.stats.hits++;
     const qualityLabel = entry.isMock ? '⚠️ MOCK' : '✅';
@@ -150,7 +150,7 @@ class AnalysisCache {
     const absoluteExpiresAt = now + (ttl * this.absoluteMaxMultiplier);
     const repoUrl = options.repoUrl;
     const normalizedRepoUrl = repoUrl ? repoUrl.replace(/\/+$/, '').toLowerCase() : undefined;
-    this.cache.set(key, { result, expiresAt, absoluteExpiresAt, repoUrl: normalizedRepoUrl, isMock: !!options.isMock });
+    this.cache.set(key, { result, expiresAt, absoluteExpiresAt, createdAt: now, repoUrl: normalizedRepoUrl, isMock: !!options.isMock });
     if (normalizedRepoUrl) {
       if (!this._repoUrlIndex.has(normalizedRepoUrl)) {
         this._repoUrlIndex.set(normalizedRepoUrl, new Set());
@@ -313,7 +313,8 @@ class AnalysisCache {
     let totalAge = 0;
     let mockCount = 0;
     for (const entry of this.cache.values()) {
-      totalAge += Date.now() - (entry.expiresAt - this.ttlMs);
+      const createdAt = entry.createdAt || (entry.expiresAt - this.ttlMs);
+      totalAge += Date.now() - createdAt;
       if (entry.isMock) mockCount++;
     }
 
@@ -324,7 +325,7 @@ class AnalysisCache {
       misses: this.stats.misses,
       mockCount,
       avgAgeMs: this.cache.size > 0 ? Math.round(totalAge / this.cache.size) : 0,
-      evictions: this.stats.evictions,
+      evictions: Number.isFinite(this.stats.evictions) ? this.stats.evictions : 0,
       absoluteExpiries: this.stats.absoluteExpiries,
       slidingExpiries: this.stats.slidingExpiries,
       hitRate: `${hitRate}%`,

@@ -1,33 +1,14 @@
+import picomatch from 'picomatch';
+
 export function globToRegex(pattern) {
-  let regexStr = '^';
-  let i = 0;
-  const escapeRegex = (ch) => ch.replace(/[\\^$+?.()|[\]{}]/g, '\\$&');
-
-  while (i < pattern.length) {
-    const ch = pattern[i];
-    if (ch === '*') {
-      if (i + 1 < pattern.length && pattern[i + 1] === '*') {
-        regexStr += '.*';
-        i += 2;
-        if (i < pattern.length && pattern[i] === '/') {
-          i++;
-        }
-      } else {
-        regexStr += '[^/]*';
-        i++;
-      }
-    } else if (ch === '?') {
-      regexStr += '[^/]';
-      i++;
-    } else if (ch === '/') {
-      regexStr += '/';
-      i++;
-    } else {
-      regexStr += escapeRegex(ch);
-      i++;
-    }
+  try {
+    return picomatch.makeRe(pattern);
+  } catch (err) {
+    console.warn(`[globToRegex] Failed to parse pattern: ${pattern}. Falling back to default regex.`, err.message);
+    const escaped = pattern
+      .replace(/\*/g, '.*')
+      .replace(/\?/g, '[^/]')
+      .replace(/[\\^$+().|[\]{}]/g, '\\$&');
+    return new RegExp(`^${escaped}$`);
   }
-
-  regexStr += '$';
-  return new RegExp(regexStr);
 }
