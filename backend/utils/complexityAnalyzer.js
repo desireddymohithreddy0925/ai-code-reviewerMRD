@@ -155,7 +155,7 @@ export function analyzeComplexity(fileContent, filePath) {
     }
   });
 
-  const codeLines = totalLines - emptyLines - commentLines;
+  const codeLines = Math.max(0, totalLines - emptyLines - commentLines);
   const complexityScore = Math.round((totalLines / 25) + (functionCount * 3));
   let grade = 'A';
   if (complexityScore > 40) grade = 'F';
