@@ -49,6 +49,7 @@ export function loadIgnorePatterns(dir) {
 export function isIgnored(filePath, patterns, baseDir) {
   if (!patterns || !Array.isArray(patterns)) return false;
   const relative = path.relative(baseDir, filePath).replace(/\\/g, '/');
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return false;
   for (const pattern of patterns) {
     if (typeof pattern !== 'string') continue;
     let cleanPattern = pattern.startsWith('/') ? pattern.slice(1) : pattern;
