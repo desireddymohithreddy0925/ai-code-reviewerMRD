@@ -378,7 +378,7 @@ app.post('/api/session', requireApiKey, async (req, res) => {
 
   const csrfToken = await generateCsrfToken();
   res.cookie(CSRF_COOKIE_NAME, csrfToken, {
-    httpOnly: true,
+    httpOnly: false,
     sameSite: 'strict',
     path: '/',
     secure: process.env.NODE_ENV === 'production',
@@ -402,7 +402,7 @@ app.post('/api/logout', requireApiKey, async (req, res) => {
 app.get('/api/csrf-token', async (req, res) => {
   const csrfToken = await generateCsrfToken();
   res.cookie(CSRF_COOKIE_NAME, csrfToken, {
-    httpOnly: true,
+    httpOnly: false,
     sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
     path: '/',
