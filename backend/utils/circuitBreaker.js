@@ -56,6 +56,9 @@ export class CircuitBreaker {
       timeoutId = setTimeout(() => {
         reject(new Error('Circuit breaker timeout'));
       }, this._timeoutMs);
+      if (timeoutId && typeof timeoutId.unref === 'function') {
+        timeoutId.unref();
+      }
     });
 
     try {
