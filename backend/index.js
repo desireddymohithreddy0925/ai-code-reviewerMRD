@@ -2229,7 +2229,9 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
         } catch (parseErr) {
           console.warn('ΓÜá∩╕Å AI engine returned HTTP 200 with malformed (non-JSON) body:', parseErr.message);
         }
-        if (result && Array.isArray(result.comments)) {
+        if (result && result.status === 'error') {
+          console.error(`Γ¥î ALERT: AI Engine review returned error status for ${owner}/${repo}#${pullNumber}. Review blocked from auto-approval.`);
+        } else if (result && Array.isArray(result.comments)) {
           
           // Map body to message for categorizeFinding
           result.comments.forEach(c => { c.message = c.body; });

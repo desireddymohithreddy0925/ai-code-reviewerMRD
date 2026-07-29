@@ -1401,6 +1401,7 @@ async def review_diff(request: ReviewDiffRequest, raw_request: Request):
     print(f"📡 Forwarding PR diff reviews to Groq using model: {groq_model}")
 
     # Overall timeout mirroring /analyze to prevent unbounded resource consumption
+    files_reviewed_count = 0
     try:
         async with asyncio.timeout(ANALYSIS_TIMEOUT_SECONDS):
             for file in files_to_review:
@@ -1414,11 +1415,11 @@ async def review_diff(request: ReviewDiffRequest, raw_request: Request):
 
                 changes_text = "\n".join([f"Line {c.line}: {c.content}" for c in file.changes])
                 changes_text = sanitize_file_content(changes_text)
-                changes_text = _wrap_code_with_delimiters(changes_text, file.path)
-
+        
                 # FIXED: Prompt now explicitly requests a JSON object {"reviews": [...]}
                 custom_rules_text = f"CRITICAL CUSTOM REPOSITORY RULES:\n{request.custom_rules}\n\nYou MUST strictly adhere to the above custom repository rules over any default guidelines.\n" if request.custom_rules else ""
                 
+
 
 
                 if request.security_mode:
@@ -1506,12 +1507,14 @@ If no issues are found, reply with: {{ "reviews": [] }}"""
                                     "line": line_int,
                                     "body": f"\n{sanitize_ai_output(comment_body)}"
                                 })
+                    files_reviewed_count += 1
                 except Exception as e:
                     print(f"⚠️ Error reviewing file {file.path} on Groq: {sanitize_error(str(e), api_key)}")
     except asyncio.TimeoutError:
         print(f"⚠️ review-diff timed out after {int(ANALYSIS_TIMEOUT_SECONDS)}s, returning partial results")
 
-    result = {"comments": comments}
+    review_status = "error" if files_reviewed_count == 0 else "success"
+    result = {"comments": comments, "status": review_status}
     if truncated:
         result["truncated"] = True
         result["files_reviewed"] = len(files_to_review)
