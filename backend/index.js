@@ -583,7 +583,28 @@ const DELIVERY_REDIS_TTL = 300;
 
 // In-memory fallback for webhook SHA dedup when Redis is unavailable
 const shaDedupMemoryMap = new Map();
+const shaDedupLocks = new Map();
 const SHA_DEDUP_MAX_SIZE = 10000;
+
+// Per-key mutex for atomic SHA dedup check-and-set to prevent TOCTOU races
+async function checkAndSetSha(mapKey) {
+  while (shaDedupLocks.has(mapKey)) {
+    await shaDedupLocks.get(mapKey);
+  }
+  const next = (async () => {
+    if (shaDedupMemoryMap.has(mapKey)) return true;
+    if (shaDedupMemoryMap.size >= SHA_DEDUP_MAX_SIZE) {
+      const oldestKey = shaDedupMemoryMap.keys().next().value;
+      if (oldestKey !== undefined) shaDedupMemoryMap.delete(oldestKey);
+    }
+    shaDedupMemoryMap.set(mapKey, Date.now());
+    return false;
+  })();
+  shaDedupLocks.set(mapKey, next.finally(() => {
+    if (shaDedupLocks.get(mapKey) === next) shaDedupLocks.delete(mapKey);
+  }));
+  return next;
+}
 
 const cacheMetricsTimer = setInterval(() => {
   const stats = analysisCache.getStats();
@@ -1806,11 +1827,8 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
     if (redisClient) {
       isDuplicate = await redisClient.setnx(deliveryDedupKey, Date.now().toString());
     } else {
-      const existing = await dedupStore.get(deliveryDedupKey);
-      isDuplicate = existing ? 0 : 1;
-      if (isDuplicate) {
-        await dedupStore.set(deliveryDedupKey, Date.now().toString(), DELIVERY_REDIS_TTL * 1000);
-      }
+      const exists = await dedupStore.checkAndSet(deliveryDedupKey, Date.now().toString(), DELIVERY_REDIS_TTL * 1000);
+      isDuplicate = exists ? 0 : 1;
     }
     if (isDuplicate === 0) {
       console.log(`ΓÅ¡∩╕Å Skipping duplicate webhook delivery: ${deliveryId}`);
@@ -1844,17 +1862,7 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
         }
       } else {
         const mapKey = `${shaDedupKey}:${headSha}`;
-        shaAlreadyReviewed = shaDedupMemoryMap.has(mapKey) ? 1 : 0;
-        if (!shaAlreadyReviewed) {
-          // Enforce max size cap with oldest-entry eviction
-          if (shaDedupMemoryMap.size >= SHA_DEDUP_MAX_SIZE) {
-            const oldestKey = shaDedupMemoryMap.keys().next().value;
-            if (oldestKey !== undefined) {
-              shaDedupMemoryMap.delete(oldestKey);
-            }
-          }
-          shaDedupMemoryMap.set(mapKey, Date.now());
-        }
+        shaAlreadyReviewed = (await checkAndSetSha(mapKey)) ? 1 : 0;
       }
       if (shaAlreadyReviewed) {
         console.log(`ΓÅ¡∩╕Å Already reviewed commit ${headSha.substring(0,7)} for PR #${pullNumber}`);
