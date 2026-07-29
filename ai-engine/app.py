@@ -1184,16 +1184,27 @@ Guidelines:
         role = h.get("role", "user")
         if role not in ["user", "assistant"]:
             role = "user"
+        hist_content = h.get("content", "")
+        # Scan history messages for prompt injection
+        hist_normalized = unicodedata.normalize("NFKC", hist_content).lower()
+        for phrase in DANGEROUS_PATTERNS:
+            pattern = r"\s+".join(re.escape(w) for w in phrase.split())
+            if re.search(pattern, hist_normalized):
+                return {
+                    "response": "I can only answer questions about the provided code context. Please ask a specific question about the repository.",
+                    "truncatedFiles": [],
+                    "blocked": True
+                }
         messages.append({
             "role": role,
-            "content": sanitize_ai_output(h.get("content", ""))
+            "content": sanitize_ai_output(hist_content)
         })
         
     # Sanitize user message for prompt injection attempts
-    message_lower = message.lower()
+    message_normalized = unicodedata.normalize("NFKC", message).lower()
     for phrase in DANGEROUS_PATTERNS:
         pattern = r"\s+".join(re.escape(w) for w in phrase.split())
-        if re.search(pattern, message_lower):
+        if re.search(pattern, message_normalized):
             return {
                 "response": "I can only answer questions about the provided code context. Please ask a specific question about the repository.",
                 "truncatedFiles": [],
