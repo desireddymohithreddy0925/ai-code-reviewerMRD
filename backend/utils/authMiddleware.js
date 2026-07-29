@@ -54,6 +54,7 @@ function getCookie(req, name) {
 }
 
 function safeEqual(left, right) {
+  if (!left || !right) return false;
   const leftBuffer = Buffer.from(String(left));
   const rightBuffer = Buffer.from(String(right));
   return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
