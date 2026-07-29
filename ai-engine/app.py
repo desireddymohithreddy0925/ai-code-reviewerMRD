@@ -122,6 +122,36 @@ def _neutralize_pattern(content: str, pattern: str) -> str:
     flexible_pattern = r"\s+".join(re.escape(w) for w in pattern.split())
     return re.sub(flexible_pattern, token, content, flags=re.IGNORECASE)
 
+def _get_comment_delimiters(filename: str) -> tuple[str, str]:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    comment_map = {
+        "py": ("# ", ""),
+        "js": ("// ", ""),
+        "jsx": ("// ", ""),
+        "ts": ("// ", ""),
+        "tsx": ("// ", ""),
+        "java": ("// ", ""),
+        "rs": ("// ", ""),
+        "rb": ("# ", ""),
+        "php": ("// ", ""),
+        "cs": ("// ", ""),
+        "cpp": ("// ", ""),
+        "h": ("// ", ""),
+        "go": ("// ", ""),
+        "sql": ("-- ", ""),
+        "html": ("<!-- ", " -->"),
+        "css": ("/* ", " */"),
+        "xml": ("<!-- ", " -->"),
+    }
+    start, end = comment_map.get(ext, ("# ", ""))
+    return start, end
+
+def _wrap_code_with_delimiters(code: str, filename: str) -> str:
+    start_delim, end_delim = _get_comment_delimiters(filename)
+    begin = f"{start_delim}[BEGIN IMMUTABLE CODE BLOCK]{end_delim}"
+    end = f"{start_delim}[END IMMUTABLE CODE BLOCK]{end_delim}"
+    return f"{begin}\n{code}\n{end}"
+
 def sanitize_file_content(content: str) -> str:
     for _round in range(3):
         previous = content
@@ -1384,7 +1414,8 @@ async def review_diff(request: ReviewDiffRequest, raw_request: Request):
 
                 changes_text = "\n".join([f"Line {c.line}: {c.content}" for c in file.changes])
                 changes_text = sanitize_file_content(changes_text)
-        
+                changes_text = _wrap_code_with_delimiters(changes_text, file.path)
+
                 # FIXED: Prompt now explicitly requests a JSON object {"reviews": [...]}
                 custom_rules_text = f"CRITICAL CUSTOM REPOSITORY RULES:\n{request.custom_rules}\n\nYou MUST strictly adhere to the above custom repository rules over any default guidelines.\n" if request.custom_rules else ""
                 
