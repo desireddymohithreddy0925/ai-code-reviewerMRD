@@ -89,6 +89,7 @@ if not loaded:
 MAX_FILE_CHARS_PER_FILE = int(os.getenv("MAX_FILE_CHARS_PER_FILE", "1500"))
 MAX_CHAT_FILES = int(os.getenv("MAX_CHAT_FILES", "20"))
 MAX_MESSAGE_LENGTH = int(os.getenv("MAX_MESSAGE_LENGTH", "10000"))
+MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE_BYTES", "100000"))  # 100 KB per file
 # Maximum seconds to wait for a single LLM API response before returning 504 (#786)
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
 # Maximum seconds for the entire /analyze endpoint to complete before 504 (#2173)
@@ -98,6 +99,7 @@ BATCH_TIMEOUT_SECONDS = float(os.getenv("BATCH_TIMEOUT_SECONDS", "60"))
 # Maximum number of Groq batch requests to run concurrently during /analyze.
 # Bounds fan-out so large repositories don't blow past Groq's rate limits. (#1675)
 GROQ_CONCURRENCY_LIMIT = int(os.getenv("GROQ_CONCURRENCY_LIMIT", "10"))
+GITHUB_WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 
 # Single source of truth — loaded from shared-safety-config.json
 _SHARED_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'shared-safety-config.json')
@@ -119,6 +121,36 @@ def _neutralize_pattern(content: str, pattern: str) -> str:
     token = f"__NEUTRALIZED_{uuid.uuid4().hex[:8]}__"
     flexible_pattern = r"\s+".join(re.escape(w) for w in pattern.split())
     return re.sub(flexible_pattern, token, content, flags=re.IGNORECASE)
+
+def _get_comment_delimiters(filename: str) -> tuple[str, str]:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    comment_map = {
+        "py": ("# ", ""),
+        "js": ("// ", ""),
+        "jsx": ("// ", ""),
+        "ts": ("// ", ""),
+        "tsx": ("// ", ""),
+        "java": ("// ", ""),
+        "rs": ("// ", ""),
+        "rb": ("# ", ""),
+        "php": ("// ", ""),
+        "cs": ("// ", ""),
+        "cpp": ("// ", ""),
+        "h": ("// ", ""),
+        "go": ("// ", ""),
+        "sql": ("-- ", ""),
+        "html": ("<!-- ", " -->"),
+        "css": ("/* ", " */"),
+        "xml": ("<!-- ", " -->"),
+    }
+    start, end = comment_map.get(ext, ("# ", ""))
+    return start, end
+
+def _wrap_code_with_delimiters(code: str, filename: str) -> str:
+    start_delim, end_delim = _get_comment_delimiters(filename)
+    begin = f"{start_delim}[BEGIN IMMUTABLE CODE BLOCK]{end_delim}"
+    end = f"{start_delim}[END IMMUTABLE CODE BLOCK]{end_delim}"
+    return f"{begin}\n{code}\n{end}"
 
 def sanitize_file_content(content: str) -> str:
     for _round in range(3):
@@ -375,7 +407,7 @@ def verify_rag_ingest_key(x_rag_ingest_key: str = Header(None)):
         if "pytest" in sys.modules:
             return
         raise HTTPException(status_code=500, detail="RAG ingest key is not configured.")
-    if not hmac.compare_digest(x_rag_ingest_key or "", expected_key):
+    if x_rag_ingest_key != expected_key:
         raise HTTPException(status_code=401, detail="Invalid RAG ingest key")
 
 # Restrict CORS to configured origins so the AI engine is not accessible from
@@ -535,6 +567,7 @@ class AnalyzeRequest(BaseModel):
     systemPrompt: Optional[str] = ""
     batchSize: Optional[int] = Field(5, ge=1, le=20)
     repositoryContext: Optional[dict] = None
+    repoUrl: Optional[str] = None
     diffOnly: Optional[bool] = False
     githubToken: Optional[str] = None
     baseRef: Optional[str] = None
@@ -581,21 +614,26 @@ def health_check():
 
 # 🟢 Route: Analyze Code Files and Generate Reviews & README
 def _merge_review(combined, file_path, review, batch_idx, review_config=None):
-    for category in ["bugs", "security", "optimization", "styling", "impact"]:
+    for category in ["bugs", "security", "optimization", "styling", "impact", "tests", "architecture", "historical_bugs"]:
         kept_items = []
         for item in review.get(category, []):
             if "suggestion" in item:
                 item["suggestion"] = sanitize_ai_output(item["suggestion"])
             if "description" in item:
                 item["description"] = sanitize_ai_output(item["description"])
+            
+            # Apply language and path-based review config rule exclusions if config is provided
             if review_config and item.get("type") and review_config.is_rule_off(_rule_key(item["type"])):
                 continue
+            
             kept_items.append(item)
+            
         review[category] = kept_items
+
     if file_path in combined["fileReviews"]:
         print(f"WARNING: Merging findings for {file_path} from batch {batch_idx + 1} (already exists from a previous batch)")
         existing = combined["fileReviews"][file_path]
-        for category in ["bugs", "security", "optimization", "styling", "impact"]:
+        for category in ["bugs", "security", "optimization", "styling", "impact", "tests", "architecture", "historical_bugs"]:
             existing_items = existing.get(category, [])
             new_items = review.get(category, [])
             def _nk(v): return str(v) if v is not None else ""
@@ -685,6 +723,7 @@ async def analyze_repository(request: AnalyzeRequest):
     max_tokens = request.maxTokens or 2048
     batch_size = request.batchSize or 5
     repository_context = request.repositoryContext
+    custom_system_prompt = validate_system_prompt(request.systemPrompt or "")
     
     # 1. Prepare global repository structure
     custom_system_prompt = await asyncio.to_thread(validate_system_prompt, request.systemPrompt or "")
@@ -927,7 +966,8 @@ You must obey the JSON output format above."""
                 contents_text=contents_text,
                 is_first_batch=is_first_batch,
                 base_prompt=base_prompt,
-                llm_caller=_call_llm
+                llm_caller=_call_llm,
+                repo_url=request.repoUrl
             )
 
             # Merge results
@@ -946,7 +986,7 @@ You must obey the JSON output format above."""
                 if isinstance(reviews, list):
                     for entry in reviews:
                         file_path = entry.get("filePath", "unknown")
-                        review = {k: entry.get(k, []) for k in ("bugs", "security", "optimization", "styling", "impact")}
+                        review = {k: entry.get(k, []) for k in ("bugs", "security", "optimization", "styling", "impact", "tests", "architecture", "historical_bugs")}
                         _merge_review(combined_result, file_path, review, idx, review_config)
                 elif isinstance(reviews, dict):
                     for file_path, review in reviews.items():
@@ -1331,9 +1371,19 @@ Format your JSON precisely as:
 async def review_diff(request: ReviewDiffRequest, raw_request: Request):
     if not groq_client:
         raise HTTPException(status_code=500, detail="Groq API client is not configured on this engine.")
-    
+
     files = request.files
     comments = []
+
+    # Validate file sizes to prevent unbounded LLM token consumption and OOM
+    for file in files:
+        changes_text = "\n".join([f"Line {c.line}: {c.content}" for c in file.changes])
+        file_size = len(changes_text.encode('utf-8'))
+        if file_size > MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File '{file.path}' exceeds {MAX_FILE_SIZE_BYTES} byte limit (got {file_size} bytes). Split into smaller files or increase MAX_FILE_SIZE_BYTES."
+            )
 
     # Cap the number of files reviewed per PR so a single oversized diff cannot
     # silently leave files unreviewed without anyone noticing. Files beyond the
@@ -1364,10 +1414,12 @@ async def review_diff(request: ReviewDiffRequest, raw_request: Request):
 
                 changes_text = "\n".join([f"Line {c.line}: {c.content}" for c in file.changes])
                 changes_text = sanitize_file_content(changes_text)
-        
+                changes_text = _wrap_code_with_delimiters(changes_text, file.path)
+
                 # FIXED: Prompt now explicitly requests a JSON object {"reviews": [...]}
                 custom_rules_text = f"CRITICAL CUSTOM REPOSITORY RULES:\n{request.custom_rules}\n\nYou MUST strictly adhere to the above custom repository rules over any default guidelines.\n" if request.custom_rules else ""
                 
+
 
                 if request.security_mode:
                     review_prompt = f"""You are a dedicated DevSecOps engineer performing a rigorous security audit on this Pull Request.
@@ -1391,6 +1443,9 @@ Identify any logical bugs, security threats (API key leaks, hardcoded credential
 You must answer strictly based on the provided code additions. Do not use any external knowledge, assumptions, or information beyond the code changes shown above. If you cannot identify any issues in the provided code, return an empty array inside the reviews object.
 """
                 review_prompt += f"""
+Code additions with line numbers:
+{changes_text}
+
 For each issue found, reference the file path and line number from the code changes above.
 
 You MUST reply ONLY in a valid JSON object format containing a "reviews" array. Do not wrap in markdown quotes, do not explain.
@@ -1600,6 +1655,31 @@ async def extract_code_chunks(request: ExtractRequest):
     return ExtractResponse(chunks=all_chunks)
 
 
+# 🟢 Route: GitHub webhook with HMAC signature verification
+@app.post("/webhook/github")
+async def github_webhook(request: Request):
+    if not GITHUB_WEBHOOK_SECRET:
+        raise HTTPException(
+            status_code=400,
+            detail="Webhook secret not configured (GITHUB_WEBHOOK_SECRET not set)"
+        )
+
+    body = await request.body()
+    signature_header = request.headers.get("x-hub-signature-256", "")
+
+    if not signature_header:
+        raise HTTPException(status_code=401, detail="Missing X-Hub-Signature-256 header")
+
+    expected_signature = "sha256=" + hmac.new(
+        GITHUB_WEBHOOK_SECRET.encode(),
+        body,
+        "sha256"
+    ).hexdigest()
+
+    if not hmac.compare_digest(signature_header, expected_signature):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

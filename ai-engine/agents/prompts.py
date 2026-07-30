@@ -113,8 +113,14 @@ Format your JSON precisely as:
       "styling": [
         {{ "type": "convention issue", "line": 15, "description": "...", "suggestion": "..." }}
       ],
+      "historical_bugs": [
+        {{ "type": "historical bug regression", "line": 10, "description": "...", "suggestion": "..." }}
+      ],
       "impact": [
         {{ "type": "breaking change", "line": 5, "description": "...", "suggestion": "..." }}
+      ],
+      "tests": [
+        {{ "type": "missing test", "line": 10, "description": "...", "suggestion": "..." }}
       ]
     }}
   }},
@@ -156,11 +162,21 @@ Format your JSON precisely as:
 
 You must obey the JSON output format above."""
 
-IMPACT_ANALYSIS_AGENT_PROMPT = """Target Company Persona: {company}
+TEST_GENERATION_AGENT_PROMPT = """Target Company Persona: {company}
 Response Language: {language}
 
-Review this repository codebase batch focusing strictly on CROSS-REPOSITORY DEPENDENCY IMPACT. Look for backwards-incompatible API changes, removed exports, signature modifications, or any changes that could break downstream repositories relying on these contracts.
-Ignore other aspects like styling, security, or general performance.
+Review this repository codebase batch focusing strictly on MISSING UNIT TESTS. If you detect logic changes in a function or a complex new function without corresponding tests, you should automatically generate the missing unit test code or suggest updates to existing tests.
+Ignore styling, security, and general performance.
+
+You must obey the JSON output format above."""
+
+HISTORICAL_BUG_AGENT_PROMPT = """Target Company Persona: {company}
+Response Language: {language}
+
+Review this repository codebase batch focusing strictly on Historical Bug Pattern Recognition. You are the "Historical Bug Agent".
+You will be provided with a list of historical, closed bugs from this repository that were retrieved via RAG similarity search.
+Your job is to determine if the CURRENT code changes re-introduce or violate the same domain-specific patterns seen in these historical bugs (e.g. missing tenant ID, uncaught edge case, etc.).
+Ignore security, style, and performance unless they directly relate to the retrieved historical bugs.
 
 Here is the repository structure for context:
 {structure_text}
@@ -168,13 +184,16 @@ Here is the repository structure for context:
 Here is the contents of files for this batch:
 {contents_text}
 
+Here are the retrieved historical bugs for context:
+{historical_bugs_context}
+
 You MUST reply ONLY in a valid JSON format. Do not write markdown wrapping, do not write explanations before or after.
 Format your JSON precisely as:
 {{
   "fileReviews": {{
     "file_path_1": {{
-      "impact": [
-        {{ "type": "breaking change", "line": 5, "description": "...", "suggestion": "..." }}
+      "historical_bugs": [
+        {{ "type": "historical bug regression", "line": 10, "description": "...", "suggestion": "..." }}
       ]
     }}
   }}
@@ -182,11 +201,11 @@ Format your JSON precisely as:
 
 You must obey the JSON output format above."""
 
-IMPACT_ANALYSIS_AGENT_PROMPT = """Target Company Persona: {company}
+ARCHITECTURE_AGENT_PROMPT = """Target Company Persona: {company}
 Response Language: {language}
 
-Review this repository codebase batch focusing strictly on CROSS-REPOSITORY DEPENDENCY IMPACT. Look for backwards-incompatible API changes, removed exports, signature modifications, or any changes that could break downstream repositories relying on these contracts.
-Ignore other aspects like styling, security, or general performance.
+Review this repository codebase batch focusing strictly on ARCHITECTURAL REGRESSION. Detect if developers are bypassing layered architecture constraints (e.g., UI directly querying databases, controllers importing repositories, or violating separation of concerns).
+Ignore styling, security, and general performance.
 
 Here is the repository structure for context:
 {structure_text}
@@ -199,60 +218,11 @@ Format your JSON precisely as:
 {{
   "fileReviews": {{
     "file_path_1": {{
-      "impact": [
-        {{ "type": "breaking change", "line": 5, "description": "...", "suggestion": "..." }}
-      ]
-    }}
-  }}
-}}
-
-You must obey the JSON output format above."""
-
-IMPACT_ANALYSIS_AGENT_PROMPT = """Target Company Persona: {company}
-Response Language: {language}
-
-Review this repository codebase batch focusing strictly on CROSS-REPOSITORY DEPENDENCY IMPACT. Look for backwards-incompatible API changes, removed exports, signature modifications, or any changes that could break downstream repositories relying on these contracts.
-Ignore other aspects like styling, security, or general performance.
-
-Here is the repository structure for context:
-{structure_text}
-
-Here is the contents of files for this batch:
-{contents_text}
-
-You MUST reply ONLY in a valid JSON format. Do not write markdown wrapping, do not write explanations before or after.
-Format your JSON precisely as:
-{{
-  "fileReviews": {{
-    "file_path_1": {{
-      "impact": [
-        {{ "type": "breaking change", "line": 5, "description": "...", "suggestion": "..." }}
-      ]
-    }}
-  }}
-}}
-
-You must obey the JSON output format above."""
-
-IMPACT_ANALYSIS_AGENT_PROMPT = """Target Company Persona: {company}
-Response Language: {language}
-
-Review this repository codebase batch focusing strictly on CROSS-REPOSITORY DEPENDENCY IMPACT. Look for backwards-incompatible API changes, removed exports, signature modifications, or any changes that could break downstream repositories relying on these contracts.
-Ignore other aspects like styling, security, or general performance.
-
-Here is the repository structure for context:
-{structure_text}
-
-Here is the contents of files for this batch:
-{contents_text}
-
-You MUST reply ONLY in a valid JSON format. Do not write markdown wrapping, do not write explanations before or after.
-Format your JSON precisely as:
-{{
-  "fileReviews": {{
-    "file_path_1": {{
-      "impact": [
-        {{ "type": "breaking change", "line": 5, "description": "...", "suggestion": "..." }}
+      "architecture": [
+        {{ "type": "layer bypass", "line": 22, "description": "...", "suggestion": "..." }}
+      ],
+      "historical_bugs": [
+        {{ "type": "historical bug regression", "line": 10, "description": "...", "suggestion": "..." }}
       ]
     }}
   }}

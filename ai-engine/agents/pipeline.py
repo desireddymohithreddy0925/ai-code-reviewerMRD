@@ -6,10 +6,13 @@ from .prompts import (
     PERFORMANCE_AGENT_PROMPT,
     STYLE_AGENT_PROMPT,
     IMPACT_ANALYSIS_AGENT_PROMPT,
-    SYNTHESIZER_AGENT_PROMPT
+    TEST_GENERATION_AGENT_PROMPT,
+    ARCHITECTURE_AGENT_PROMPT,
+    SYNTHESIZER_AGENT_PROMPT,
+    HISTORICAL_BUG_AGENT_PROMPT
 )
 from .security_utils import detect_high_entropy_strings
-
+import rag
 async def _run_agent(agent_name: str, system_prompt: str, user_prompt: str, llm_caller: Callable[[str, str], Awaitable[Dict[Any, Any]]]) -> Dict[Any, Any]:
     try:
         return await llm_caller(system_prompt, user_prompt)
@@ -26,7 +29,8 @@ async def run_batch_pipeline(
     contents_text: str,
     is_first_batch: bool,
     base_prompt: str,
-    llm_caller: Callable[[str, str], Awaitable[Dict[Any, Any]]]
+    llm_caller: Callable[[str, str], Awaitable[Dict[Any, Any]]],
+    repo_url: str = None
 ) -> Dict[Any, Any]:
     
     # 1. Detect high-entropy strings for Security Context
@@ -66,23 +70,61 @@ async def run_batch_pipeline(
         contents_text=contents_text
     )
 
+    test_user_prompt = TEST_GENERATION_AGENT_PROMPT.format(
+        company=company,
+        language=language,
+        structure_text=structure_text,
+        contents_text=contents_text
+    )
+
+    architecture_user_prompt = ARCHITECTURE_AGENT_PROMPT.format(
+        company=company,
+        language=language,
+        structure_text=structure_text,
+        contents_text=contents_text
+    )
+
+    # Query RAG for historical bugs
+    historical_bugs_context = "No historical bugs found."
+    if repo_url:
+        try:
+            chunks = rag.query_chunks(query_text=contents_text, n_results=3, repo_url=repo_url)
+            if chunks:
+                historical_bugs_context = "\n\n".join([f"Bug: {c.get('content')}" for c in chunks])
+        except Exception as e:
+            print(f"⚠️ Failed to query RAG for historical bugs: {e}")
+
+    historical_bug_user_prompt = HISTORICAL_BUG_AGENT_PROMPT.format(
+        company=company,
+        language=language,
+        structure_text=structure_text,
+        contents_text=contents_text,
+        historical_bugs_context=historical_bugs_context
+    )
+
     # Dispatch concurrently
-    print(f"⏳ Dispatching Security, Performance, Style, and Impact agents concurrently...")
+    print(f"⏳ Dispatching Security, Performance, Style, Impact, Test, Architecture, and Historical Bug agents concurrently...")
     results = await asyncio.gather(
         _run_agent("Security", base_prompt, security_user_prompt, llm_caller),
         _run_agent("Performance", base_prompt, performance_user_prompt, llm_caller),
         _run_agent("Style", base_prompt, style_user_prompt, llm_caller),
-        _run_agent("Impact", base_prompt, impact_user_prompt, llm_caller)
+        _run_agent("Impact", base_prompt, impact_user_prompt, llm_caller),
+        _run_agent("TestGeneration", base_prompt, test_user_prompt, llm_caller),
+        _run_agent("Architecture", base_prompt, architecture_user_prompt, llm_caller),
+        _run_agent("HistoricalBug", base_prompt, historical_bug_user_prompt, llm_caller)
     )
     
-    security_res, performance_res, style_res, impact_res = results
+    security_res, performance_res, style_res, impact_res, test_res, arch_res, historical_res = results
     
     # Combine findings to send to Synthesizer
     combined_findings = {
         "security_findings": security_res.get("fileReviews", {}),
         "performance_findings": performance_res.get("fileReviews", {}),
         "style_findings": style_res.get("fileReviews", {}),
-        "impact_findings": impact_res.get("fileReviews", {})
+        "impact_findings": impact_res.get("fileReviews", {}),
+        "test_findings": test_res.get("fileReviews", {}),
+        "architecture_findings": arch_res.get("fileReviews", {}),
+        "historical_bug_findings": historical_res.get("fileReviews", {}),
     }
     
     readme_mermaid_instructions = ""
