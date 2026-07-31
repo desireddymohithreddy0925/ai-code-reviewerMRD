@@ -339,10 +339,14 @@ If no issues are found, reply with: { "reviews": [] }`;
         if (Array.isArray(parsed)) {
           issues = parsed;
         } else if (parsed && typeof parsed === 'object') {
-          for (const key of Object.keys(parsed)) {
-            if (Array.isArray(parsed[key])) {
-              issues = parsed[key];
-              break;
+          if (Array.isArray(parsed.reviews)) {
+            issues = parsed.reviews;
+          } else {
+            for (const key of Object.keys(parsed)) {
+              if (Array.isArray(parsed[key])) {
+                issues = parsed[key];
+                break;
+              }
             }
           }
         }
