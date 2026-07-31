@@ -69,7 +69,7 @@ function applySeverityConfig(findings, config) {
   return findings
     .filter(finding => {
       const ruleId = finding.rule_id || finding.rule;
-      return !suppressedRules.has(ruleId);
+      return !ruleId || !suppressedRules.has(ruleId);
     })
     .map(finding => {
       const category = categorizeFinding(finding);
