@@ -18,18 +18,16 @@ class AsyncLock {
     this._resolve = null;
   }
   async acquire(fn) {
-    while (this._promise) {
-      await this._promise;
-    }
-    this._promise = new Promise(resolve => { this._resolve = resolve; });
-    try {
-      return await fn();
-    } finally {
-      const resolve = this._resolve;
-      this._promise = null;
-      this._resolve = null;
-      if (resolve) resolve();
-    }
+    // Chain onto the previous run instead of polling with a while-loop.
+    // Promise chaining is atomic and provides mutual exclusion without a
+    // busy-wait that churns microtasks.
+    const prev = this._promise || Promise.resolve();
+    const run = prev.then(async () => fn());
+    this._promise = run.then(
+      () => { this._promise = null; },
+      () => { this._promise = null; }
+    );
+    return run;
   }
 
   isFree() {
