@@ -309,7 +309,6 @@ async function csrfProtection(req, res, next) {
       try {
         const session = await Session.findOne({ sessionId }).select('csrfToken').lean();
         if (session && session.csrfToken) {
-          if (!session?.csrfToken) { return next(); }
           const storedBuf = Buffer.from(String(session.csrfToken));
           const headerBuf = Buffer.from(String(headerToken || ''));
           if (storedBuf.length === headerBuf.length && crypto.timingSafeEqual(storedBuf, headerBuf)) {
