@@ -25,7 +25,7 @@ jobs:
       - name: Install Frontend Dependencies
         run: |
           cd frontend
-          npm install
+          npm ci
 
       - name: Compile & Build Frontend
         run: |
@@ -50,7 +50,7 @@ jobs:
       - name: Install Dependencies
         run: |
           cd github-action
-          npm install
+          npm ci
 
       - name: Compile Action
         run: |
@@ -80,7 +80,7 @@ jobs:
       - name: Install Backend Dependencies
         run: |
           cd backend
-          npm install
+          npm ci
 
       - name: Run Backend Tests
         run: |
