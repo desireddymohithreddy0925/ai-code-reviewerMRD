@@ -165,7 +165,7 @@ async function run() {
         owner,
         repo,
         path: '.ai-reviewer.yml',
-        ref: github.context.payload.pull_request.head.ref
+        ref: `refs/pull/${pullNumber}/head`
       });
       if (configData && configData.content) {
         customRulesText = Buffer.from(configData.content, 'base64').toString('utf8');
