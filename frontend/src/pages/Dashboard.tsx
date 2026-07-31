@@ -874,8 +874,6 @@ export default function Dashboard() {
     setApiError(null);
     setAnalysisResult(null);
     setSelectedFile(null);
-    setChatHistory([]);
-    try { localStorage.removeItem('reposage_chat_history'); } catch {};
 
     setIsLoading(true);
 
@@ -903,6 +901,8 @@ export default function Dashboard() {
       }
 
       const data: BackendResponse = await response.json();
+      setChatHistory([]);
+      try { localStorage.removeItem('reposage_chat_history'); } catch {};
       const currentSessionId = data.sessionPersisted === true ? data.sessionId ?? null : null;
       setSessionId(currentSessionId);
       await saveReport(data, repoUrl, currentSessionId);
