@@ -44,7 +44,16 @@ export async function reviewFileContent(
       };
     }
 
-    const data = (await response.json()) as BackendResponse;
+    let data: BackendResponse;
+    try {
+      data = (await response.json()) as BackendResponse;
+    } catch {
+      const raw = await response.text().catch(() => "");
+      return {
+        success: false,
+        error: `Backend returned a non-JSON response (HTTP ${response.status}): ${raw.slice(0, 200)}`,
+      };
+    }
     console.log("RepoSage API response:", data);
     return {
       success: true,
