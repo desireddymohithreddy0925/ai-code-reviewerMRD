@@ -210,7 +210,11 @@ const csrfTokenStore = redisClient ? {
     return (await redisClient.del(this._prefix + token)) > 0;
   },
   async size() {
-    const keys = await redisClient.keys(this._prefix + '*');
+    const keys = [];
+    const stream = redisClient.scanStream({ match: this._prefix + '*', count: 500 });
+    for await (const batch of stream) {
+      keys.push(...batch);
+    }
     return keys.length;
   },
   async cleanup() {
