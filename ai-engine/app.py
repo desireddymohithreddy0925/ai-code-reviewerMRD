@@ -439,8 +439,9 @@ def _resolve_client_ip(request: Request) -> str:
     if xff:
         candidates = [ip.strip() for ip in xff.split(",") if ip.strip()]
         if candidates:
-            # Use the rightmost (trusted) IP address per RFC 7239
-            raw_ip = candidates[-1]
+            # X-Forwarded-For lists the original client first; each proxy
+            # appends its own address to the right. Leftmost = client.
+            raw_ip = candidates[0]
             try:
                 ipaddress.ip_address(raw_ip)
                 return raw_ip
