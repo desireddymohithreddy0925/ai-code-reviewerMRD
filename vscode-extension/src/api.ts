@@ -25,13 +25,17 @@ export async function reviewFileContent(
 
   const headers = buildRequestHeaders(apiKey);
 
+  // Build outside the try so an oversized file throws a clear error
+  // instead of being mislabeled as a network failure.
+  const requestBody = JSON.stringify(buildRequestBody(fileName, content));
+
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 60000);
     const response = await fetch(`${apiUrl}/api/analyze-file`, {
       method: "POST",
       headers,
-      body: JSON.stringify(buildRequestBody(fileName, content)),
+      body: requestBody,
       signal: controller.signal,
     });
     clearTimeout(timeout);
