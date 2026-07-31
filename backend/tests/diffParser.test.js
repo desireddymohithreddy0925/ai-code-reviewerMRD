@@ -191,7 +191,7 @@ test('countLinesInDiff handles files with null changes', () => {
     { path: 'b.js', changes: undefined },
     { path: 'c.js', changes: [null, { line: 1, content: 'x' }] },
   ];
-  assert.equal(countLinesInDiff(files), 2);  // reduce skips non-arrays  // only one valid change
+  assert.equal(countLinesInDiff(files), 1);
 });
 
 test('parseDiff handles diff with no trailing newline', () => {
