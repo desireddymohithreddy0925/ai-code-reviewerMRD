@@ -102,11 +102,10 @@ class ReviewQueue {
                   `waiting ${Math.ceil(cooldownRemaining / 1000)}s before retry`
                 );
 
-                if (queue.length > 0) {
-                  queue.unshift(item);
-                  break;
-                }
-
+                // Always sleep before requeueing. Without the sleep the
+                // outer while-loop immediately re-picks the same item and
+                // the still-OPEN breaker rejects it again — a busy-spin
+                // that blocks the event loop until the cooldown elapses.
                 await new Promise(r => setTimeout(r, cooldownRemaining + 1000));
                 queue.unshift(item);
                 break;
