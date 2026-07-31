@@ -1276,6 +1276,7 @@ if (reviewResult?.fileReviews) {
       }
 
       return res.json(responseObject);
+      }
 
     } catch (err) {
       console.error(err);
