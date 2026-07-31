@@ -68,7 +68,12 @@ async function run() {
     // 2. Initialize Clients
     let provider;
     if (process.env.GITLAB_CI) {
-      provider = new GitLabProvider(process.env.GITLAB_TOKEN || core.getInput('gitlab-token') || process.env.GITHUB_TOKEN);
+      const gitlabToken = process.env.GITLAB_TOKEN || core.getInput('gitlab-token');
+      if (!gitlabToken) {
+        core.setFailed('❌ GitLab CI mode requires GITLAB_TOKEN or the gitlab-token input.');
+        return;
+      }
+      provider = new GitLabProvider(gitlabToken);
     } else {
       provider = new GitHubProvider(githubToken);
     }
