@@ -68,9 +68,13 @@ export async function isSafeUrl(url) {
   if (!basic.valid) return basic;
   const { parsed } = basic;
   try {
-    const { address } = await dnsLookup(parsed.hostname, { verbatim: true });
-    if (isPrivateIP(address)) {
-      return { valid: false, reason: `URL resolves to a private or restricted IP (${address})` };
+    const res = await dnsLookup(parsed.hostname, { all: true, verbatim: true });
+    const addresses = Array.isArray(res) ? res : [res];
+    for (const entry of addresses) {
+      const ip = typeof entry === 'string' ? entry : entry.address;
+      if (isPrivateIP(ip)) {
+        return { valid: false, reason: `URL resolves to a private or restricted IP (${ip})` };
+      }
     }
   } catch {
     return { valid: false, reason: `Failed to resolve hostname: ${parsed.hostname}` };
