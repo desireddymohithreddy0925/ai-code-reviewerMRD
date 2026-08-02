@@ -487,7 +487,7 @@ Format your JSON precisely as:
         
         const summaryContent = summaryCompletion.choices[0]?.message?.content;
         if (summaryContent) {
-          const summaryData = JSON.parse(summaryContent);
+          const summaryData = cleanAndParseJSON(summaryContent);
           if (summaryData.summary) {
             
             const summaryStartTag = '<!-- RepoSage Summary -->';
