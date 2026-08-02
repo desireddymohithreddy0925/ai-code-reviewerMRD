@@ -1,5 +1,6 @@
 import subprocess
 import re
+import os
 from typing import List, Set
 import requests
 
@@ -16,6 +17,39 @@ def sanitize_git_ref(ref: str) -> str:
     if not _GIT_REF_RE.match(ref):
         raise ValueError("Ref contains invalid characters")
     return ref
+
+
+def sanitize_repository_path(url: str, working_dir: str) -> str:
+    """
+    Validate repository clone path to prevent directory traversal attacks
+    from SSH-style URLs or other malicious patterns.
+
+    Args:
+        url: Git repository URL
+        working_dir: Base working directory for clones
+
+    Returns:
+        Safe path for repository clone
+
+    Raises:
+        ValueError: If path contains traversal attempts
+    """
+    repo_name = re.sub(r'.*[/:]([^/]+?)(\.git)?$', r'\1', url)
+
+    if not repo_name or '..' in repo_name:
+        raise ValueError("Invalid repository name")
+
+    if not re.match(r'^[\w\-]+$', repo_name):
+        raise ValueError("Repository name contains invalid characters")
+
+    clone_path = os.path.join(working_dir, repo_name)
+    resolved = os.path.realpath(clone_path)
+    base = os.path.realpath(working_dir)
+
+    if not resolved.startswith(base + os.sep):
+        raise ValueError("Clone path would escape working directory")
+
+    return clone_path
 
 
 def get_changed_files_from_git(base: str, head: str) -> Set[str]:
