@@ -188,6 +188,17 @@ app.use(express.json({
   limit: process.env.JSON_BODY_LIMIT || '5mb',
 }));
 
+// Track in-flight requests so a fatal-error drain can wait for them to finish
+// before exiting (see the uncaughtException handler below).
+let activeRequests = 0;
+app.use((req, res, next) => {
+  activeRequests++;
+  const done = () => { activeRequests = Math.max(0, activeRequests - 1); };
+  res.on('finish', done);
+  res.on('close', done);
+  next();
+});
+
 // CSRF token endpoint: generates a random token and sets it as an httpOnly cookie.
 // The token is also returned in the JSON response body so the frontend can read
 // it from there (not from document.cookie) and include it in the X-CSRF-Token header.
@@ -444,6 +455,8 @@ function cleanupTempRepos() {
     console.error(`Failed to clean up temp_repos on exit: ${error.message}`);
   }
 }
+// Graceful shutdown used for SIGINT/SIGTERM — supervisors treat exit code 0
+// as an intentional stop, so this is the intended path.
 async function onShutdown() {
   cleanupTempRepos();
   cleanupTimers();
@@ -455,21 +468,49 @@ process.on('SIGINT', onShutdown);
 process.on('SIGTERM', onShutdown);
 process.on('exit', cleanupTempRepos);
 
-// Clean up temp_repos and timers on uncaught exceptions to prevent orphan temp folders
+// Best-effort cleanup for an unrecoverable error path. Unlike onShutdown, this
+// drains in-flight requests (up to a cap) and exits NON-zero so supervisors
+// (systemd/PM2/K8s) detect the crash and restart the service. We never exit 0
+// from an error path: a "clean" exit tells supervisors the stop was intended.
+async function handleFatalError(err) {
+  console.error('FATAL: terminating process due to uncaught error');
+  if (err && err.stack) {
+    console.error(err.stack);
+  }
+  const drainDeadline = Date.now() + 10_000;
+  while (activeRequests > 0 && Date.now() < drainDeadline) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  if (activeRequests > 0) {
+    console.error(`FATAL: ${activeRequests} request(s) still in-flight after drain timeout; exiting anyway`);
+  }
+  cleanupTempRepos();
+  cleanupTimers();
+  if (redisClient) {
+    try { await redisClient.quit(); } catch (e) { console.error('FATAL: failed to quit redis cleanly:', e.message); }
+  }
+  try { await closeDatabase(); } catch (e) { console.error('FATAL: failed to close database cleanly:', e.message); }
+  process.exit(1);
+}
+
+// An uncaught exception leaves process state unreliable — Node docs recommend
+// NOT continuing. Log, drain active requests, and exit non-zero for restart.
 process.on('uncaughtException', (err) => {
   console.error('Uncaught exception:', err);
   if (err.stack) {
     console.error(err.stack);
   }
-  onShutdown();
+  handleFatalError(err);
 });
 
+// An unhandled rejection is normally recoverable: log it and keep the server
+// alive rather than tearing down every session, webhook, SSE stream, and
+// analysis because one promise failed.
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason instanceof Error ? reason.message : reason);
   if (reason instanceof Error && reason.stack) {
     console.error(reason.stack);
   }
-  onShutdown();
 });
 
 // Repository contexts for chat are now persisted in MongoDB via the Session model.
