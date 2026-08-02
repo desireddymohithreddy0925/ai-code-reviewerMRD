@@ -63,13 +63,18 @@ function validateUrlBasic(url) {
   return { valid: true, parsed };
 }
 
-async function _checkRedirect(urlString) {
+const MAX_REDIRECT_HOPS = 5;
+
+async function _checkRedirect(urlString, hops = 0) {
+  if (hops > MAX_REDIRECT_HOPS) {
+    return { valid: false, reason: `Too many redirects (limit ${MAX_REDIRECT_HOPS})` };
+  }
   try {
     const resp = await fetch(urlString, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(5000) });
     if (resp.status >= 300 && resp.status < 400) {
       const location = resp.headers.get('location');
       if (location) {
-        return isSafeUrl(new URL(location, urlString).href);
+        return isSafeUrl(new URL(location, urlString).href, hops + 1);
       }
     }
   } catch {
@@ -78,7 +83,7 @@ async function _checkRedirect(urlString) {
   return { valid: true };
 }
 
-export async function isSafeUrl(url) {
+export async function isSafeUrl(url, hops = 0) {
   const basic = validateUrlBasic(url);
   if (!basic.valid) return basic;
   const { parsed } = basic;
