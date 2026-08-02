@@ -2,8 +2,8 @@ const SECRET_DETECTION_RULES = [
   // AWS Access Key ID
   /\b((?:AKIA|A3T|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[0-9A-Z]{16})\b/g,
 
-  // AWS Secret Access Key (lookaround for 40 char base64-like strings)
-  /(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/g,
+  // AWS Secret Access Key (lookaround for 40 char base64-like strings, excluding pure 40-hex commit SHAs)
+  /(?<![A-Za-z0-9/+=])(?![0-9a-fA-F]{40}\b)[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/g,
 
   // GitHub Personal Access Token (PAT)
   /\b(gh[pousr]_[a-zA-Z0-9]{36})\b/g,
