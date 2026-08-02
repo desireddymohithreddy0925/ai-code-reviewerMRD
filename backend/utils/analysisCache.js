@@ -48,7 +48,9 @@ class AnalysisCache {
     this._locks = new Map();
     this._repoUrlIndex = new Map();
     this.stats = { hits: 0, misses: 0, dedupSaves: 0, absoluteExpiries: 0, slidingExpiries: 0, evictions: 0 };
-    this._startSweeper();
+    // The sweeper is started lazily on first set() and stops itself when the
+    // cache empties, so an idle instance never keeps a live interval (and a
+    // garbage-collected instance cannot leak a timer through the closure).
   }
 
   /**
@@ -160,6 +162,7 @@ class AnalysisCache {
       }
       this._repoUrlIndex.get(normalizedRepoUrl).add(key);
     }
+    this._startSweeper();
     const qualityLabel = options.isMock ? '⚠️ MOCK' : '💾';
     console.log(`${qualityLabel} Cached analysis result for key ${key.slice(0, 8)}... (${this.cache.size}/${this.maxEntries} entries, ${this.stats.evictions} evictions, ttl=${ttl}ms)`);
   }
@@ -248,7 +251,7 @@ class AnalysisCache {
     const size = this.cache.size;
     this.cache.clear();
     this._repoUrlIndex.clear();
-    this._startSweeper();
+    // No restart here: the sweeper starts lazily again on the next set().
     console.log(`🗑️  Cleared analysis cache (${size} entries removed)`);
   }
 
@@ -287,6 +290,12 @@ class AnalysisCache {
         }
       }
       this._cleanupIdleLocks();
+      if (this.cache.size === 0) {
+        // Nothing left to sweep — release the interval so idle instances
+        // (or instances being garbage-collected without clear()) cannot
+        // keep a live timer via the sweeper closure.
+        this._stopSweeper();
+      }
     }, intervalMs);
     if (this._sweeper.unref) this._sweeper.unref();
   }
