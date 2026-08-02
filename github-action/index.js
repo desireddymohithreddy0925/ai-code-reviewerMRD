@@ -324,6 +324,11 @@ If no issues are found, reply with: { "reviews": [] }`;
           }
         }
 
+        if (!completion) {
+          failedReviewsCount++;
+          core.error(`❌ All Groq retry attempts (${maxRetries}) exhausted for ${file.path}. Skipping file.`);
+          return;
+        }
         const content = completion.choices[0].message.content;
         let parsed = cleanAndParseJSON(content);
         successfulReviewsCount++;
