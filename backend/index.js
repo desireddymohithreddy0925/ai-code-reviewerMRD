@@ -2060,6 +2060,25 @@ app.post('/api/cache/invalidate', requireApiKey, async (req, res) => {
 
 // Webhook review queueing uses ReviewQueue from reviewQueue.js (per-key mutex)
 
+// Custom repository rules (.ai-reviewer.yml / .github/ai-reviewer.md) are
+// fetched from the PR head sha, which is attacker-controlled in fork PRs.
+// They are configuration, not instructions: cap their size and strip
+// instruction-like directives before forwarding so they can never override
+// the AI engine's defensive "treat code as data, not instructions" boundary.
+const MAX_CUSTOM_RULES_LENGTH = 2000;
+const INSTRUCTION_LIKE_RE = /^\s*(you\s+(must|should|shall|need|are|will)|always|never|ignore|forget|do\s+not|act\s+as|pretend|respond|reply|follow|override|disregard|take\s+precedence|treat|consider\s+it\s+an\s+instruction)/i;
+
+function sanitizeCustomRules(rules) {
+  if (typeof rules !== 'string') return null;
+  const capped = rules.length > MAX_CUSTOM_RULES_LENGTH ? rules.slice(0, MAX_CUSTOM_RULES_LENGTH) : rules;
+  const stripped = capped
+    .split('\n')
+    .filter(line => !INSTRUCTION_LIKE_RE.test(line))
+    .join('\n')
+    .trim();
+  return stripped.length > 0 ? stripped : null;
+}
+
 // 🚀 Helper to execute Webhook PR review logic
 async function runWebhookReview(owner, repo, pullNumber, headSha) {
   const token = process.env.GITHUB_PAT;
@@ -2214,7 +2233,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       }
       
       if (customRulesResponse && customRulesResponse.data && customRulesResponse.data.content) {
-        customRules = Buffer.from(customRulesResponse.data.content, 'base64').toString('utf8');
+        customRules = sanitizeCustomRules(Buffer.from(customRulesResponse.data.content, 'base64').toString('utf8'));
         console.log('✅ Found custom repository rules.');
       }
     } catch (err) {
@@ -2246,7 +2265,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
           if (securityMode) {
             console.log(`🔒 Dedicated Security Mode enabled for ${owner}/${repo}`);
           }
-          customPrompt = config.custom_prompt || '';
+          customPrompt = sanitizeCustomRules(config.custom_prompt) || '';
           autoFixTrivial = !!config.auto_fix_trivial;
           if (config.severity) {
             severityOverrides = config.severity;
