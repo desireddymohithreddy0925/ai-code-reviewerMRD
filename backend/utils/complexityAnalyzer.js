@@ -142,7 +142,7 @@ export function analyzeComplexity(fileContent, filePath) {
       .replace(/`[^`\\]*(?:\\.[^`\\]*)*`/g, "``");
 
     if (['.js', '.jsx', '.ts', '.tsx'].includes(ext)) {
-      if (codeWithoutStrings.includes('function ') || codeWithoutStrings.includes('=>') || /^\s*(?:async\s+)?(?!(?:if|for|while|switch|catch)\b)\w+\s*\([^)]*\)\s*\{/.test(codeWithoutStrings)) {
+      if (codeWithoutStrings.includes('function ') || codeWithoutStrings.includes('=>') || /^\s*(?:async\s+)?(?!(?:if|for|while|switch|catch)\b)\w+\s*\((?:[^()]|\([^()]*\))*\)\s*\{/.test(codeWithoutStrings)) {
         functionCount++;
       }
     } else if (ext === '.py') {
