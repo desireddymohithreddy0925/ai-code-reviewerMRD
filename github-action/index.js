@@ -74,7 +74,7 @@ async function run() {
     }
     provider.init();
     
-    const octokit = github.getOctokit(githubToken);
+    const octokit = process.env.GITLAB_CI ? null : github.getOctokit(githubToken);
     const groq = new Groq({ apiKey: groqApiKey });
 
     // 3. Verify Context
@@ -93,7 +93,7 @@ async function run() {
     console.log(`🚀 Starting RepoSage AI PR Review for PR #${pullNumber} in ${owner}/${repo}`);
 
     const headSha = github.context.payload.pull_request?.head?.sha;
-    if (headSha) {
+    if (headSha && octokit) {
       try {
         const { data: ignoreFile } = await octokit.rest.repos.getContent({
           owner,
@@ -125,6 +125,9 @@ async function run() {
     // Fetch existing PR review comments to avoid duplicates
     let existingComments = [];
     try {
+      if (!octokit) {
+        throw new Error('skipped: octokit unavailable in GitLab mode');
+      }
       const response = await octokit.rest.pulls.listReviewComments({
         owner,
         repo,
@@ -161,6 +164,9 @@ async function run() {
     let customRulesText = '';
     try {
       console.log('🔍 Checking for .ai-reviewer.yml custom configuration...');
+      if (!octokit) {
+        throw new Error('skipped: octokit unavailable in GitLab mode');
+      }
       const { data: configData } = await octokit.rest.repos.getContent({
         owner,
         repo,
@@ -405,14 +411,16 @@ If no issues are found, reply with: { "reviews": [] }`;
       if (batchComments.length > 0) {
         console.log(`✍️ Posting intermediate PR Review with ${batchComments.length} inline comments...`);
         try {
-          await octokit.rest.pulls.createReview({
-            owner,
-            repo,
-            pull_number: pullNumber,
-            event: 'COMMENT',
-            body: `_RepoSage AI is processing this Pull Request... Found ${batchComments.length} issues in the current batch of files._`,
-            comments: batchComments
-          });
+          if (octokit) {
+            await octokit.rest.pulls.createReview({
+              owner,
+              repo,
+              pull_number: pullNumber,
+              event: 'COMMENT',
+              body: `_RepoSage AI is processing this Pull Request... Found ${batchComments.length} issues in the current batch of files._`,
+              comments: batchComments
+            });
+          }
         } catch (err) {
           core.error(`❌ Failed to post intermediate review: ${err.message}`);
         }
@@ -432,6 +440,9 @@ If no issues are found, reply with: { "reviews": [] }`;
       if (fullDiff.length > 0) {
         const truncatedDiff = fullDiff.length > 15000 ? fullDiff.substring(0, 15000) + '\n...[Diff truncated]' : fullDiff;
         
+        if (!octokit) {
+          throw new Error('skipped: octokit unavailable in GitLab mode');
+        }
         const { data: pullRequest } = await octokit.rest.pulls.get({
           owner,
           repo,
@@ -502,12 +513,14 @@ Format your JSON precisely as:
               newBody = prBody + (prBody ? '\n\n' : '') + newSummaryBlock;
             }
             
-            await octokit.rest.pulls.update({
-              owner,
-              repo,
-              pull_number: pullNumber,
-              body: newBody
-            });
+            if (octokit) {
+              await octokit.rest.pulls.update({
+                owner,
+                repo,
+                pull_number: pullNumber,
+                body: newBody
+              });
+            }
             console.log(`✅ Updated PR #${pullNumber} description with AI summary and sync suggestions`);
           }
         }
@@ -520,6 +533,9 @@ Format your JSON precisely as:
     if (totalIssuesFound > 0) {
       console.log(`✍️ Posting Final PR Review Summary...`);
       try {
+        if (!octokit) {
+          throw new Error('skipped: octokit unavailable in GitLab mode');
+        }
         await octokit.rest.pulls.createReview({
           owner,
           repo,
