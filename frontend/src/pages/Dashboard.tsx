@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useDebounce } from '../hooks/useDebounce';
+import { getSessionOwnerToken, setSessionOwnerToken } from '../utils/sessionToken';
 import { useStore, ChatMessage } from '../store/useStore';
 import SettingsModal from "../components/SettingsModal";
 import DashboardFooter from "../components/DashboardFooter";
@@ -694,7 +695,7 @@ export default function Dashboard() {
             temperature: chatAiSettings.temperature ?? 0.4,
             maxTokens: chatAiSettings.maxTokens ?? 2048,
             sessionId,
-            sessionOwnerToken: localStorage.getItem("sessionOwnerToken") || "",
+            sessionOwnerToken: getSessionOwnerToken(),
             useRag,
             systemPrompt: chatAiSettings.systemPrompt ?? "",
           }),
@@ -905,7 +906,7 @@ export default function Dashboard() {
       await saveReport(data, repoUrl, currentSessionId);
       setAnalysisResult(data);
       if (data.sessionPersisted === true && data.sessionOwnerToken) {
-        localStorage.setItem("sessionOwnerToken", data.sessionOwnerToken);
+        setSessionOwnerToken(data.sessionOwnerToken);
       }
       persistAuditHistory(data);
       setChatHistory([]);
