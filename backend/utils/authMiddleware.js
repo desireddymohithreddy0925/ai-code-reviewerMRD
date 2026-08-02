@@ -69,6 +69,9 @@ function decodeSessionCookie(req) {
   if (!payload || !signature) return null;
 
   const secret = getSessionSecret();
+  // Without a configured secret, signValue would throw TypeError in
+  // createHmac. Treat the cookie as absent instead of crashing.
+  if (!secret) return null;
   if (!safeEqual(signature, signValue(payload, secret))) return null;
 
   try {
