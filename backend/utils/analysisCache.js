@@ -71,7 +71,10 @@ class AnalysisCache {
       .createHash('sha256')
       .update(
         files
-          .map(f => `${f.name}:${crypto.createHash('sha256').update(f.content).digest('hex')}`)
+          .map(f => {
+            const content = typeof f.content === 'string' ? f.content : String(f.content ?? '');
+            return `${f.name}:${crypto.createHash('sha256').update(content).digest('hex')}`;
+          })
           .sort()
           .join('|')
       )
