@@ -107,6 +107,11 @@ GROQ_CONCURRENCY_LIMIT = int(os.getenv("GROQ_CONCURRENCY_LIMIT", "10"))
 # compress, and truncate the trailing batches if that is still not enough.
 MAX_LLM_CALLS_PER_ANALYSIS = int(os.getenv("MAX_LLM_CALLS_PER_ANALYSIS", "20"))
 GITHUB_WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
+# /analyze only creates refactoring PRs when the caller explicitly opts in via
+# the request field `autoCreatePRs: true` OR the server operator enables this env
+# flag. PR creation is a write operation on the user's repository and must never
+# happen as a hidden side effect of an analysis request.
+AUTO_CREATE_REFACTORING_PRS = os.getenv("AUTO_CREATE_REFACTORING_PRS", "false").lower() == "true"
 
 # Single source of truth — loaded from shared-safety-config.json
 _SHARED_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'shared-safety-config.json')
@@ -574,6 +579,7 @@ class AnalyzeRequest(BaseModel):
     githubToken: Optional[str] = None
     baseRef: Optional[str] = None
     headRef: Optional[str] = None
+    autoCreatePRs: Optional[bool] = False
 
     @field_validator("baseRef", "headRef")
     @classmethod
@@ -1060,7 +1066,11 @@ You must obey the JSON output format above."""
         }
 
     # 4. Handle Refactoring PR Generation
-    if request.githubToken and request.repositoryContext and request.headRef:
+    # Opt-in only: creating PRs is a write operation on the user's repository, so
+    # it is gated behind the request's `autoCreatePRs` flag or the server-level
+    # AUTO_CREATE_REFACTORING_PRS env flag. Providing a GitHub token alone never
+    # triggers PR creation.
+    if (AUTO_CREATE_REFACTORING_PRS or request.autoCreatePRs) and request.githubToken and request.repositoryContext and request.headRef:
         owner = request.repositoryContext.get("owner")
         repo = request.repositoryContext.get("repo")
         if owner and repo and "refactoring_suggestions" in combined_result:
