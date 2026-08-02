@@ -24,8 +24,14 @@ let mockInfo = '';
 let mockClearCount = 0;
 
 const vscode = require('vscode') as any;
-// Stub the APIs used by RepoSageDiagnostics
-(vscode as any).window = {
+// Stub the APIs used by RepoSageDiagnostics.
+//
+// These assignments only take effect when the vscode module is served by
+// a stub loader (src/test/vscode-preload.js). Under @vscode/test-electron
+// the real module is read-only, so the assignments are silently ignored
+// and every assertion against the mock state below would be meaningless.
+// Detect that case and skip the suite instead of reporting false passes.
+const stubbedWindow = {
   showWarningMessage: (msg: string) => { mockWarning = msg; return Promise.resolve(); },
   showInformationMessage: (msg: string) => { mockInfo = msg; return Promise.resolve(); },
 };
@@ -73,6 +79,10 @@ const vscode = require('vscode') as any;
   code: any;
 };
 
+const stubsApplied =
+  (vscode as any).window === stubbedWindow &&
+  typeof (vscode as any).languages?.createDiagnosticCollection === 'function';
+
 // ---------------------------------------------------------------------------
 // Import after stubbing
 // ---------------------------------------------------------------------------
@@ -89,6 +99,8 @@ function reset() {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+const suiteFn = stubsApplied ? suite : suite.skip;
+suiteFn('RepoSageDiagnostics', () => {
 test('RepoSageDiagnostics constructor creates a diagnostics collection', () => {
   reset();
   const rq = new RepoSageDiagnostics();
@@ -378,4 +390,6 @@ test('multiple items across categories are all included', () => {
   assert.ok(severities.includes(DiagnosticSeverity.Warning));  // optimization
   assert.ok(severities.includes(DiagnosticSeverity.Information)); // styling
   rq.dispose();
+});
+
 });
