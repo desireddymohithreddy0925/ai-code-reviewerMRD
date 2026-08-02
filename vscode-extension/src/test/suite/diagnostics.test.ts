@@ -22,6 +22,7 @@ const mockDiagnosticsSet = new Array<{ severity: number; message: string; line: 
 let mockWarning = '';
 let mockInfo = '';
 let mockClearCount = 0;
+const mockDeletedUris = new Array<string>();
 
 const vscode = require('vscode') as any;
 // Stub the APIs used by RepoSageDiagnostics.
@@ -38,6 +39,7 @@ const stubbedWindow = {
 (vscode as any).languages = {
   createDiagnosticCollection: () => ({
     clear: () => { mockClearCount++; },
+    delete: (uri: any) => { mockDeletedUris.push(String(uri)); },
     set: (_uri: any, diags: any[]) => {
       mockDiagnosticsSet.length = 0;
       for (const d of diags) {
@@ -94,6 +96,7 @@ function reset() {
   mockWarning = '';
   mockInfo = '';
   mockClearCount = 0;
+  mockDeletedUris.length = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,14 +111,15 @@ test('RepoSageDiagnostics constructor creates a diagnostics collection', () => {
   assert.ok(mockClearCount >= 0, 'constructor should initialise without throwing');
 });
 
-test('updateFromResponse clears previous diagnostics', () => {
+test('updateFromResponse removes only the target file diagnostics', () => {
   reset();
   const rq = new RepoSageDiagnostics();
   rq.updateFromResponse(
     { success: true, analysis: { fileReviews: {} } },
     'foo.js'
   );
-  assert.equal(mockClearCount, 1);
+  assert.deepEqual(mockDeletedUris, ['foo.js'], 'should delete only the target file');
+  assert.equal(mockClearCount, 0, 'clear() must not be called on update');
   rq.dispose();
 });
 
