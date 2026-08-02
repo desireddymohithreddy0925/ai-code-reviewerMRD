@@ -35,13 +35,17 @@ function scrubRepositoryPayload(codebaseString) {
   let sanitizedPayload = codebaseString;
 
   for (const rule of SECRET_DETECTION_RULES) {
-    sanitizedPayload = sanitizedPayload.replace(rule, (match, capturedGroup) => {
+    // Replace against a snapshot of the pre-replacement string so the line
+    // context lookup below never sees text already modified by this rule's
+    // earlier matches (or by previous rules).
+    const source = sanitizedPayload;
+    sanitizedPayload = source.replace(rule, (match, capturedGroup) => {
       if (capturedGroup) {
         return match.replace(capturedGroup, '[REDACTED_SECRET]');
       }
       // Context check: only redact 40-char base64 strings on lines with secret keywords
       if (!capturedGroup && match.length === 40 && /^[A-Za-z0-9\/+=]{40}$/.test(match)) {
-        const lineMatch = sanitizedPayload.match(new RegExp('^.*' + match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '.*$', 'm'));
+        const lineMatch = source.match(new RegExp('^.*' + match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '.*$', 'm'));
         const line = lineMatch ? lineMatch[0] : '';
         if (!hasSecretContext(line)) {
           return match;
