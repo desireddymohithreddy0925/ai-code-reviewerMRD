@@ -5,6 +5,7 @@ import hmac
 import json
 import re
 import time
+import math
 import asyncio
 import uuid
 import unicodedata
@@ -99,6 +100,12 @@ BATCH_TIMEOUT_SECONDS = float(os.getenv("BATCH_TIMEOUT_SECONDS", "60"))
 # Maximum number of Groq batch requests to run concurrently during /analyze.
 # Bounds fan-out so large repositories don't blow past Groq's rate limits. (#1675)
 GROQ_CONCURRENCY_LIMIT = int(os.getenv("GROQ_CONCURRENCY_LIMIT", "10"))
+# Hard cap on the number of Groq sub-calls per /analyze request (#3549).
+# A caller can otherwise set batchSize=1 on a repo of thousands of tiny files
+# and force one LLM call per file, amplifying cost without bound. When the
+# dependency-graph batching would exceed this cap we raise the batch size to
+# compress, and truncate the trailing batches if that is still not enough.
+MAX_LLM_CALLS_PER_ANALYSIS = int(os.getenv("MAX_LLM_CALLS_PER_ANALYSIS", "20"))
 GITHUB_WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 
 # Single source of truth — loaded from shared-safety-config.json
@@ -712,6 +719,34 @@ async def _create_refactoring_pr(github_token: str, owner: str, repo: str, head_
             
         return res.json().get("html_url")
 
+def _bound_llm_batches(files, batch_size, max_calls=None):
+    """Chunk files into batches and enforce a per-analysis LLM-call cap (#3549).
+
+    A caller can otherwise set batchSize=1 on a repo of thousands of tiny files
+    and force one Groq call per file, amplifying cost without bound. First we
+    compress the batches by raising the batch size; if oversized dependency
+    components still exceed the cap, we truncate the trailing batches.
+
+    Returns a (batches, truncated_count) tuple.
+    """
+    if max_calls is None:
+        max_calls = MAX_LLM_CALLS_PER_ANALYSIS
+    batches = smart_batch_files(files, batch_size)
+    truncated = 0
+    if len(batches) > max_calls:
+        needed = max(batch_size, math.ceil(len(files) / max_calls))
+        if needed > batch_size:
+            batches = smart_batch_files(files, min(needed, 20))
+        if len(batches) > max_calls:
+            truncated = len(batches) - max_calls
+            batches = batches[:max_calls]
+            print(
+                f"⚠️  Analysis LLM-call cap reached: truncating to {max_calls} "
+                f"batches ({truncated} batch(es) not analyzed). "
+                f"Raise MAX_LLM_CALLS_PER_ANALYSIS to increase the cap."
+            )
+    return batches, truncated
+
 @app.post("/analyze")
 async def analyze_repository(request: AnalyzeRequest):
     if not groq_client:
@@ -819,7 +854,7 @@ async def analyze_repository(request: AnalyzeRequest):
     print(f"📡 Forwarding batched analysis request to Groq using model: {groq_model} (Batch size: {batch_size})")
 
     # 2. Dynamically chunk into smart batches based on AST dependency graph
-    batches = smart_batch_files(files, batch_size)
+    batches, truncated_batches_count = _bound_llm_batches(files, batch_size)
 
     combined_result = {
         "fileReviews": {},
@@ -1019,6 +1054,8 @@ You must obey the JSON output format above."""
         )
 
     combined_result["truncatedFiles"] = truncated_files
+    if truncated_batches_count:
+        combined_result["truncatedBatches"] = truncated_batches_count
     if diff_mode_header:
         combined_result["diffModeInfo"] = {
             "active": True,

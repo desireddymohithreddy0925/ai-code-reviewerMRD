@@ -71,6 +71,48 @@ const ANALYSIS_CACHE_MOCK_TTL_MS = ((n) => Number.isFinite(n) && n > 0 ? n : 120
 const analysisCache = new AnalysisCache(ANALYSIS_CACHE_TTL_MS, 2, ANALYSIS_CACHE_MOCK_TTL_MS);
 const responseCache = new AnalysisCache(ANALYSIS_CACHE_TTL_MS);
 
+// ---------------------------------------------------------------------------
+// Per-caller daily analysis budget (#3549). /api/analyze and /api/analyze-file
+// clone repos server-side and fan out one LLM call per batch, so an
+// unauthenticated-by-cookie key-holder can otherwise force unbounded clones
+// and Groq calls against the shared paid quotas. The budget is keyed on a
+// stable per-caller identity (session-cookie uid when present, otherwise a
+// hash of the caller's IP) so it cannot be evaded by minting a fresh clientId
+// per request. In-memory is sufficient: the counter resets on restart, exactly
+// like responseCache / analysisCache.
+// ---------------------------------------------------------------------------
+const ANALYSIS_DAILY_BUDGET_PER_CLIENT = parseInt(process.env.ANALYSIS_DAILY_BUDGET_PER_CLIENT || '50', 10);
+const ANALYSIS_DAILY_BUDGET_WINDOW_MS = 24 * 60 * 60 * 1000;
+const dailyAnalysisBudgetMap = new Map(); // key -> { windowStart, count }
+
+function getAnalysisBudgetKey(req) {
+  const hasSessionCookie = typeof req.headers?.cookie === 'string' && req.headers.cookie.includes('rps_v1_session');
+  if (hasSessionCookie && req.clientId) {
+    return req.clientId;
+  }
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  return crypto.createHash('sha256').update(`daily-analysis:${ip}`).digest('hex');
+}
+
+function consumeDailyAnalysisBudget(req) {
+  const key = getAnalysisBudgetKey(req);
+  const now = Date.now();
+  const entry = dailyAnalysisBudgetMap.get(key);
+  if (!entry || now - entry.windowStart >= ANALYSIS_DAILY_BUDGET_WINDOW_MS) {
+    dailyAnalysisBudgetMap.set(key, { windowStart: now, count: 1 });
+    return { allowed: true, remaining: ANALYSIS_DAILY_BUDGET_PER_CLIENT - 1 };
+  }
+  if (entry.count >= ANALYSIS_DAILY_BUDGET_PER_CLIENT) {
+    return { allowed: false, remaining: 0 };
+  }
+  entry.count += 1;
+  return { allowed: true, remaining: ANALYSIS_DAILY_BUDGET_PER_CLIENT - entry.count };
+}
+
+// Hard cap on source files forwarded to the AI engine per analysis, so a repo
+// of thousands of tiny files cannot force one LLM sub-call per file (#3549).
+const MAX_FILES_PER_ANALYSIS = parseInt(process.env.MAX_FILES_PER_ANALYSIS || '100', 10);
+
 // Trust the first hop of reverse proxy headers (Render, Railway, Heroku, Nginx, AWS ALB, etc.)
 // so that req.ip and express-rate-limit resolve the real client IP from X-Forwarded-For
 // rather than the internal proxy address.
@@ -750,6 +792,12 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
      maxTokens = 2048, systemPrompt = '', batchSize = 5, githubToken
    } = req.body;
 
+  // Per-caller daily budget: blocks unbounded clone + LLM-call amplification (#3549).
+  const budget = consumeDailyAnalysisBudget(req);
+  if (!budget.allowed) {
+    return res.status(429).json({ error: `Daily analysis budget exceeded for this caller (${ANALYSIS_DAILY_BUDGET_PER_CLIENT} analyses per 24 hours). Please try again tomorrow.` });
+  }
+
   // Enforce boundary limits for batchSize to prevent downstream parsing crashes
   batchSize = Math.max(1, Math.min(20, parseInt(batchSize, 10) || 5));
 
@@ -806,21 +854,42 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
   const maxRepoSizeMB = parseInt(process.env.MAX_REPO_SIZE_MB, 10) || 100;
   const maxSizeBytes = maxRepoSizeMB * 1024 * 1024;
 
-  // Pre-clone size check via GitHub API to prevent disk exhaustion
+  // Pre-clone size check via GitHub API to prevent disk exhaustion.
+  // This check is MANDATORY (#3549): when the PAT is rate-limited or
+  // unauthorized we fall back to an unauthenticated size lookup, and if the
+  // size still cannot be verified we refuse to clone rather than proceeding
+  // with a partial/filtered clone of unknown size.
+  const verifyRepoSize = async (octokitInstance) => {
+    const { data: repoData } = await octokitInstance.rest.repos.get({ owner, repo: repoName });
+    return (repoData.size || 0) * 1024;
+  };
+  const enforceSizeLimit = (repoSizeBytes) => {
+    if (repoSizeBytes > maxSizeBytes) {
+      return res.status(413).json({ error: `Repository exceeds the maximum allowed size of ${maxRepoSizeMB}MB (Reported size: ~${Math.round(repoSizeBytes / 1024 / 1024)}MB).` });
+    }
+    return null;
+  };
+
   if (process.env.GITHUB_PAT) {
+    let repoSizeBytes;
     try {
-      const { data: repoData } = await octokit.rest.repos.get({ owner, repo: repoName });
-      const repoSizeBytes = (repoData.size || 0) * 1024;
-      if (repoSizeBytes > maxSizeBytes) {
-        return res.status(413).json({ error: `Repository exceeds the maximum allowed size of ${maxRepoSizeMB}MB (Reported size: ~${Math.round(repoSizeBytes/1024/1024)}MB).` });
-      }
+      repoSizeBytes = await verifyRepoSize(octokit);
     } catch (err) {
-      if (err.status !== 403 && err.status !== 429) {
+      if (err.status === 403 || err.status === 429) {
+        // PAT rate-limited/blocked — retry without auth before refusing.
+        try {
+          repoSizeBytes = await verifyRepoSize(new Octokit());
+        } catch (fallbackErr) {
+          console.warn(`Could not verify repository size for ${owner}/${repoName} via GitHub API (${err.status ?? 'auth'} / ${fallbackErr.status ?? 'auth'}). Refusing to clone: pre-clone size check is mandatory.`);
+          return res.status(429).json({ error: 'Could not verify repository size because GitHub API is rate-limited. Please try again later.' });
+        }
+      } else {
         console.error(`Γ¥î GitHub API error verifying size for ${owner}/${repoName}: ${err.message}`);
         return res.status(502).json({ error: `Failed to verify repository size: ${err.message}. Check GITHUB_PAT configuration.` });
       }
-      console.warn(`Could not verify repository size via GitHub API for ${owner}/${repoName}. Proceeding to clone with filters...`);
     }
+    const rejection = enforceSizeLimit(repoSizeBytes);
+    if (rejection) return rejection;
   } else {
     console.warn('No GITHUB_PAT configured ΓÇö skipping pre-clone size check. Set MAX_REPO_SIZE_MB to enforce limit at clone time.');
   }
@@ -899,7 +968,8 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
       let currentPayloadLength = 0;
       let truncatedFiles = [];
       for (const file of files) {
-        if (currentPayloadLength + file.content.length > MAX_PAYLOAD_CHARS) {
+        if (currentPayloadLength + file.content.length > MAX_PAYLOAD_CHARS
+            || truncatedFiles.length >= MAX_FILES_PER_ANALYSIS) {
           partial_review = true;
           break;
         }
@@ -1320,8 +1390,20 @@ app.post('/api/analyze-file', requireApiKey, requireJsonContentType, concurrency
   try {
     let { files, company = 'General', language = 'English', model, temperature = 0.7, maxTokens = 2048, systemPrompt = '', batchSize = 5 } = req.body;
 
+    // Per-caller daily budget for direct file analysis (#3549).
+    const budget = consumeDailyAnalysisBudget(req);
+    if (!budget.allowed) {
+      return res.status(429).json({ error: `Daily analysis budget exceeded for this caller (${ANALYSIS_DAILY_BUDGET_PER_CLIENT} analyses per 24 hours). Please try again tomorrow.` });
+    }
+
     if (!files || !Array.isArray(files) || files.length === 0) {
       return res.status(400).json({ error: 'At least one file is required.' });
+    }
+
+    // Bound the number of files so a single request cannot fan out one LLM
+    // sub-call per tiny file (#3549).
+    if (files.length > MAX_FILES_PER_ANALYSIS) {
+      files = files.slice(0, MAX_FILES_PER_ANALYSIS);
     }
 
     for (const file of files) {
