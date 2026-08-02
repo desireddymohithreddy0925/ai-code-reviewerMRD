@@ -1098,7 +1098,7 @@ You must obey the JSON output format above."""
 
 # 🟢 Route: AI Chat with Repository Context
 @app.post("/chat")
-async def chat_with_repository(request: ChatRequest):
+async def chat_with_repository(request: ChatRequest, x_client_id: str = Header(default="")):
     if not groq_client:
         raise HTTPException(status_code=500, detail="Groq API client is not configured on this engine.")
     
@@ -1165,7 +1165,7 @@ async def chat_with_repository(request: ChatRequest):
     if request.useRag:
         try:
             from rag import query_chunks
-            rag_chunks = query_chunks(message, n_results=5, repo_url=request.repo_url)
+            rag_chunks = query_chunks(message, n_results=5, repo_url=request.repo_url, tenant_id=x_client_id or None)
             if rag_chunks:
                 chunk_parts = []
                 for i, c in enumerate(rag_chunks, 1):
@@ -1339,17 +1339,25 @@ class SummarizeRequest(BaseModel):
     model: Optional[str] = "llama-3.3-70b-versatile"
 
 # 🟢 Route: Cleanup stale vectors (remove embeddings for deleted/modified files)
+# Destructive: requires a tenant (clientId) header so operations are scoped to
+# the caller's own namespace and can never wipe another tenant's vectors.
 @app.post("/api/rag/cleanup", dependencies=[Depends(verify_api_key)])
-async def cleanup_vectors(request: CleanupRequest):
+async def cleanup_vectors(request: CleanupRequest, x_client_id: str = Header(default="")):
+    if not x_client_id:
+        raise HTTPException(status_code=422, detail="x-client-id header is required to scope cleanup to the caller's tenant.")
     from rag import cleanup_stale_chunks
-    result = cleanup_stale_chunks(set(request.current_files), repo_url=request.repo_url)
+    result = cleanup_stale_chunks(set(request.current_files), repo_url=request.repo_url, tenant_id=x_client_id)
     return result
 
 # 🟢 Route: Delete vectors for a specific file
+# Destructive: requires a tenant (clientId) header so operations are scoped to
+# the caller's own namespace and can never delete another tenant's vectors.
 @app.post("/api/rag/delete-vectors", dependencies=[Depends(verify_api_key)])
-async def delete_vectors(request: VectorDeleteRequest):
+async def delete_vectors(request: VectorDeleteRequest, x_client_id: str = Header(default="")):
+    if not x_client_id:
+        raise HTTPException(status_code=422, detail="x-client-id header is required to scope deletion to the caller's tenant.")
     from rag import delete_chunks_for_file
-    removed = delete_chunks_for_file(request.file_path, repo_url=request.repo_url)
+    removed = delete_chunks_for_file(request.file_path, repo_url=request.repo_url, tenant_id=x_client_id)
     return {"removed_count": removed, "file_path": request.file_path}
 
 # 🟢 Route: Conversational AI Inline Chat
@@ -1691,21 +1699,27 @@ async def split_files_for_rag(request: SplitRequest):
 
 # 🟢 Route: Ingest chunks into ChromaDB for RAG (uses upsert for cross-worker safety)
 @app.post("/api/rag/ingest", response_model=IngestionResponse, dependencies=[Depends(verify_rag_ingest_key)])
-async def ingest_chunks_route(request: IngestRequest):
+async def ingest_chunks_route(request: IngestRequest, x_client_id: str = Header(default="")):
+    if not x_client_id:
+        raise HTTPException(status_code=422, detail="x-client-id header is required to scope ingestion to the caller's tenant.")
     from rag import upsert_chunks
     texts = [c.content for c in request.chunks]
     metadatas = [c.metadata for c in request.chunks]
     ids = [c.chunk_id for c in request.chunks]
-    count = upsert_chunks(texts, metadatas, ids, repo_url=request.repo_url)
+    count = upsert_chunks(texts, metadatas, ids, repo_url=request.repo_url, tenant_id=x_client_id)
     return IngestionResponse(ingested_count=count)
 
 
 # 🟢 Route: Query RAG chunks for a given question
-@app.post("/api/rag/query", response_model=RagQueryResponse)
-async def query_rag_chunks(request: RagQueryRequest):
+# Scoped to the caller's tenant via x-client-id so users can only ever read
+# chunks from collections they own.
+@app.post("/api/rag/query", response_model=RagQueryResponse, dependencies=[Depends(verify_api_key)])
+async def query_rag_chunks(request: RagQueryRequest, x_client_id: str = Header(default="")):
+    if not x_client_id:
+        raise HTTPException(status_code=422, detail="x-client-id header is required to scope the query to the caller's tenant.")
     from rag import query_chunks
 
-    chunks = query_chunks(request.question, n_results=5, repo_url=request.repo_url)
+    chunks = query_chunks(request.question, n_results=5, repo_url=request.repo_url, tenant_id=x_client_id)
     result = RagQueryResponse(
         chunks=chunks,
         total_chunks=len(chunks),
@@ -1716,11 +1730,15 @@ async def query_rag_chunks(request: RagQueryRequest):
 
 
 # 🟢 Route: Get paginated RAG chunks
-@app.post("/api/rag/chunks", response_model=PaginatedChunksResponse)
-async def get_paginated_chunks(request: PaginatedChunksRequest):
+# Scoped to the caller's tenant via x-client-id so users can only ever read
+# chunks from collections they own.
+@app.post("/api/rag/chunks", response_model=PaginatedChunksResponse, dependencies=[Depends(verify_api_key)])
+async def get_paginated_chunks(request: PaginatedChunksRequest, x_client_id: str = Header(default="")):
+    if not x_client_id:
+        raise HTTPException(status_code=422, detail="x-client-id header is required to scope the request to the caller's tenant.")
     from rag import get_chunks_paginated, get_collection_stats
-    chunks = get_chunks_paginated(limit=request.limit, offset=request.offset, repo_url=request.repo_url)
-    stats = get_collection_stats(repo_url=request.repo_url)
+    chunks = get_chunks_paginated(limit=request.limit, offset=request.offset, repo_url=request.repo_url, tenant_id=x_client_id)
+    stats = get_collection_stats(repo_url=request.repo_url, tenant_id=x_client_id)
     return PaginatedChunksResponse(chunks=chunks, total_chunks=stats["chunk_count"])
 
 

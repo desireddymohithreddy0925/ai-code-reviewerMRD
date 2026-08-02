@@ -1169,7 +1169,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
               const ingestResp = await fetchWithTimeout(`${baseUrl}/api/rag/ingest`, {
                 validate: false,
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '', 'x-rag-ingest-key': process.env.RAG_INGEST_KEY || '' },
+                headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '', 'x-rag-ingest-key': process.env.RAG_INGEST_KEY || '', 'x-client-id': req.clientId || '' },
                 body: JSON.stringify({ repo_url: repoUrl, chunks })
               }, 60000);
               if (ingestResp.ok) {
@@ -1179,7 +1179,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
                   const verifyResp = await fetchWithTimeout(`${baseUrl}/api/rag/chunks`, {
                     validate: false,
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
+                    headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '', 'x-client-id': req.clientId || '' },
                     body: JSON.stringify({ repo_url: repoUrl, limit: 1, offset: 0 })
                   }, 10000);
                   if (verifyResp.ok) {
@@ -1299,6 +1299,7 @@ const prSummary = {
           try {
             await Analytics.create({
               sessionId,
+              clientId: req.clientId,
               repoUrl,
               repoName,
               filesReviewedCount: files.length,
@@ -1627,7 +1628,7 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
         const aiResponse = await fetchWithTimeout(`${baseUrl}/chat`, {
           validate: false,
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
+          headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '', 'x-client-id': req.clientId || '' },
           body: JSON.stringify({
             files: context.files,
             message,
@@ -1671,6 +1672,23 @@ app.post('/api/rag/query', requireApiKey, async (req, res) => {
   if (!question) {
     return res.status(400).json({ error: 'question is required.' });
   }
+  if (!repoUrl || typeof repoUrl !== 'string') {
+    return res.status(400).json({ error: 'repoUrl is required.' });
+  }
+
+  // Tenant isolation: only allow RAG queries against a repository that this
+  // client has actually analyzed. Without this, any caller could read (or
+  // delete) another tenant's private source code via its repo_url.
+  try {
+    const ownsRepo = await Analytics.exists({ clientId: req.clientId, repoUrl });
+    if (!ownsRepo) {
+      console.warn(`⛔ RAG query blocked: caller ${req.clientId} does not own ${repoUrl}`);
+      return res.status(403).json({ error: 'Access denied: you have not analyzed this repository.' });
+    }
+  } catch (ownershipErr) {
+    console.error('Γ¥î RAG ownership check error:', sanitizeErrorMessage(ownershipErr.message));
+    return res.status(500).json({ error: 'RAG query failed: ownership check unavailable.' });
+  }
 
   const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
 
@@ -1679,7 +1697,7 @@ app.post('/api/rag/query', requireApiKey, async (req, res) => {
     const aiResponse = await fetchWithTimeout(`${baseUrl}/api/rag/query`, {
       validate: false,
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
+      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '', 'x-client-id': req.clientId || '' },
       body: JSON.stringify({ question, repo_url: repoUrl })
     }, 30000);
 
