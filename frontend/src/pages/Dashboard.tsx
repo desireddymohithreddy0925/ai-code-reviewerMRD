@@ -669,6 +669,22 @@ export default function Dashboard() {
     e.preventDefault();
     if (!chatInput.trim() || isChatLoading) return;
 
+    // Basic client-side scan of history for dangerous patterns
+    if (Array.isArray(chatHistory) && chatHistory.length > 0) {
+      const lowMsg = chatInput.toLowerCase();
+      for (const entry of chatHistory) {
+        if (entry?.content) {
+          for (const phrase of ['ignore all instructions', 'ignore previous', 'forget everything', 'you are now', 'new instructions']) {
+            if (entry.content.toLowerCase().includes(phrase) || lowMsg.includes(phrase)) {
+              setApiError('Message blocked: prohibited content detected.');
+              setIsChatLoading(false);
+              return;
+            }
+          }
+        }
+      }
+    }
+
     const userMessage = chatInput;
     setChatInput("");
 

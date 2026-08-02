@@ -1466,6 +1466,23 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
     return res.status(400).json({ error: err.message });
   }
 
+  // Validate all history messages for prompt injection, not just the current message
+  if (Array.isArray(history) && history.length > 0) {
+    for (const entry of history) {
+      if (entry && entry.content) {
+        try {
+          validatePrompt(entry.content);
+        } catch (err) {
+          return res.status(400).json({ error: `History contains prohibited content: ${err.message}` });
+        }
+      }
+    }
+    // Enforce message budget — limit history to 20 messages to prevent replay attacks
+    if (history.length > 20) {
+      history = history.slice(-20);
+    }
+  }
+
   // Use reviewQueue to serialize requests per session, preventing
   // lost-update race conditions when multiple messages arrive concurrently
   // for the same session (see issue #746). Session ownership verification
