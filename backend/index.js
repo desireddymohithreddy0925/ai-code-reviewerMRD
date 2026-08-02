@@ -2071,9 +2071,31 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
   return res.json({ success: true, message: 'Webhook received.' });
 });
 
+// Per-client quota for issue creation. The server uses a shared GITHUB_PAT,
+// so a holder of the shared API key could otherwise create issues in arbitrary
+// repositories. Binding creation to an analyzed session plus this quota keeps
+// the blast radius of any leaked key limited.
+const ISSUE_QUOTA_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const MAX_ISSUES_PER_CLIENT = 5;
+const issueQuotaByClient = new Map(); // clientId -> { windowStart, count }
+
+function consumeIssueQuota(clientId) {
+  const now = Date.now();
+  const entry = issueQuotaByClient.get(clientId);
+  if (!entry || now - entry.windowStart >= ISSUE_QUOTA_WINDOW_MS) {
+    issueQuotaByClient.set(clientId, { windowStart: now, count: 1 });
+    return true;
+  }
+  if (entry.count >= MAX_ISSUES_PER_CLIENT) {
+    return false;
+  }
+  entry.count += 1;
+  return true;
+}
+
 // ≡ƒƒó Route: Create GitHub Issue automatically for Code Reviews
 app.post('/api/issues/create', requireApiKey, requireJsonContentType, issueLimiter, async (req, res) => {
-  const { repoUrl, title, body, labels = [] } = req.body;
+  const { repoUrl, title, body, labels = [], sessionId, sessionOwnerToken } = req.body;
   const token = process.env.GITHUB_PAT;
 
   if (!token) {
@@ -2105,9 +2127,51 @@ app.post('/api/issues/create', requireApiKey, requireJsonContentType, issueLimit
   const owner = parsed.owner;
   const repo = parsed.repo;
 
+  // The target repo must match the repository this caller actually analyzed in
+  // their own session. Without this binding, any holder of the shared API key
+  // could use the server's PAT to open issues in arbitrary repositories.
+  if (!isValidUuid(sessionId)) {
+    return res.status(400).json({ error: 'sessionId is required and must be a valid UUID.' });
+  }
+  if (!sessionOwnerToken || typeof sessionOwnerToken !== 'string') {
+    return res.status(403).json({ error: 'Access denied: sessionOwnerToken is required.' });
+  }
+
   try {
+    const session = await Session.findOne({ sessionId }).lean();
+    if (!session) {
+      return res.status(403).json({ error: 'Access denied: session not found or expired. Please analyze a repository first.' });
+    }
+    if (!session.ownerToken) {
+      return res.status(403).json({ error: 'Access denied: session has no ownership token.' });
+    }
+    const providedBuf = Buffer.from(sessionOwnerToken, 'utf8');
+    const storedBuf = Buffer.from(String(session.ownerToken), 'utf8');
+    if (providedBuf.length !== storedBuf.length || !crypto.timingSafeEqual(providedBuf, storedBuf)) {
+      console.warn(`ΓÜá Session ownership mismatch for issue creation: session ${sessionId}`);
+      return res.status(403).json({ error: 'Access denied: this session does not belong to you.' });
+    }
+
+    const analyzed = parseRepoUrl(session.repoUrl);
+    if (!analyzed || analyzed.owner !== owner || analyzed.repo !== repo) {
+      return res.status(403).json({ error: 'Access denied: you can only create issues for the repository you analyzed in your session.' });
+    }
+
+    if (!consumeIssueQuota(req.clientId || 'unknown')) {
+      return res.status(429).json({ error: 'Issue creation limit reached for this session. Try again later.' });
+    }
+
     const octokit = new Octokit({ auth: token });
-    
+
+    // Verify the PAT can actually access the target repo before creating.
+    // Fails closed with a generic message so we don't leak repo existence.
+    try {
+      await octokit.rest.repos.get({ owner, repo });
+    } catch (patErr) {
+      console.warn(`ΓÜá Issue creation blocked: server token cannot access ${owner}/${repo}: ${patErr.message}`);
+      return res.status(403).json({ error: 'Access denied: the server token cannot access this repository.' });
+    }
+
     console.log(`≡ƒñû Creating GitHub Issue in ${owner}/${repo}: "${title}"`);
     
     const response = await octokit.rest.issues.create({
@@ -2126,7 +2190,7 @@ app.post('/api/issues/create', requireApiKey, requireJsonContentType, issueLimit
 
   } catch (err) {
     console.error('Γ¥î Create GitHub Issue Error:', err.message);
-    return res.status(500).json({ error: `Failed to create issue: ${err.message}` });
+    return res.status(500).json({ error: 'Failed to create the GitHub issue. Please try again later.' });
   }
 });
 
