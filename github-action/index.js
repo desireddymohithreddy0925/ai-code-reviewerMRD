@@ -390,8 +390,8 @@ If no issues are found, reply with: { "reviews": [] }`;
             const hasReviewsArray = parsed && typeof parsed === 'object' && Array.isArray(parsed.reviews);
             if (!hasReviewsArray) {
               emptyOrUnparseable = true;
+              console.warn(`⚠️ Warning: Expected array from AI response, got something else for ${file.path}. Parsed keys: ${Object.keys(parsed || {}).join(', ')}`);
             }
-            console.warn(`⚠️ Warning: Expected array from AI response, got something else for ${file.path}. Parsed keys: ${Object.keys(parsed || {}).join(', ')}`);
           }
 
         } catch (err) {
