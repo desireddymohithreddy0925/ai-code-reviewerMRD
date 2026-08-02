@@ -840,21 +840,53 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
     console.warn(`⚠️ Failed to fetch remote HEAD for ${repoUrl}: ${err.message}`);
   }
 
-  const finalCacheKey = commitSha ? crypto.createHash('sha256').update(`${repoUrl}|${commitSha}|${model}|${language}|${company}|${validatedPrompt}|${temperature}|${maxTokens}|${batchSize}`).digest('hex') : null;
+  // The response cache key is namespaced by clientId so a cached response
+  // (and any data derived from it) is only ever served back to the caller
+  // that created it — never to a different tenant.
+  const finalCacheKey = commitSha ? crypto.createHash('sha256').update(`${repoUrl}|${req.clientId}|${commitSha}|${model}|${language}|${company}|${validatedPrompt}|${temperature}|${maxTokens}|${batchSize}`).digest('hex') : null;
 
   if (finalCacheKey) {
     const cachedResponse = responseCache.get(finalCacheKey);
     if (cachedResponse) {
       console.log(`🎯 Using cached final response for ${repoUrl} at ${commitSha}`);
-      if (cachedResponse.sessionPersisted && cachedResponse.csrfToken) {
-        res.cookie(CSRF_COOKIE_NAME, cachedResponse.csrfToken, {
-          httpOnly: true,
-          sameSite: 'strict',
-          path: '/',
-          secure: process.env.NODE_ENV === 'production',
-        });
+      // The cached payload never contains per-session credentials (they are
+      // stripped before caching), so nothing from the original caller can be
+      // served to this one. Regenerate a fresh, per-caller session instead.
+      const freshSessionId = crypto.randomUUID();
+      const freshOwnerToken = crypto.randomUUID();
+      const freshCsrfToken = res.locals.rotatedCsrfToken || await generateCsrfToken();
+      let persisted = false;
+      const sessionFiles = Array.isArray(cachedResponse._sessionFiles) ? cachedResponse._sessionFiles : [];
+      if (sessionFiles.length > 0) {
+        try {
+          await Session.create({
+            sessionId: freshSessionId,
+            repoUrl,
+            repoName,
+            files: sessionFiles,
+            lastAccessedAt: new Date(),
+            ownerToken: freshOwnerToken,
+            csrfToken: freshCsrfToken,
+          });
+          persisted = true;
+        } catch (sessionErr) {
+          console.warn('⚠️ Failed to persist fresh session on cached review:', sessionErr.message);
+        }
       }
-      return res.json(cachedResponse);
+      delete cachedResponse._sessionFiles;
+      res.cookie(CSRF_COOKIE_NAME, freshCsrfToken, {
+        httpOnly: false,
+        sameSite: 'strict',
+        path: '/',
+        secure: process.env.NODE_ENV === 'production',
+      });
+      return res.json({
+        ...cachedResponse,
+        sessionId: freshSessionId,
+        sessionPersisted: persisted,
+        chatAvailable: persisted,
+        ...(persisted ? { sessionOwnerToken: freshOwnerToken, csrfToken: freshCsrfToken } : {}),
+      });
     }
   }
 
@@ -1302,7 +1334,25 @@ if (reviewResult?.fileReviews) {
       };
 
       if (finalCacheKey && !reviewResult?._mock) {
-        responseCache.set(finalCacheKey, responseObject, { repoUrl });
+        // Strip per-session credentials (sessionId, sessionOwnerToken,
+        // csrfToken, sessionPersisted, chatAvailable) from the cached
+        // payload so a cache hit can never return another caller's
+        // session credentials or CSRF token. The raw files are cached
+        // under a private field so a fresh session can be created for
+        // the next caller on a cache hit; the field is deleted before
+        // the response is returned.
+        const cachedPayload = {
+          ...responseObject,
+          sessionId: undefined,
+          sessionOwnerToken: undefined,
+          csrfToken: undefined,
+          sessionPersisted: false,
+          chatAvailable: false,
+        };
+        if (sessionPersisted && Array.isArray(storedFiles) && storedFiles.length > 0) {
+          cachedPayload._sessionFiles = storedFiles;
+        }
+        responseCache.set(finalCacheKey, cachedPayload, { repoUrl });
       }
 
       return res.json(responseObject);
