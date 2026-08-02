@@ -1,3 +1,5 @@
+import { registerTimer } from './timerRegistry.js';
+
 class DedupStore {
   constructor(redisClient) {
     this.redisClient = redisClient;
@@ -162,14 +164,14 @@ class DedupStore {
 
   _startSweeper(intervalMs = 60000) {
     if (this._sweeper) return;
-    this._sweeper = setInterval(() => {
+    this._sweeper = registerTimer(setInterval(() => {
       const now = Date.now();
       for (const [key, entry] of this.memoryStore) {
         if (now > entry.expiresAt) {
           this.memoryStore.delete(key);
         }
       }
-    }, intervalMs);
+    }, intervalMs));
     if (this._sweeper.unref) this._sweeper.unref();
   }
 
