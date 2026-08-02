@@ -104,7 +104,7 @@ GITHUB_WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 # Single source of truth — loaded from shared-safety-config.json
 _SHARED_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'shared-safety-config.json')
 try:
-    with open(_SHARED_CONFIG_PATH) as _f:
+    with open(_SHARED_CONFIG_PATH, encoding="utf-8") as _f:
         _shared_config = json.load(_f)
     _REQUIRED_KEYS = {'homoglyph_map', 'dangerous_phrases', 'version'}
     _missing = _REQUIRED_KEYS - set(_shared_config.keys())
