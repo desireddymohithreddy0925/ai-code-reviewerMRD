@@ -114,7 +114,8 @@ jobs:
           echo "=== Running pytest collection check ==="
           python -m pytest tests/ --collect-only -v
           echo "=== Running pytest ==="
-          python -m pytest --cov=./ --cov-report=xml tests/ -v
+          set -o pipefail
+          python -m pytest --cov=./ --cov-report=xml tests/ -v 2>&1 | tee test_output.log
 
       - name: Upload test diagnostics
         if: always()
