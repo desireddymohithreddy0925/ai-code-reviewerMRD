@@ -705,14 +705,10 @@ export default function Dashboard() {
 
       const data = await response.json();
       const sources = data.sources || [];
-      setChatHistory((prev) => {
-        const updated = truncateChatHistory([
-          ...prev,
-          { role: "assistant" as const, content: data.response ?? data.message ?? "", sources: sources.length > 0 ? sources : undefined },
-        ]);
-        if (!safeSetItem(CHAT_HISTORY_KEY, JSON.stringify(updated))) setStorageWarning(true);
-        return updated;
-      });
+      setChatHistory((prev) => truncateChatHistory([
+        ...prev,
+        { role: "assistant" as const, content: data.response ?? data.message ?? "", sources: sources.length > 0 ? sources : undefined },
+      ]));
     } catch (err: unknown) {
       console.error(err);
       let errMsg = (err instanceof Error ? err.message : String(err)) || "Chat service unavailable.";
