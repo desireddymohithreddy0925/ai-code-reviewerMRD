@@ -29,7 +29,14 @@ export function parseDiff(diffStr) {
       }
     } else if (line.startsWith('Binary files')) {
       if (currentFile) {
-        binaryFiles.push(currentFile.path);
+        if (!binaryFiles.includes(currentFile.path)) {
+          binaryFiles.push(currentFile.path);
+        }
+        const idx = files.indexOf(currentFile);
+        if (idx !== -1) {
+          files.splice(idx, 1);
+        }
+        currentFile = null;
       }
     } else if (currentFile) {
       if (line.startsWith('+') && !line.startsWith('+++')) {
