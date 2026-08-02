@@ -435,18 +435,12 @@ _rate_limit_store: OrderedDict[str, list[float]] = OrderedDict()
 _rate_limit_lock = asyncio.Lock()
 
 def _resolve_client_ip(request: Request) -> str:
-    xff = request.headers.get("x-forwarded-for", "").strip()
-    if xff:
-        candidates = [ip.strip() for ip in xff.split(",") if ip.strip()]
-        if candidates:
-            # X-Forwarded-For lists the original client first; each proxy
-            # appends its own address to the right. Leftmost = client.
-            raw_ip = candidates[0]
-            try:
-                ipaddress.ip_address(raw_ip)
-                return raw_ip
-            except ValueError:
-                pass
+    # Rate limiting must be keyed on the actual socket peer, NOT on a
+    # client-supplied X-Forwarded-For header. A client that connects directly
+    # controls every XFF entry and can rotate a spoofed IP per request to get
+    # a fresh rate-limit bucket each time. uvicorn resolves request.client.host
+    # from the socket peer, or from X-Forwarded-For only when the request
+    # arrives from a proxy listed in forwarded_allow_ips (see uvicorn.run).
     if request.client and request.client.host:
         try:
             ipaddress.ip_address(request.client.host)
@@ -1700,4 +1694,17 @@ async def github_webhook(request: Request):
 if __name__ == "__main__":
     import uvicorn
     reload_enabled = os.getenv("UVICORN_RELOAD", "false").lower() == "true"
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=reload_enabled, proxy_headers=True, forwarded_allow_ips="*")
+    # Only trust proxy headers (X-Forwarded-For) from known reverse proxies.
+    # Never use "*": a directly-connected client can spoof X-Forwarded-For to
+    # rotate the IP used for rate limiting and bypass the per-client bucket.
+    # Set TRUSTED_PROXY_IPS to a comma-separated list of real proxy addresses
+    # when the engine runs behind a reverse proxy.
+    trusted_proxy_ips = os.getenv("TRUSTED_PROXY_IPS", "127.0.0.1,::1")
+    uvicorn.run(
+        "app:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=reload_enabled,
+        proxy_headers=True,
+        forwarded_allow_ips=trusted_proxy_ips,
+    )
