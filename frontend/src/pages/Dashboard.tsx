@@ -968,7 +968,8 @@ export default function Dashboard() {
       }
       URL.revokeObjectURL(url);
     }
-  }, [analysisResult]);
+  }
+
 
   const chatInputEmpty = !chatInput.trim();
 
