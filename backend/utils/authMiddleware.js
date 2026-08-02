@@ -136,11 +136,20 @@ export const requireApiKey = (req, res, next) => {
   }
 
   if (providedKey && safeEqual(providedKey, validKey)) {
-    // API key auth without cookie — derive clientId from a fresh UUID
-    // so that any session created with this clientId is unique to this
-    // request. The next response's Set-Cookie will bind subsequent
-    // requests to the cookie's uid.
-    req.clientId = crypto.randomUUID();
+    // API key auth without cookie. The shared API key is identical for every
+    // cookie-less caller, so a per-request UUID would give each request a
+    // fresh identity and defeat the concurrency throttle (and every other
+    // per-user budget keyed on clientId). Derive a stable clientId from the
+    // API key and the caller's IP instead: the same caller always resolves to
+    // the same key, so limits actually engage, while different IPs still get
+    // distinct identities. req.ip is the trust-proxy-resolved client address
+    // (the raw X-Forwarded-For leftmost entry is never used, matching the
+    // rate-limiter contract).
+    const callerIp = req.ip || req.socket?.remoteAddress || 'unknown';
+    req.clientId = crypto
+      .createHash('sha256')
+      .update(`${providedKey}:${callerIp}`)
+      .digest('hex');
     next();
     return;
   }
