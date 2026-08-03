@@ -1924,6 +1924,28 @@ const webhookLimiter = rateLimit({
   message: { error: 'Too many webhook requests.' }
 });
 
+// Per-repository rate limit for the /ai-review manual trigger. The trigger
+// re-runs the full review pipeline, so an attacker commenting "/ai-review" on
+// many PRs (or repeatedly on one) must not be able to spam the shared PAT.
+const manualTriggerCounts = new Map(); // `${owner}/${repo}` -> { windowStart, count }
+const MANUAL_TRIGGER_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const MANUAL_TRIGGER_MAX = 3;
+
+function consumeManualTrigger(owner, repo) {
+  const now = Date.now();
+  const key = `${owner}/${repo}`;
+  const entry = manualTriggerCounts.get(key);
+  if (!entry || now - entry.windowStart >= MANUAL_TRIGGER_WINDOW_MS) {
+    manualTriggerCounts.set(key, { windowStart: now, count: 1 });
+    return true;
+  }
+  if (entry.count >= MANUAL_TRIGGER_MAX) {
+    return false;
+  }
+  entry.count += 1;
+  return true;
+}
+
 app.get('/api/roi', async (req, res) => {
   try {
     const metrics = await RoiMetrics.find({});
@@ -2029,6 +2051,11 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
         const repo = payload.repository.name;
         const pullNumber = payload.issue.number;
         console.log(`Manual trigger /ai-review detected on PR #${pullNumber}`);
+
+        if (!consumeManualTrigger(owner, repo)) {
+          console.warn(`ΓÜá Manual /ai-review trigger limit reached for ${owner}/${repo}.`);
+          return res.json({ message: "Manual review trigger limit reached for this repository. Try again later." });
+        }
         
         try {
           const octokit = new Octokit({ auth: process.env.GITHUB_PAT });
@@ -2423,6 +2450,37 @@ app.post('/api/cache/invalidate', requireApiKey, cacheInvalidateLimiter, async (
 
 // Webhook review queueing uses ReviewQueue from reviewQueue.js (per-key mutex)
 
+// Hard cap on inline comments posted per review. The shared GITHUB_PAT is
+// shared across every repository, so unbounded comment volume on a single PR
+// would exhaust the token's GitHub API rate budget and DoS the bot globally.
+// GitHub also only allows 50 comments per review via the REST API.
+const MAX_COMMENTS_PER_REVIEW = 50;
+
+// Per-PR posting throttle with exponential backoff. After a failed review
+// post, subsequent attempts for the same PR are skipped until the backoff
+// window elapses, preventing rapid-fire retry loops under the shared PAT.
+const POSTING_BACKOFF_BASE_MS = 30 * 1000;
+const POSTING_BACKOFF_MAX_MS = 30 * 60 * 1000;
+const prPostingState = new Map(); // `${owner}/${repo}#${pull}` -> { nextAllowedAt, backoffMs }
+
+function isPrPostingBlocked(prKey, now = Date.now()) {
+  const state = prPostingState.get(prKey);
+  return !!(state && state.nextAllowedAt > now);
+}
+
+function recordPrPostingAttempt(prKey, failed, now = Date.now()) {
+  if (!failed) {
+    prPostingState.delete(prKey);
+    return;
+  }
+  const state = prPostingState.get(prKey) || { backoffMs: 0 };
+  const nextBackoff = Math.min(
+    POSTING_BACKOFF_MAX_MS,
+    Math.max(POSTING_BACKOFF_BASE_MS, state.backoffMs * 2 || POSTING_BACKOFF_BASE_MS)
+  );
+  prPostingState.set(prKey, { nextAllowedAt: now + nextBackoff, backoffMs: nextBackoff });
+}
+
 // Custom repository rules (.ai-reviewer.yml / .github/ai-reviewer.md) are
 // fetched from the PR head sha, which is attacker-controlled in fork PRs.
 // They are configuration, not instructions: cap their size and strip
@@ -2533,6 +2591,10 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
   const commentsToPost = [];
   const filesToReview = [];
   const validChangedLines = new Map();
+  // Inline comments from the local scanners whose position is not part of the
+  // diff (or that fall outside the per-review cap) are dropped instead of being
+  // posted, so we never send GitHub API calls with invalid line locations.
+  let discardedLocalComments = 0;
 
   for (const file of parsedFiles) {
     // Check if file is supported
@@ -2546,6 +2608,11 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     // Run local secrets scanner
     const { findings: secretFindings, truncated: scanTruncated, totalChanges: scanTotal, skippedReason: scanReason } = scanSecretsInChanges(file.changes);
     secretFindings.forEach(f => {
+      const validLines = validChangedLines.get(file.path);
+      if (!validLines || !validLines.has(Number(f.line))) {
+        discardedLocalComments++;
+        return;
+      }
       commentsToPost.push({
         path: file.path,
         line: f.line,
@@ -2560,9 +2627,15 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     const fileContent = file.changes.map(c => c.content).join('\n');
     const injectionWarnings = scanFileContentForWarnings(fileContent);
     injectionWarnings.forEach(warning => {
+      const validLines = validChangedLines.get(file.path);
+      const injectionLine = file.changes[0]?.line || 1;
+      if (!validLines || !validLines.has(Number(injectionLine))) {
+        discardedLocalComments++;
+        return;
+      }
       commentsToPost.push({
         path: file.path,
-        line: file.changes[0]?.line || 1,
+        line: injectionLine,
         body: `<!-- RepoSage Review Comment -->\n⚠️ **Prompt Injection Warning:** ${warning}`
       });
     });
@@ -2577,6 +2650,10 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       path: file.path,
       changes: file.changes.map(c => ({ line: c.line, content: c.content }))
     });
+  }
+
+  if (discardedLocalComments > 0) {
+    console.warn(`ΓÜá∩╕Å ${discardedLocalComments} local scanner comments dropped because their positions were not part of the diff`);
   }
 
   // Track whether the AI engine was successfully queried
@@ -2764,6 +2841,19 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
   }
 
   // 3. Post consolidated review comment back to GitHub PR
+  const prKey = `${owner}/${repo}#${pullNumber}`;
+  if (isPrPostingBlocked(prKey)) {
+    console.warn(`⏳ Skipping review posting for ${prKey} — posting rate limit / backoff active.`);
+    return;
+  }
+
+  // Enforce the hard per-review comment cap. Anything beyond the cap is
+  // dropped so the number of GitHub API calls per event stays bounded.
+  if (commentsToPost.length > MAX_COMMENTS_PER_REVIEW) {
+    console.warn(`⚠️ Capping ${commentsToPost.length} comments to ${MAX_COMMENTS_PER_REVIEW} for PR #${pullNumber}.`);
+    commentsToPost.length = MAX_COMMENTS_PER_REVIEW;
+  }
+
   if (commentsToPost.length > 0) {
     console.log(`Γ£ì∩╕Å Posting PR Review with ${commentsToPost.length} inline comments...`);
 
@@ -2787,6 +2877,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       
       const reviewEvent = 'COMMENT';
 
+      let batchPosted = false;
       try {
         const { data: createdReview } = await octokit.rest.pulls.createReview({
           owner,
@@ -2798,24 +2889,34 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
           comments: batch
         });
         postedReviewIds.push(createdReview.id);
+        batchPosted = true;
       } catch (reviewErr) {
-        console.warn(`⚠️ Batched review creation failed (${reviewErr.message}); retrying comments individually and skipping invalid ones.`);
-        for (const comment of batch) {
-          try {
-            const { data: singleReview } = await octokit.rest.pulls.createReview({
-              owner,
-              repo,
-              pull_number: pullNumber,
-              commit_id: headSha,
-              event: 'COMMENT',
-              body: `## 🛡️ RepoSage AI Code Review Audit Completed!\n\n${body}`,
-              comments: [comment]
-            });
-            postedReviewIds.push(singleReview.id);
-          } catch (commentErr) {
-            console.warn(`⚠️ Skipping invalid inline comment on ${comment.path}:${comment.line} — ${commentErr.message}`);
-          }
+        // Do NOT retry every comment as its own API call: on a batch failure
+        // that could multiply to 50 extra calls per batch under the shared
+        // PAT. Instead post a single fallback COMMENT review that lists the
+        // findings as text, and back off further posting attempts for this PR.
+        console.warn(`⚠️ Batched review creation failed (${reviewErr.message}); posting a single fallback review instead of per-comment retries.`);
+        try {
+          const fallbackBody =
+            `## 🛡️ RepoSage AI Code Review — Inline Comments Unavailable\n\n` +
+            `The bot could not post inline review comments on this batch (${batch.length} of ${commentsToPost.length} findings) because some positions were not part of the diff. The findings are listed below for manual review:\n\n` +
+            batch.map(c => `- **\`${c.path}:${c.line}\`**\n\n${c.body}`).join('\n\n');
+          const { data: fallbackReview } = await octokit.rest.pulls.createReview({
+            owner,
+            repo,
+            pull_number: pullNumber,
+            commit_id: headSha,
+            event: 'COMMENT',
+            body: fallbackBody
+          });
+          postedReviewIds.push(fallbackReview.id);
+        } catch (fallbackErr) {
+          console.warn(`⚠️ Fallback review also failed for PR #${pullNumber}: ${fallbackErr.message}`);
+          recordPrPostingAttempt(prKey, true);
         }
+      }
+      if (batchPosted) {
+        recordPrPostingAttempt(prKey, false);
       }
     }
     
