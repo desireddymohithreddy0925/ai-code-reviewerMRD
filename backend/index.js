@@ -1962,9 +1962,9 @@ function consumeManualTrigger(owner, repo) {
   return true;
 }
 
-app.get('/api/roi', roiLimiter, async (req, res) => {
+app.get('/api/roi', requireApiKey, roiLimiter, async (req, res) => {
   try {
-    const metrics = await RoiMetrics.find({});
+    const metrics = await RoiMetrics.find({ clientId: req.clientId });
     
     const aggregated = metrics.reduce((acc, curr) => {
       acc.totalPrsReviewed += curr.totalPrsReviewed;
@@ -2161,7 +2161,7 @@ app.post('/api/webhook', webhookLimiter, webhookRateLimiter, async (req, res) =>
       const repoName = payload.repository?.full_name;
       if (repoName) {
         console.log(`Tracking resolved AI comment for ROI on ${repoName}`);
-        await RoiMetrics.recordAcceptedSuggestion(repoName).catch(e => console.error("ROI tracking error", e));
+        await RoiMetrics.recordAcceptedSuggestion('system', repoName).catch(e => console.error("ROI tracking error", e));
       }
     }
     
@@ -2947,7 +2947,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     
     // Log metrics for ROI Dashboard
     const repoName = `${owner}/${repo}`;
-    await RoiMetrics.recordPrReview(repoName, commentsToPost.length).catch(e => console.error("ROI tracking error", e));
+    await RoiMetrics.recordPrReview('system', repoName, commentsToPost.length).catch(e => console.error("ROI tracking error", e));
 
   } else if (filesToReview.length === 0) {
     // Every file in the diff was excluded or unsupported — no AI analysis
@@ -3372,6 +3372,7 @@ app.get('/api/analytics/trends', requireApiKey, async (req, res) => {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     const matchFilter = {
+      clientId: req.clientId,
       analyzedAt: { $gte: thirtyDaysAgo },
     };
 
