@@ -19,7 +19,10 @@ function stableClientIdForApiKey(apiKey, ip) {
 }
 
 function makeReqRes(clientId) {
-  const req = { clientId };
+  const req = { 
+    clientId,
+    on(event, cb) { return this; }
+  };
   const res = {
     statusCode: 200,
     jsonBody: null,

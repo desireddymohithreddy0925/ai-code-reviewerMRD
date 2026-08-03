@@ -12,6 +12,8 @@ test('isValidGithubToken rejects invalid or malformed tokens', () => {
   assert.equal(isValidGithubToken(null), false);
   assert.equal(isValidGithubToken(''), false);
   assert.equal(isValidGithubToken('invalid_prefix_12345'), false);
+});
+
 test('isValidGithubToken accepts valid token formats', () => {
   assert.equal(isValidGithubToken('ghp_1234567890abcdefghijklmnopqrstuvwxyz'), true);
   assert.equal(isValidGithubToken('gho_1234567890abcdefghijklmnopqrstuvwxyz'), true);
