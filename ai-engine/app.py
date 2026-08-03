@@ -1361,7 +1361,16 @@ async def chat_inline(request: ChatInlineRequest, api_key: str = Depends(verify_
         raise HTTPException(status_code=500, detail="Groq API client is not configured on this engine.")
     
     groq_model = get_groq_model(request.model)
-    
+
+    # Untrusted PR context (diff hunk + developer message) is neutralized before it
+    # reaches the model so prompt-injection payloads (e.g. "ignore previous
+    # instructions") cannot escape the code-review sandbox. Mirrors /chat and
+    # /review-diff handling.
+    diff_hunk_sanitized = sanitize_file_content(request.diff_hunk)
+    message_sanitized = request.message
+    for phrase in DANGEROUS_PATTERNS:
+        message_sanitized = _neutralize_pattern(message_sanitized, phrase)
+
     chat_prompt = f"""You are a helpful Senior Software Engineer acting as a Pull Request reviewer.
 A developer has asked a question or replied to an AI comment on a specific code snippet.
 
@@ -1369,11 +1378,11 @@ File: {request.file_path}
 
 Diff Hunk context:
 ```
-{request.diff_hunk}
+{diff_hunk_sanitized}
 ```
 
 Developer's message:
-"{request.message}"
+"{message_sanitized}"
 
 Please respond directly to the developer's message, keeping your tone helpful, constructive, and concise. Provide code examples if appropriate. Output strictly your reply in JSON format with a single key "reply" containing your response text.
 """
@@ -1392,7 +1401,7 @@ Please respond directly to the developer's message, keeping your tone helpful, c
             raise HTTPException(status_code=502, detail="Groq returned empty response.")
         
         data = json.loads(content)
-        return {"reply": data.get("reply", "I couldn't process that request.")}
+        return {"reply": sanitize_ai_output(data.get("reply") or "I couldn't process that request.")}
     except HTTPException:
         raise
     except Exception as e:
@@ -1405,14 +1414,17 @@ async def summarize_pr(request: SummarizeRequest):
         raise HTTPException(status_code=500, detail="Groq API client is not configured on this engine.")
     
     groq_model = get_groq_model(request.model)
-    
+
+    # Untrusted PR diff is neutralized before reaching the model (see /chat-inline).
+    diff_sanitized = sanitize_file_content(request.diff)
+
     summary_prompt = f"""You are a Senior Staff Engineer.
 Generate a concise, high-level summary of the architectural and functional changes in this Pull Request based on the following diff.
 Use a bulleted list. Limit to 3-5 concise bullet points. Avoid extremely minor details unless they are critical.
 
 Diff:
 ```
-{request.diff}
+{diff_sanitized}
 ```
 
 Format your JSON precisely as:
@@ -1435,7 +1447,7 @@ Format your JSON precisely as:
             raise HTTPException(status_code=502, detail="Groq returned empty response.")
         
         data = json.loads(content)
-        return {"summary": data.get("summary", "")}
+        return {"summary": sanitize_ai_output(data.get("summary") or "")}
     except HTTPException:
         raise
     except Exception as e:
