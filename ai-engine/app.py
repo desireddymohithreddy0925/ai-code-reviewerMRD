@@ -17,7 +17,7 @@ from collections import OrderedDict
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import List, Optional, Set
 from groq import Groq
 from dotenv import load_dotenv
@@ -555,12 +555,34 @@ else:
     print("⚠️ GROQ_API_KEY not found in environment. Running in sandbox mode.")
 
 # Data Models
+
+# Server-side request size limits (#3623). The backend truncates file content
+# to ~50k chars per file before calling the engine, but direct callers of the
+# engine are unrestricted. Cap file name/content lengths, the number of
+# files/chunks, chat history, and the total content size so an API-key holder
+# cannot drive unbounded memory/CPU usage on /analyze, /chat, /extract,
+# /review-diff, /api/rag/split and /api/rag/ingest.
+MAX_FILE_NAME_LENGTH = 512
+MAX_FILE_CONTENT_LENGTH = 200000
+MAX_FILES_PER_REQUEST = 100
+MAX_CHANGES_PER_FILE = 5000
+MAX_CHUNKS_PER_REQUEST = 5000
+MAX_CHAT_HISTORY_LENGTH = 50
+MAX_TOTAL_CONTENT_CHARS = 5_000_000
+
 class FileItem(BaseModel):
-    name: str
-    content: str
+    name: str = Field(max_length=MAX_FILE_NAME_LENGTH)
+    content: str = Field(max_length=MAX_FILE_CONTENT_LENGTH)
+
+def _validate_total_content_size(files: List[FileItem]) -> None:
+    total = sum(len(f.content) for f in files)
+    if total > MAX_TOTAL_CONTENT_CHARS:
+        raise ValueError(
+            f"Total size of file contents exceeds the allowed limit of {MAX_TOTAL_CONTENT_CHARS} characters"
+        )
 
 class AnalyzeRequest(BaseModel):
-    files: List[FileItem]
+    files: List[FileItem] = Field(..., max_length=MAX_FILES_PER_REQUEST)
     company: Optional[str] = "General"
     language: Optional[str] = "English"
     model: Optional[str] = "llama-3.3-70b-versatile"
@@ -587,12 +609,16 @@ class AnalyzeRequest(BaseModel):
         if not re.match(r"^[\w./\-]+$", v):
             raise ValueError("Reference contains invalid characters (allowed: alphanumeric, underscore, dot, slash, hyphen)")
         return v
-    
+
+    @model_validator(mode="after")
+    def _check_total_content(self):
+        _validate_total_content_size(self.files)
+        return self
 
 class ChatRequest(BaseModel):
-    files: List[FileItem]
+    files: List[FileItem] = Field(..., max_length=MAX_FILES_PER_REQUEST)
     message: str
-    history: Optional[List[dict]] = Field(default_factory=list)
+    history: Optional[List[dict]] = Field(default_factory=list, max_length=MAX_CHAT_HISTORY_LENGTH)
     model: Optional[str] = "llama-3.3-70b-versatile"
     temperature: Optional[float] = Field(default=0.4, ge=0, le=2)
     maxTokens: Optional[int] = Field(default=2048, ge=1, le=8192)
@@ -600,6 +626,11 @@ class ChatRequest(BaseModel):
     systemPrompt: Optional[str] = ""
     repo_url: Optional[str] = None
     rag_sources: Optional[List[dict]] = Field(default=None, description="Source citations from RAG query")
+
+    @model_validator(mode="after")
+    def _check_total_content(self):
+        _validate_total_content_size(self.files)
+        return self
 
 # 🟢 Route: Root Check
 @app.get("/")
@@ -1278,7 +1309,7 @@ Guidelines:
 
 class DiffChange(BaseModel):
     line: int
-    content: str
+    content: str = Field(max_length=MAX_FILE_CONTENT_LENGTH)
 
 # Custom repository rules arrive from the PR head sha (attacker-controlled in
 # fork PRs). They are configuration, never instructions: cap their size and
@@ -1305,14 +1336,23 @@ def sanitize_custom_rules(rules):
     return result or None
 
 class FileChanges(BaseModel):
-    path: str
-    changes: List[DiffChange]
+    path: str = Field(max_length=MAX_FILE_NAME_LENGTH)
+    changes: List[DiffChange] = Field(..., max_length=MAX_CHANGES_PER_FILE)
 
 class ReviewDiffRequest(BaseModel):
-    files: List[FileChanges]
+    files: List[FileChanges] = Field(..., max_length=MAX_FILES_PER_REQUEST)
     model: Optional[str] = "llama-3.3-70b-versatile"
     custom_rules: Optional[str] = None
     security_mode: Optional[bool] = False
+
+    @model_validator(mode="after")
+    def _check_total_content(self):
+        total = sum(len(c.content) for f in self.files for c in f.changes)
+        if total > MAX_TOTAL_CONTENT_CHARS:
+            raise ValueError(
+                f"Total size of diff contents exceeds the allowed limit of {MAX_TOTAL_CONTENT_CHARS} characters"
+            )
+        return self
 
 class CleanupRequest(BaseModel):
     current_files: List[str]
@@ -1613,10 +1653,15 @@ If no issues are found, reply with: {{ "reviews": [] }}"""
     return result
 
 class SplitRequest(BaseModel):
-    files: List[FileItem]
+    files: List[FileItem] = Field(..., max_length=MAX_FILES_PER_REQUEST)
     chunk_size: Optional[int] = Field(None, ge=1, le=100000)
     chunk_overlap: Optional[int] = Field(None, ge=0, le=99999)
     repo_url: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _check_total_content(self):
+        _validate_total_content_size(self.files)
+        return self
 
 
 class SplitResponse(BaseModel):
@@ -1626,14 +1671,14 @@ class SplitResponse(BaseModel):
 
 
 class ChunkItem(BaseModel):
-    chunk_id: str
-    content: str
+    chunk_id: str = Field(max_length=MAX_FILE_NAME_LENGTH)
+    content: str = Field(max_length=MAX_FILE_CONTENT_LENGTH)
     metadata: dict
 
 
 class IngestRequest(BaseModel):
     repo_url: str
-    chunks: List[ChunkItem]
+    chunks: List[ChunkItem] = Field(..., max_length=MAX_CHUNKS_PER_REQUEST)
 
 
 class IngestionResponse(BaseModel):
@@ -1737,7 +1782,12 @@ async def get_paginated_chunks(request: PaginatedChunksRequest, x_client_id: str
 
 
 class ExtractRequest(BaseModel):
-    files: List[FileItem]
+    files: List[FileItem] = Field(..., max_length=MAX_FILES_PER_REQUEST)
+
+    @model_validator(mode="after")
+    def _check_total_content(self):
+        _validate_total_content_size(self.files)
+        return self
 
 
 class ExtractResponse(BaseModel):
