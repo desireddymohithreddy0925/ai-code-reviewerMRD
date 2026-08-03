@@ -183,6 +183,18 @@ const pdfExportLimiter = rateLimit({
   message: { error: 'Too many PDF export requests. Please slow down and retry after 1 minute.' }
 });
 
+// Strict limiter for cache invalidation — an unthrottled invalidate endpoint
+// is a cost-amplification lever (forces re-clones + LLM re-runs), so it gets
+// the same strict 10/min budget as the other expensive endpoints.
+const cacheInvalidateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: redisClient ? new RedisStore({ sendCommand: (...args) => redisClient.call(...args) }) : undefined,
+  message: { error: 'Too many cache invalidation requests. Please slow down and retry after 1 minute.' }
+});
+
 // Parse cookies for CSRF token validation
 app.use(cookieParser());
 app.use('/dashboard', express.static(path.join(__dirname, 'public/dashboard')));
@@ -1171,6 +1183,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
             files: storedFiles,
             lastAccessedAt: new Date(),
             ownerToken: sessionOwnerToken,
+            clientId: req.clientId,
             csrfToken,
           });
           sessionPersisted = true;
@@ -2263,10 +2276,25 @@ app.post('/api/issues/create', requireApiKey, requireJsonContentType, issueLimit
 });
 
 // ≡ƒƒó Route: Invalidate analysis cache by repo URL
-app.post('/api/cache/invalidate', requireApiKey, async (req, res) => {
+app.post('/api/cache/invalidate', requireApiKey, cacheInvalidateLimiter, async (req, res) => {
   const { repoUrl } = req.body;
   if (!repoUrl) {
     return res.status(400).json({ error: 'repoUrl is required.' });
+  }
+  const normalized = repoUrl.replace(/\/+$/, '').toLowerCase();
+  try {
+    const ownedSession = await Session.exists({
+      clientId: req.clientId,
+      repoUrl: { $regex: new RegExp(`^${normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/?$`, 'i') },
+    });
+    if (!ownedSession) {
+      return res.status(403).json({
+        error: 'You can only invalidate the cache for a repository you have analyzed with this client.',
+      });
+    }
+  } catch (err) {
+    console.error('⚠️ Cache invalidation ownership check failed:', err.message);
+    return res.status(500).json({ error: 'Failed to verify repository ownership.' });
   }
   const removed = analysisCache.invalidateByRepoUrl(repoUrl);
   res.json({ success: true, removed, stats: analysisCache.getStats() });
