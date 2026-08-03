@@ -6,6 +6,8 @@ class AgentState(TypedDict, total=False):
     current_index: int
     micro_reviews: List[str]
     final_review: str
+    security_flag: bool
+    security_reason: str
     pr_category: str
     is_trivial: bool
     modified_files: List[str]
