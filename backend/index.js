@@ -934,7 +934,8 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
   // Enforce boundary limits for batchSize to prevent downstream parsing crashes
   batchSize = Math.max(1, Math.min(20, parseInt(batchSize, 10) || 5));
 
-  temperature = Math.max(0, Math.min(2, parseFloat(temperature) || 0.7));
+  const parsedTemp = parseFloat(temperature);
+  temperature = Math.max(0, Math.min(2, Number.isNaN(parsedTemp) ? 0.7 : parsedTemp));
 
   const AI_ENGINE_MAX_TOKENS = parseInt(process.env.AI_ENGINE_MAX_TOKENS, 10) || 32768;
   maxTokens = Math.max(1, Math.min(AI_ENGINE_MAX_TOKENS, parseInt(maxTokens, 10) || 2048));
@@ -1598,7 +1599,8 @@ app.post('/api/analyze-file', requireApiKey, requireJsonContentType, concurrency
     }
 
     batchSize = Math.max(1, Math.min(20, parseInt(batchSize, 10) || 5));
-    temperature = Math.max(0, Math.min(2, parseFloat(temperature) || 0.7));
+    const parsedTemp = parseFloat(temperature);
+  temperature = Math.max(0, Math.min(2, Number.isNaN(parsedTemp) ? 0.7 : parsedTemp));
     const AI_ENGINE_MAX_TOKENS = parseInt(process.env.AI_ENGINE_MAX_TOKENS, 10) || 32768;
     maxTokens = Math.max(1, Math.min(AI_ENGINE_MAX_TOKENS, parseInt(maxTokens, 10) || 2048));
 
@@ -1719,7 +1721,8 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
     model = chatNormalized;
   }
 
-  temperature = Math.max(0, Math.min(2, parseFloat(temperature) || 0.7));
+  const parsedTemp = parseFloat(temperature);
+  temperature = Math.max(0, Math.min(2, Number.isNaN(parsedTemp) ? 0.7 : parsedTemp));
   maxTokens = Math.max(1, Math.min(128000, parseInt(maxTokens, 10) || 2048));
 
   if (!message) {
