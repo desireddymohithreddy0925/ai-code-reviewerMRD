@@ -16,3 +16,4 @@ class AgentState(TypedDict, total=False):
     detected_secrets: List[str]
     has_leaked_secrets: bool
     security_alert: Optional[str]
+    ast_context: str
