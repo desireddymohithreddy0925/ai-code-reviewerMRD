@@ -15,7 +15,9 @@ import request from 'supertest';
 const originalWarn = console.warn;
 console.warn = () => {};
 
-const apiRefApp = (await import('../routes/apiReference.js')).default;
+const apiRefApp = express();
+apiRefApp.set('trust proxy', 1);
+apiRefApp.use('/api', apiRouter);
 
 test('app is an Express application', () => {
   assert.ok(apiRefApp, 'Default export should be an Express app');
