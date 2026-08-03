@@ -406,12 +406,16 @@ def verify_api_key(x_api_key: str = Header(None)):
     if expected_key and not hmac.compare_digest(x_api_key or "", expected_key):
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
+def _auth_bypass_enabled():
+    # Explicit, opt-in bypass for the test suite only. It is set in
+    # tests/conftest.py and must never be inherited by a production entrypoint;
+    # auth fails closed by default.
+    return os.getenv("AI_ENGINE_AUTH_DISABLED", "").strip().lower() in ("1", "true", "yes")
+
 def verify_rag_ingest_key(x_rag_ingest_key: str = Header(None)):
     expected_key = os.getenv("RAG_INGEST_KEY")
     if not expected_key:
-        # For testing, we only want to error if the test expects it to be configured
-        import sys
-        if "pytest" in sys.modules:
+        if _auth_bypass_enabled():
             return
         raise HTTPException(status_code=500, detail="RAG ingest key is not configured.")
     if x_rag_ingest_key != expected_key:
@@ -525,8 +529,7 @@ async def cancel_rate_limit_cleanup():
 async def require_api_key(request: Request, call_next):
     if request.url.path == "/" or request.url.path == "/docs" or request.url.path == "/health" or request.url.path.startswith("/openapi"):
         return await call_next(request)
-    import sys
-    if "pytest" in sys.modules:
+    if _auth_bypass_enabled():
         return await call_next(request)
         
     if not API_KEY:
