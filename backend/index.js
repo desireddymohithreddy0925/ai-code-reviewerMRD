@@ -457,13 +457,50 @@ app.post('/api/session', requireApiKey, async (req, res) => {
   return res.json({ success: true, csrfToken, clientId: result.clientId });
 });
 
-// Logout endpoint ΓÇö clears session and CSRF token
+// Logout endpoint ΓÇö clears session and CSRF token, and revokes the
+// server-side Session document. Previously logout only cleared cookies/CSRF
+// tokens, leaving the sessionId + sessionOwnerToken pair valid for chat for
+// up to 24h even after the user logged out (issue #3553). The client is
+// expected to send sessionId + sessionOwnerToken (persisted in localStorage)
+// so the analyzed repository context is revoked server-side.
 app.post('/api/logout', requireApiKey, async (req, res) => {
   const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
   if (cookieToken) {
     await csrfTokenStore.delete(cookieToken);
     await csrfGraceTokenStore.delete(cookieToken);
   }
+
+  const { sessionId, sessionOwnerToken } = req.body || {};
+
+  // Revoke the server-side session if the caller supplies its credentials.
+  // The ownerToken is verified with a timing-safe comparison before the
+  // session is deleted, so one user cannot revoke another user's session.
+  if (sessionId) {
+    if (!isValidUuid(sessionId)) {
+      return res.status(400).json({ error: 'Invalid sessionId format.' });
+    }
+
+    const sessionDoc = await Session.findOne({ sessionId }).select('ownerToken').lean();
+    if (sessionDoc && sessionDoc.ownerToken) {
+      if (!sessionOwnerToken) {
+        console.warn(`ΓÜá∩╕Å Logout session revocation failed: session ${sessionId} missing sessionOwnerToken`);
+        return res.status(403).json({ error: 'Access denied: sessionOwnerToken is required to revoke this session.' });
+      }
+      const providedBuf = Buffer.from(String(sessionOwnerToken), 'utf8');
+      const storedBuf = Buffer.from(String(sessionDoc.ownerToken), 'utf8');
+      if (providedBuf.length !== storedBuf.length || !crypto.timingSafeEqual(providedBuf, storedBuf)) {
+        console.warn(`ΓÜá∩╕Å Logout session revocation denied: session ${sessionId} token does not match`);
+        return res.status(403).json({ error: 'Access denied: this session does not belong to you.' });
+      }
+    }
+
+    // Delete (or expire) the session so context.files can no longer be
+    // retrieved via /api/chat. deleteMany is safe whether or not the
+    // session doc exists (e.g. already TTL-expired).
+    await Session.deleteMany({ sessionId });
+    console.log(`ΓÜá∩╕Å Revoked server-side session ${sessionId} on logout`);
+  }
+
   res.clearCookie(CSRF_COOKIE_NAME, { path: '/' });
   res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
   return res.json({ success: true, message: 'Logged out successfully.' });
