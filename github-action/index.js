@@ -150,6 +150,11 @@ async function run() {
     console.log(`📁 Found ${parsedFiles.length} files in PR diff.`);
 
     const MAX_REVIEW_FILES = parseInt(core.getInput('max-review-files') || process.env.MAX_REVIEW_FILES || '50', 10);
+    // Per-file review limits: files larger than these are dropped from the AI
+    // review payload. Any such file makes the review partial, so the PR must
+    // never be auto-approved when a file was skipped for size.
+    const MAX_FILE_CHANGES = 300;
+    const MAX_FILE_CHANGES_TEXT = 20000;
     let totalReviewableFiles = 0;
     
     let packageContext = '';
@@ -189,6 +194,7 @@ async function run() {
     }
 
     const filesToProcess = [];
+    const skippedLargeFiles = [];
     for (const file of parsedFiles) {
       if (excludePatterns.some(regex => regex.test(file.path))) {
         console.log(`⏭️ Skipping excluded file: ${file.path}`);
@@ -213,8 +219,9 @@ async function run() {
         .map(c => `Line ${c.line}: ${c.content}`)
         .join('\n');
         
-      if (changesText.length > 20000 || file.changes.length > 300) {
+      if (changesText.length > MAX_FILE_CHANGES_TEXT || file.changes.length > MAX_FILE_CHANGES) {
         console.log(`⏭️ Skipping file too large for AI review: ${file.path} (${file.changes.length} changes, ${changesText.length} chars)`);
+        skippedLargeFiles.push(file.path);
         continue;
       }
 
@@ -583,10 +590,13 @@ Please review my feedback and suggestions below. Happy coding! 🚀
     } else if (reviewedFilesCount > 0 && successfulReviewsCount > 0) {
       console.log('🎉 No code issues or recommendations found in successful reviews. Posting review status...');
 
-      const canApprove = autoApprove && failedReviewsCount === 0 && !diffTruncated && !emptyOrUnparseable;
+      const canApprove = autoApprove && failedReviewsCount === 0 && !diffTruncated && !emptyOrUnparseable && skippedLargeFiles.length === 0;
       const reviewEvent = canApprove ? 'APPROVE' : 'COMMENT';
       const truncationWarning = diffTruncated
         ? `\n\nWARNING: **Partial Review:** This PR exceeded the review limit of ${MAX_REVIEW_FILES} files (${totalReviewableFiles} reviewable). The remaining files were **not** analyzed, so this is **not** a full approval of all changes. Please review them manually or split the PR.`
+        : '';
+      const skippedFilesWarning = skippedLargeFiles.length > 0
+        ? `\n\nWARNING: **${skippedLargeFiles.length} file(s) were skipped** for AI review because they exceeded the per-file limits (${MAX_FILE_CHANGES} changed lines or ${MAX_FILE_CHANGES_TEXT.toLocaleString()} chars of diff): ${skippedLargeFiles.join(', ')}. These changes were **not** analyzed, so this is **not** a full approval. Please review them manually or split the PR.`
         : '';
       const issuesText = reviewEvent === 'APPROVE'
         ? `🎉 Outstanding work! I have scanned the PR and found **0 issues**. Approved! 🚀`
@@ -598,13 +608,13 @@ Please review my feedback and suggestions below. Happy coding! 🚀
 
 🧐 **I have professionally reviewed and checked all your changes** to ensure they meet our project's high quality standards.
 
-${issuesText}${truncationWarning}
+${issuesText}${truncationWarning}${skippedFilesWarning}
 
 ---
 ⭐ **Support RepoSage!** If you find this AI helpful, please consider giving us a **Star** 🌟 on GitHub! Your support helps us win GSSoC '26 and grow professionally!`
       });
 
-      if (autoApprove && failedReviewsCount === 0 && !diffTruncated && !emptyOrUnparseable) {
+      if (autoApprove && failedReviewsCount === 0 && !diffTruncated && !emptyOrUnparseable && skippedLargeFiles.length === 0) {
         try {
           await provider.addLabel('gssoc:approved');
           console.log('✅ Added gssoc:approved label to PR');
