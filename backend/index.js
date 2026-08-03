@@ -72,6 +72,46 @@ const analysisCache = new AnalysisCache(ANALYSIS_CACHE_TTL_MS, 2, ANALYSIS_CACHE
 const responseCache = new AnalysisCache(ANALYSIS_CACHE_TTL_MS);
 
 // ---------------------------------------------------------------------------
+// AI engine base URL (#3622). The AI engine receives the internal
+// REPOSAGE_API_KEY header plus the full repository contents / diffs, so it must
+// never be reached over cleartext from a public host. There is intentionally NO
+// insecure http://localhost:8000 fallback: if AI_ENGINE_URL is missing, or uses
+// plaintext http for anything other than a loopback / internal Docker Compose
+// hostname, the server refuses to start instead of silently sending secrets in
+// the clear.
+// ---------------------------------------------------------------------------
+function resolveAiEngineUrl() {
+  const raw = (process.env.AI_ENGINE_URL || '').trim();
+  if (!raw) {
+    throw new Error('AI_ENGINE_URL is required. Refusing to start without a configured AI engine URL.');
+  }
+  const normalized = raw.replace(/\/+$/, '');
+  let parsed;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error(`AI_ENGINE_URL is not a valid URL: ${raw}`);
+  }
+  if (parsed.protocol !== 'https:') {
+    const host = parsed.hostname;
+    const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+    const isInternalName = host.length > 0 && !host.includes('.') && !host.includes(':');
+    if (!isLoopback && !isInternalName) {
+      throw new Error(`AI_ENGINE_URL must use HTTPS, got cleartext "${raw}". Plaintext is only allowed for loopback or internal Docker Compose hostnames.`);
+    }
+  }
+  return normalized;
+}
+
+let AI_ENGINE_BASE_URL;
+try {
+  AI_ENGINE_BASE_URL = resolveAiEngineUrl();
+} catch (err) {
+  console.error(`FATAL: ${err.message}`);
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
 // Per-caller daily analysis budget (#3549). /api/analyze and /api/analyze-file
 // clone repos server-side and fan out one LLM call per batch, so an
 // unauthenticated-by-cookie key-holder can otherwise force unbounded clones
@@ -663,7 +703,7 @@ const AI_ENGINE_HEALTH_INTERVAL = 30000;
 let aiEngineHealthy = true;
 
 const aiEngineHealthTimer = registerTimer(setInterval(async () => {
-  const baseUrl = (process.env.AI_ENGINE_URL || 'http://localhost:8000').replace(/\/+$/, '');
+  const baseUrl = (AI_ENGINE_BASE_URL).replace(/\/+$/, '');
   try {
     const resp = await fetchWithTimeout(`${baseUrl}/health`, { validate: false }, 5000);
     if (resp.ok && !aiEngineHealthy) {
@@ -1021,7 +1061,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
 
       // 2. Mocking AI Response for initial setup (or forward to FastAPI AI Engine)
       // This is a perfect placeholder where contributors can connect the FastAPI server!
-      const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+      const aiEngineUrl = AI_ENGINE_BASE_URL;
       
       let reviewResult;
       const baseUrl = aiEngineUrl.replace(/\/+$/, '');
@@ -1072,7 +1112,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
 
         reviewResult = await analysisCache.getOrSet(cacheKey, async () => {
           // 2. Mocking AI Response for initial setup (or forward to FastAPI AI Engine)
-        const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+        const aiEngineUrl = AI_ENGINE_BASE_URL;
         const baseUrl = aiEngineUrl.replace(/\/+$/, '');
         try {
           const aiResponse = await fetchWithTimeout(`${baseUrl}/analyze`, {
@@ -1185,7 +1225,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
       let ragStatus = 'skipped';
       if (!cacheHit) {
         try {
-          const baseUrl = (process.env.AI_ENGINE_URL || 'http://localhost:8000').replace(/\/+$/, '');
+          const baseUrl = (AI_ENGINE_BASE_URL).replace(/\/+$/, '');
         const splitResp = await fetchWithTimeout(`${baseUrl}/api/rag/split`, {
           validate: false,
           method: 'POST',
@@ -1504,7 +1544,7 @@ app.post('/api/analyze-file', requireApiKey, requireJsonContentType, concurrency
       }
     }
 
-    const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+    const aiEngineUrl = AI_ENGINE_BASE_URL;
     const baseUrl = aiEngineUrl.replace(/\/+$/, '');
 
     let reviewResult;
@@ -1671,7 +1711,7 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
       // Extend TTL atomically with ownership check, inside the lock
       await Session.updateOne({ sessionId }, { $set: { lastAccessedAt: new Date() }, $max: { absoluteExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000) } });
 
-      const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+      const aiEngineUrl = AI_ENGINE_BASE_URL;
 
       try {
         const baseUrl = aiEngineUrl.replace(/\/+$/, '');
@@ -1740,7 +1780,7 @@ app.post('/api/rag/query', requireApiKey, async (req, res) => {
     return res.status(500).json({ error: 'RAG query failed: ownership check unavailable.' });
   }
 
-  const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+  const aiEngineUrl = AI_ENGINE_BASE_URL;
 
   try {
     const baseUrl = aiEngineUrl.replace(/\/+$/, '');
@@ -1935,7 +1975,7 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
       console.log(`💬 Conversational AI trigger on PR #${pullNumber}, file: ${filePath}`);
       
       try {
-        const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+        const aiEngineUrl = AI_ENGINE_BASE_URL;
         const baseUrl = aiEngineUrl.replace(/\/+$/, '');
         const aiResponse = await fetchWithTimeout(`${baseUrl}/chat-inline`, {
           validate: false,
@@ -2455,7 +2495,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     }
 
     console.log(`🧠 Querying AI engine for ${filesToReview.length} files...`);
-    const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+    const aiEngineUrl = AI_ENGINE_BASE_URL;
     
     try {
       // Look for .ai-reviewer.yml to check security mode
@@ -2562,7 +2602,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
 
   // PR Summary generation
   try {
-    const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+    const aiEngineUrl = AI_ENGINE_BASE_URL;
     const baseUrl = aiEngineUrl.replace(/\/+$/, '');
     
     // We truncate diff to max 15000 chars for summary
