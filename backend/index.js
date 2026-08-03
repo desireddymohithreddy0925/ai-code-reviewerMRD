@@ -2501,6 +2501,12 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     return;
   }
 
+  // Review configuration must come from the PR's BASE branch (maintainer
+  // controlled) rather than the head SHA (fork/contributor controlled).
+  // Otherwise a PR author could commit a malicious .ai-ignore to skip all
+  // their files, or a malicious .ai-reviewer.yml to steer the AI review.
+  const configRef = pullRequest.base && (pullRequest.base.sha || pullRequest.base.ref);
+
   // Fetch .ai-ignore patterns once
   const excludePatternsInput = 'package-lock.json,yarn.lock,pnpm-lock.yaml,dist/**,build/**';
   const baseExcludePatterns = excludePatternsInput.split(',').map(p => p.trim()).filter(Boolean).map(globToRegex);
@@ -2508,7 +2514,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
   let aiIgnorePatterns = [];
   try {
     const { data: ignoreFile } = await octokit.rest.repos.getContent({
-      owner, repo, path: '.ai-ignore', ref: headSha
+      owner, repo, path: '.ai-ignore', ref: configRef
     });
     const ignoreContent = Buffer.from(ignoreFile.content, 'base64').toString('utf8');
     aiIgnorePatterns = ignoreContent.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(globToRegex);
@@ -2584,11 +2590,11 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     try {
       let customRulesResponse;
       try {
-        customRulesResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.ai-reviewer.yml', ref: headSha });
+        customRulesResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.ai-reviewer.yml', ref: configRef });
       } catch (err) {
         if (err.status === 404) {
           try {
-            customRulesResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.github/ai-reviewer.md', ref: headSha });
+            customRulesResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.github/ai-reviewer.md', ref: configRef });
           } catch (err2) {
             // Not found
           }
@@ -2619,7 +2625,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
           owner,
           repo,
           path: '.ai-reviewer.yml',
-          ref: headSha
+          ref: configRef
         });
         const content = Buffer.from(configFile.content, 'base64').toString('utf8');
         const config = yaml.load(content);
@@ -2817,6 +2823,19 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     const repoName = `${owner}/${repo}`;
     await RoiMetrics.recordPrReview(repoName, commentsToPost.length).catch(e => console.error("ROI tracking error", e));
 
+  } else if (filesToReview.length === 0) {
+    // Every file in the diff was excluded or unsupported — no AI analysis
+    // actually happened, so we must NOT auto-approve or grant the label.
+    console.warn(`⚠️ No files were eligible for AI review on PR #${pullNumber} — refusing to auto-approve.`);
+    const { data: createdReview } = await octokit.rest.pulls.createReview({
+      owner,
+      repo,
+      pull_number: pullNumber,
+      commit_id: headSha,
+      event: 'COMMENT',
+      body: `## ⚠️ RepoSage AI Code Review — No Files Reviewed\n\nNo files in this PR were eligible for automated review (all changed files were excluded or unsupported), so no approval or label was granted.`
+    });
+    postedReviewIds.push(createdReview.id);
   } else if (aiCommentsDiscarded > 0) {
     console.warn(`ΓÜá∩╕Å ${aiCommentsDiscarded} AI comments were discarded due to line number mismatches ΓÇö posting COMMENT review instead of approving.`);
     const { data: createdReview } = await octokit.rest.pulls.createReview({
