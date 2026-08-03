@@ -1,3 +1,3 @@
 """
-Nodes package for ai-engine LangGraph pipeline.
+Nodes package for ai-engine graph components.
 """
