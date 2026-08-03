@@ -2,8 +2,9 @@ services:
   chromadb:
     image: chromadb/chroma:1.5.9
     container_name: reposage-chromadb
-    ports:
-      - "8001:8000"
+    # ChromaDB is intentionally NOT published to the host. Only the ai-engine
+    # reaches it over the compose network (CHROMA_HOST=chromadb:8000), so the
+    # vector store API is not exposed to external clients on the host.
     volumes:
       - chroma_data:/chroma/chroma
     environment:
