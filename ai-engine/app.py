@@ -196,10 +196,21 @@ def sanitize_error(text: str, key: str) -> str:
     url_encoded = urllib.parse.quote(key, safe='')
     if url_encoded != key:
         text = re.sub(re.escape(url_encoded), "***", text)
-    # Redact partial key matches (truncated representations)
-    for trunc_suffix in ["...", "…", " (truncated)"]:
-        truncated = re.escape(key[:len(key) // 2] + trunc_suffix)
-        text = re.sub(truncated, "***", text)
+    # Redact partial key matches (truncated at end: key... or key (truncated))
+    # Truncation widths vary; try multiple widths
+    if len(key) > 12:
+        for width in range(12, min(len(key), 20)):
+            for trunc_suffix in ["...", "…", " (truncated)"]:
+                truncated = re.escape(key[:width] + trunc_suffix)
+                text = re.sub(truncated, "***", text)
+    # Redact partial key matches (truncated at start: ...key or (truncated) key)
+    # Match ... followed by the last N chars of the key (try N from 6 to key length)
+    if len(key) > 8:
+        for suffix_len in range(6, min(len(key), 20)):
+            suffix = key[-suffix_len:]
+            for trunc_prefix in ["...", "…", "(truncated) "]:
+                pattern = re.escape(trunc_prefix + suffix)
+                text = re.sub(pattern, "***", text)
     if len(key) > 16:
         text = re.sub(re.escape(key[:16]), "***", text)
     return text
