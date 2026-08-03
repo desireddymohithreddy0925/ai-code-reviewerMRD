@@ -3409,26 +3409,18 @@ app.get("/api/review-history/compare/:id1/:id2", requireApiKey, async (req, res)
 });
 
 app.get('/health', (req, res) => {
+  // Liveness-only probe. Intentionally returns no internal state (database
+  // connectivity, run mode, circuit-breaker details) to avoid leaking
+  // deployment internals to unauthenticated callers.
   if (!serverReady) {
     return res.status(503).json({
       status: 'starting_up',
       timestamp: new Date().toISOString(),
-      database: isDatabaseConnected() ? 'connected' : 'disconnected',
       message: 'Server is still initializing. Please retry shortly.',
     });
   }
   res.json({
     status: 'ok',
-    timestamp: new Date().toISOString(),
-    database: isDatabaseConnected() ? 'connected' : 'disconnected',
-    mode: isDatabaseConnected() ? 'full' : 'degraded',
-    circuitBreaker: reviewQueue.getCircuitState(),
-  });
-});
-
-app.get('/api/health/circuit-breaker', (req, res) => {
-  res.json({
-    ...reviewQueue.getCircuitState(),
     timestamp: new Date().toISOString(),
   });
 });
