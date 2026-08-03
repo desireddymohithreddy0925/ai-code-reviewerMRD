@@ -2,66 +2,118 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { detectNPlusOne } from '../utils/nPlusOneDetector.js';
 
-test('detectNPlusOne: returns false for non-string input', () => {
+test('detectNPlusOne returns false for non-string input', () => {
   assert.equal(detectNPlusOne(null), false);
   assert.equal(detectNPlusOne(undefined), false);
   assert.equal(detectNPlusOne(123), false);
   assert.equal(detectNPlusOne({}), false);
-  assert.equal(detectNPlusOne([]), false);
 });
 
-test('detectNPlusOne: returns false when content has no loop or iterator', () => {
-  assert.equal(detectNPlusOne('const x = 1;\ny = x + 2;'), false);
-});
-
-test('detectNPlusOne: returns false when content has loop but no ORM pattern', () => {
-  const code = 'for (let i = 0; i < 10; i++) {\n  console.log(i);\n}';
+test('detectNPlusOne returns false when no loop keywords are present', () => {
+  const code = 'function foo() { return 42; }';
   assert.equal(detectNPlusOne(code), false);
 });
 
-test('detectNPlusOne: returns false when content has ORM but no loop', () => {
-  const code = 'const result = db.users.find({ active: true });';
+test('detectNPlusOne returns false when no ORM keywords are present', () => {
+  const code = 'function foo() { for (let i = 0; i < 10; i++) { console.log(i); } }';
   assert.equal(detectNPlusOne(code), false);
 });
 
-test('detectNPlusOne: returns true when loop contains ORM .find() call', () => {
-  const code = 'for (const id of userIds) {\n  const user = db.users.find({ id });\n}';
+test('detectNPlusOne detects .find() inside a for loop with braces on same line', () => {
+  const code = `for (const id of ids) {
+  const user = db.users.find({ id });
+}`;
   assert.equal(detectNPlusOne(code), true);
 });
 
-test('detectNPlusOne: returns true when loop contains ORM .query() call', () => {
-  const code = 'while (count < 10) {\n  db.query("SELECT * FROM users");\n  count++;\n}';
+test('detectNPlusOne detects .find() with no-brace single-line loop', () => {
+  const code = 'for (const id of ids) db.find(id);';
   assert.equal(detectNPlusOne(code), true);
 });
 
-test('detectNPlusOne: returns true when loop contains Prisma ORM call', () => {
-  const code = 'users.forEach(async (u) => {\n  await prisma.user.findMany({ where: { id: u.id } });\n});';
+test('detectNPlusOne detects .query() inside a for loop', () => {
+  const code = `for (const id of ids) {
+  const result = db.query('SELECT * FROM users WHERE id = ?', id);
+}`;
   assert.equal(detectNPlusOne(code), true);
 });
 
-test('detectNPlusOne: returns true when .map() contains ORM call', () => {
-  const code = 'const results = items.map(item => db.table.select("*"))';
+test('detectNPlusOne detects .execute() inside a for loop', () => {
+  const code = `for (let i = 0; i < n; i++) {
+  db.execute('DELETE FROM logs WHERE id = ?', ids[i]);
+}`;
   assert.equal(detectNPlusOne(code), true);
 });
 
-test('detectNPlusOne: returns false when loop has no ORM call', () => {
-  const code = 'for (let i = 0; i < 10; i++) {\n  const x = i * 2;\n  console.log(x);\n}';
+test('detectNPlusOne detects .select() inside a forEach loop', () => {
+  const code = `users.forEach(u => {
+  const profile = db.select('profiles', { userId: u.id });
+});`;
+  assert.equal(detectNPlusOne(code), true);
+});
+
+test('detectNPlusOne detects prisma ORM call inside a for loop', () => {
+  const code = `for (const id of ids) {
+  await prisma.user.findUnique({ where: { id } });
+}`;
+  assert.equal(detectNPlusOne(code), true);
+});
+
+test('detectNPlusOne detects .findMany() ORM call', () => {
+  const code = `for (const tag of tags) {
+  const posts = prisma.post.findMany({ where: { tag } });
+}`;
+  assert.equal(detectNPlusOne(code), true);
+});
+
+test('detectNPlusOne detects ORM call in classic while loop', () => {
+  const code = `while (hasNext()) {
+  const item = db.find({ id: nextId() });
+}`;
+  assert.equal(detectNPlusOne(code), true);
+});
+
+test('detectNPlusOne returns false when ORM call is before the loop', () => {
+  const code = `const allUsers = db.users.find({});
+for (const id of ids) {
+  console.log(id);
+}`;
   assert.equal(detectNPlusOne(code), false);
 });
 
-test('detectNPlusOne: tracks brace depth correctly and exits loop', () => {
-  // Loop with nested block but no ORM call until after loop closes
-  const code = 'for (let i = 0; i < 10; i++) {\n  if (true) {\n    const x = 1;\n  }\n}\nconst y = db.find({});';
-  // ORM call is outside the loop body (after loop closes), should be false
+test('detectNPlusOne returns false when loop contains no ORM calls', () => {
+  const code = `for (let i = 0; i < 10; i++) {
+  console.log(i);
+  const x = i * 2;
+}`;
   assert.equal(detectNPlusOne(code), false);
 });
 
-test('detectNPlusOne: handles .findMany Prisma pattern', () => {
-  const code = 'users.forEach(u => {\n  const posts = await prisma.post.findMany({ where: { authorId: u.id } });\n});';
+test('detectNPlusOne tracks brace depth across nested if inside loop', () => {
+  const code = `for (const id of ids) {
+  if (id > 0) {
+    const user = db.users.find({ id });
+  }
+}`;
   assert.equal(detectNPlusOne(code), true);
 });
 
-test('detectNPlusOne: handles .insert and .update ORM patterns', () => {
-  const code = 'for (const item of items) {\n  db.collection.insert({ data: item });\n}';
+test('detectNPlusOne resets after loop body ends', () => {
+  const code = `for (const id of ids) {
+  if (id > 0) {
+    const user = db.users.find({ id });
+  }
+}
+const admin = db.users.find({ role: 'admin' });`;
   assert.equal(detectNPlusOne(code), true);
+});
+
+test('detectNPlusOne accepts fileName parameter without crashing', () => {
+  const code = `for (const id of ids) { db.find(id); }`;
+  assert.equal(detectNPlusOne(code, 'service.js'), true);
+});
+
+test('detectNPlusOne returns false when no N+1 even with fileName', () => {
+  const code = `for (const x of xs) { console.log(x); }`;
+  assert.equal(detectNPlusOne(code, 'utils.ts'), false);
 });

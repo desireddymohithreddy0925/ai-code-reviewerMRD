@@ -20,7 +20,6 @@ async function acquireLock() {
   const prev = storeLock;
   let release;
   storeLock = new Promise(resolve => { release = resolve; });
-  await prev.catch(() => {});
   const next = new Promise(resolve => { release = resolve; });
   storeLock = next;
   await prev;

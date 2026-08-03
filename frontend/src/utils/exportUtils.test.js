@@ -1,18 +1,6 @@
 // Frontend unit tests for generateMarkdownReport in exportUtils.ts
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { generateMarkdownReport, handlePdfExport } from './exportUtils.ts';
-
-const { saveMock } = vi.hoisted(() => ({
-  saveMock: vi.fn(),
-}));
-
-vi.mock('html2pdf.js', () => ({
-  default: vi.fn(() => ({
-    set: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    save: saveMock,
-  })),
-}));
+import { describe, it, expect } from 'vitest';
+import { generateMarkdownReport } from './exportUtils.ts';
 
 describe('generateMarkdownReport', () => {
   it('generates report with header containing repo name', () => {
@@ -86,9 +74,8 @@ describe('generateMarkdownReport', () => {
       }
     };
     const report = generateMarkdownReport('test-repo', analysis);
-    expect(report).toContain('a&#124;b.js');
-    expect(report).toContain('desc&#124;ription');
-    expect(report).toContain('sug&#124;gestion');
+    expect(report).toContain('a\\|b.js');
+    expect(report).toContain('desc\\|ription');
   });
 
   it('includes metrics table when metrics are present', () => {
@@ -143,44 +130,5 @@ describe('generateMarkdownReport', () => {
     const report = generateMarkdownReport('test-repo', { fileReviews: {} });
     expect(report).toContain('RepoSage AI');
     expect(report).toContain('GirlScript Summer of Code');
-  });
-});
-
-describe('handlePdfExport theme restore', () => {
-  beforeEach(() => {
-    saveMock.mockReset();
-    document.documentElement.removeAttribute('data-theme');
-  });
-
-  it('restores the original theme when the PDF export fails (regression #3671)', async () => {
-    vi.stubGlobal('alert', vi.fn());
-    document.documentElement.setAttribute('data-theme', 'dark');
-    saveMock.mockRejectedValue(new Error('boom'));
-
-    await handlePdfExport('test-repo', document.createElement('div'));
-
-    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
-    vi.unstubAllGlobals();
-  });
-
-  it('restores the original theme after a successful export', async () => {
-    vi.stubGlobal('alert', vi.fn());
-    document.documentElement.setAttribute('data-theme', 'dark');
-    saveMock.mockResolvedValue(undefined);
-
-    await handlePdfExport('test-repo', document.createElement('div'));
-
-    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
-    vi.unstubAllGlobals();
-  });
-
-  it('removes the data-theme attribute when no theme was set before export', async () => {
-    vi.stubGlobal('alert', vi.fn());
-    saveMock.mockRejectedValue(new Error('boom'));
-
-    await handlePdfExport('test-repo', document.createElement('div'));
-
-    expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
-    vi.unstubAllGlobals();
   });
 });

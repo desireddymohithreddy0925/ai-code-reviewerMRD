@@ -18,7 +18,6 @@ export function scanFileContentForWarnings(content) {
   const warnings = [];
   for (const pattern of DANGEROUS_PHRASES) {
     const regex = new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-    regex.lastIndex = 0;
     if (regex.test(content)) {
       warnings.push(`File contains potentially malicious content matching: "${pattern}"`);
     }
@@ -33,6 +32,5 @@ export function sanitizeHtmlEntities(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#x27;')
-    .replace(/\//g, '&#x2F;');
+    .replace(/'/g, '&#x27;');
 }

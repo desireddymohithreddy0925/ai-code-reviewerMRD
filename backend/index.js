@@ -15,7 +15,7 @@ import rateLimit from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
 import Redis from 'ioredis';
 import { scanSecrets, scanSecretsInChanges } from './utils/secretsScanner.js';
-import { llmAnalysisLimiter, concurrencyThrottleMiddleware, webhookRateLimiter } from './middleware/rateLimiter.js';
+import { llmAnalysisLimiter } from './middleware/rateLimiter.js';
 import { scrubRepositoryPayload } from './utils/secretScrubber.js';
 import { recordAnalysis as recordFileAnalytics } from './utils/analyticsStore.js';
 import { loadIgnorePatterns, readFilesRecursively } from './utils/ignoreHelper.js';
@@ -40,7 +40,6 @@ import { loadConfigFile, applySeverityConfig } from './utils/severityConfig.js';
 import AnalysisCache from './utils/analysisCache.js';
 import { getPriorReviewIds, storeReviewIds, clearReviewIds, supersedePriorReviews } from './utils/reviewTracker.js';
 import DedupStore from './utils/dedupStore.js';
-import { registerTimer, clearAllTimers } from './utils/timerRegistry.js';
 import mongoose from 'mongoose';
 import Analytics from './models/Analytics.js';
 import Session, { estimateSessionSize } from './models/Session.js';
@@ -71,105 +70,20 @@ const ANALYSIS_CACHE_MOCK_TTL_MS = ((n) => Number.isFinite(n) && n > 0 ? n : 120
 const analysisCache = new AnalysisCache(ANALYSIS_CACHE_TTL_MS, 2, ANALYSIS_CACHE_MOCK_TTL_MS);
 const responseCache = new AnalysisCache(ANALYSIS_CACHE_TTL_MS);
 
-// ---------------------------------------------------------------------------
-// AI engine base URL (#3622). The AI engine receives the internal
-// REPOSAGE_API_KEY header plus the full repository contents / diffs, so it must
-// never be reached over cleartext from a public host. There is intentionally NO
-// insecure http://localhost:8000 fallback: if AI_ENGINE_URL is missing, or uses
-// plaintext http for anything other than a loopback / internal Docker Compose
-// hostname, the server refuses to start instead of silently sending secrets in
-// the clear.
-// ---------------------------------------------------------------------------
-function resolveAiEngineUrl() {
-  const raw = (process.env.AI_ENGINE_URL || '').trim();
-  if (!raw) {
-    throw new Error('AI_ENGINE_URL is required. Refusing to start without a configured AI engine URL.');
-  }
-  const normalized = raw.replace(/\/+$/, '');
-  let parsed;
-  try {
-    parsed = new URL(normalized);
-  } catch {
-    throw new Error(`AI_ENGINE_URL is not a valid URL: ${raw}`);
-  }
-  if (parsed.protocol !== 'https:') {
-    const host = parsed.hostname;
-    const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '::1';
-    const isInternalName = host.length > 0 && !host.includes('.') && !host.includes(':');
-    if (!isLoopback && !isInternalName) {
-      throw new Error(`AI_ENGINE_URL must use HTTPS, got cleartext "${raw}". Plaintext is only allowed for loopback or internal Docker Compose hostnames.`);
-    }
-  }
-  return normalized;
-}
-
-let AI_ENGINE_BASE_URL;
-try {
-  AI_ENGINE_BASE_URL = resolveAiEngineUrl();
-} catch (err) {
-  console.error(`FATAL: ${err.message}`);
-  process.exit(1);
-}
-
-// ---------------------------------------------------------------------------
-// Per-caller daily analysis budget (#3549). /api/analyze and /api/analyze-file
-// clone repos server-side and fan out one LLM call per batch, so an
-// unauthenticated-by-cookie key-holder can otherwise force unbounded clones
-// and Groq calls against the shared paid quotas. The budget is keyed on a
-// stable per-caller identity (session-cookie uid when present, otherwise a
-// hash of the caller's IP) so it cannot be evaded by minting a fresh clientId
-// per request. In-memory is sufficient: the counter resets on restart, exactly
-// like responseCache / analysisCache.
-// ---------------------------------------------------------------------------
-const ANALYSIS_DAILY_BUDGET_PER_CLIENT = parseInt(process.env.ANALYSIS_DAILY_BUDGET_PER_CLIENT || '50', 10);
-const ANALYSIS_DAILY_BUDGET_WINDOW_MS = 24 * 60 * 60 * 1000;
-const dailyAnalysisBudgetMap = new Map(); // key -> { windowStart, count }
-
-function getAnalysisBudgetKey(req) {
-  const hasSessionCookie = typeof req.headers?.cookie === 'string' && req.headers.cookie.includes('rps_v1_session');
-  if (hasSessionCookie && req.clientId) {
-    return req.clientId;
-  }
-  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
-  return crypto.createHash('sha256').update(`daily-analysis:${ip}`).digest('hex');
-}
-
-function consumeDailyAnalysisBudget(req) {
-  const key = getAnalysisBudgetKey(req);
-  const now = Date.now();
-  const entry = dailyAnalysisBudgetMap.get(key);
-  if (!entry || now - entry.windowStart >= ANALYSIS_DAILY_BUDGET_WINDOW_MS) {
-    dailyAnalysisBudgetMap.set(key, { windowStart: now, count: 1 });
-    return { allowed: true, remaining: ANALYSIS_DAILY_BUDGET_PER_CLIENT - 1 };
-  }
-  if (entry.count >= ANALYSIS_DAILY_BUDGET_PER_CLIENT) {
-    return { allowed: false, remaining: 0 };
-  }
-  entry.count += 1;
-  return { allowed: true, remaining: ANALYSIS_DAILY_BUDGET_PER_CLIENT - entry.count };
-}
-
-// Hard cap on source files forwarded to the AI engine per analysis, so a repo
-// of thousands of tiny files cannot force one LLM sub-call per file (#3549).
-const MAX_FILES_PER_ANALYSIS = parseInt(process.env.MAX_FILES_PER_ANALYSIS || '100', 10);
-
 // Trust the first hop of reverse proxy headers (Render, Railway, Heroku, Nginx, AWS ALB, etc.)
 // so that req.ip and express-rate-limit resolve the real client IP from X-Forwarded-For
 // rather than the internal proxy address.
-// This is opt-in: it is enabled ONLY when TRUST_PROXY=true. Trusting X-Forwarded-For by
-// default lets anyone who can reach the app directly spoof req.ip and bypass rate limits.
-const trustProxy = process.env.TRUST_PROXY === 'true';
+// Set TRUST_PROXY=false in .env to disable this when running without a proxy (e.g. local dev).
+const trustProxy = process.env.TRUST_PROXY !== 'false';
 if (trustProxy) {
   app.set('trust proxy', 1);
 }
 
-// NOTE: No custom keyGenerator is needed. When `trust proxy: 1` is enabled (TRUST_PROXY=true),
-// Express automatically resolves req.ip to the real client IP by stripping the known proxy
+// NOTE: No custom keyGenerator is needed. With `trust proxy: 1` set above, Express
+// automatically resolves req.ip to the real client IP by stripping the known proxy
 // hop from X-Forwarded-For. express-rate-limit defaults to req.ip, which is already
 // correct. A custom function that reads X-Forwarded-For directly would trust the
 // leftmost (client-controlled) value, allowing IP spoofing to bypass rate limits.
-// By default (no TRUST_PROXY), req.ip is the direct socket address, so rate limits
-// cannot be bypassed via spoofed headers.
 
 // Enable CORS with explicit origin
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:5173').split(',').map(s => s.trim());
@@ -226,31 +140,6 @@ const pdfExportLimiter = rateLimit({
   message: { error: 'Too many PDF export requests. Please slow down and retry after 1 minute.' }
 });
 
-// Per-IP rate limit for the public ROI dashboard endpoint so the raw metrics
-// cannot be scraped repeatedly (the endpoint stays public because the static
-// dashboard fetches it without an API key, but it no longer exposes the full
-// RoiMetrics collection to anonymous callers).
-const roiLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  store: redisClient ? new RedisStore({ sendCommand: (...args) => redisClient.call(...args) }) : undefined,
-  message: { error: 'Too many ROI dashboard requests. Please slow down and retry after 1 minute.' }
-});
-
-// Strict limiter for cache invalidation — an unthrottled invalidate endpoint
-// is a cost-amplification lever (forces re-clones + LLM re-runs), so it gets
-// the same strict 10/min budget as the other expensive endpoints.
-const cacheInvalidateLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  store: redisClient ? new RedisStore({ sendCommand: (...args) => redisClient.call(...args) }) : undefined,
-  message: { error: 'Too many cache invalidation requests. Please slow down and retry after 1 minute.' }
-});
-
 // Parse cookies for CSRF token validation
 app.use(cookieParser());
 app.use('/dashboard', express.static(path.join(__dirname, 'public/dashboard')));
@@ -298,17 +187,6 @@ app.use(express.json({
   limit: process.env.JSON_BODY_LIMIT || '5mb',
 }));
 
-// Track in-flight requests so a fatal-error drain can wait for them to finish
-// before exiting (see the uncaughtException handler below).
-let activeRequests = 0;
-app.use((req, res, next) => {
-  activeRequests++;
-  const done = () => { activeRequests = Math.max(0, activeRequests - 1); };
-  res.on('finish', done);
-  res.on('close', done);
-  next();
-});
-
 // CSRF token endpoint: generates a random token and sets it as an httpOnly cookie.
 // The token is also returned in the JSON response body so the frontend can read
 // it from there (not from document.cookie) and include it in the X-CSRF-Token header.
@@ -332,11 +210,7 @@ const csrfTokenStore = redisClient ? {
     return (await redisClient.del(this._prefix + token)) > 0;
   },
   async size() {
-    const keys = [];
-    const stream = redisClient.scanStream({ match: this._prefix + '*', count: 500 });
-    for await (const batch of stream) {
-      keys.push(...batch);
-    }
+    const keys = await redisClient.keys(this._prefix + '*');
     return keys.length;
   },
   async cleanup() {
@@ -367,7 +241,7 @@ const csrfGraceTokenStore = redisClient ? {
 
 // Periodic cleanup of expired CSRF tokens (only needed for in-memory store)
 if (!redisClient) {
-  const csrfCleanupTimer = setInterval(() => {
+  setInterval(() => {
     const now = Date.now();
     for (const [token, expiry] of csrfTokenStore) {
       if (now > expiry) csrfTokenStore.delete(token);
@@ -375,9 +249,7 @@ if (!redisClient) {
     for (const [token, expiry] of csrfGraceTokenStore) {
       if (now > expiry) csrfGraceTokenStore.delete(token);
     }
-  }, 5 * 60 * 1000);
-  csrfCleanupTimer.unref();
-  registerTimer(csrfCleanupTimer);
+  }, 5 * 60 * 1000).unref();
 }
 
 async function generateCsrfToken() {
@@ -437,6 +309,7 @@ async function csrfProtection(req, res, next) {
       try {
         const session = await Session.findOne({ sessionId }).select('csrfToken').lean();
         if (session && session.csrfToken) {
+          if (!session?.csrfToken) { return next(); }
           const storedBuf = Buffer.from(String(session.csrfToken));
           const headerBuf = Buffer.from(String(headerToken || ''));
           if (storedBuf.length === headerBuf.length && crypto.timingSafeEqual(storedBuf, headerBuf)) {
@@ -505,7 +378,7 @@ app.post('/api/session', requireApiKey, async (req, res) => {
 
   const csrfToken = await generateCsrfToken();
   res.cookie(CSRF_COOKIE_NAME, csrfToken, {
-    httpOnly: false,
+    httpOnly: true,
     sameSite: 'strict',
     path: '/',
     secure: process.env.NODE_ENV === 'production',
@@ -513,50 +386,13 @@ app.post('/api/session', requireApiKey, async (req, res) => {
   return res.json({ success: true, csrfToken, clientId: result.clientId });
 });
 
-// Logout endpoint ΓÇö clears session and CSRF token, and revokes the
-// server-side Session document. Previously logout only cleared cookies/CSRF
-// tokens, leaving the sessionId + sessionOwnerToken pair valid for chat for
-// up to 24h even after the user logged out (issue #3553). The client is
-// expected to send sessionId + sessionOwnerToken (persisted in localStorage)
-// so the analyzed repository context is revoked server-side.
+// Logout endpoint ΓÇö clears session and CSRF token
 app.post('/api/logout', requireApiKey, async (req, res) => {
   const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
   if (cookieToken) {
     await csrfTokenStore.delete(cookieToken);
     await csrfGraceTokenStore.delete(cookieToken);
   }
-
-  const { sessionId, sessionOwnerToken } = req.body || {};
-
-  // Revoke the server-side session if the caller supplies its credentials.
-  // The ownerToken is verified with a timing-safe comparison before the
-  // session is deleted, so one user cannot revoke another user's session.
-  if (sessionId) {
-    if (!isValidUuid(sessionId)) {
-      return res.status(400).json({ error: 'Invalid sessionId format.' });
-    }
-
-    const sessionDoc = await Session.findOne({ sessionId }).select('ownerToken').lean();
-    if (sessionDoc && sessionDoc.ownerToken) {
-      if (!sessionOwnerToken) {
-        console.warn(`ΓÜá∩╕Å Logout session revocation failed: session ${sessionId} missing sessionOwnerToken`);
-        return res.status(403).json({ error: 'Access denied: sessionOwnerToken is required to revoke this session.' });
-      }
-      const providedBuf = Buffer.from(String(sessionOwnerToken), 'utf8');
-      const storedBuf = Buffer.from(String(sessionDoc.ownerToken), 'utf8');
-      if (providedBuf.length !== storedBuf.length || !crypto.timingSafeEqual(providedBuf, storedBuf)) {
-        console.warn(`ΓÜá∩╕Å Logout session revocation denied: session ${sessionId} token does not match`);
-        return res.status(403).json({ error: 'Access denied: this session does not belong to you.' });
-      }
-    }
-
-    // Delete (or expire) the session so context.files can no longer be
-    // retrieved via /api/chat. deleteMany is safe whether or not the
-    // session doc exists (e.g. already TTL-expired).
-    await Session.deleteMany({ sessionId });
-    console.log(`ΓÜá∩╕Å Revoked server-side session ${sessionId} on logout`);
-  }
-
   res.clearCookie(CSRF_COOKIE_NAME, { path: '/' });
   res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
   return res.json({ success: true, message: 'Logged out successfully.' });
@@ -566,7 +402,7 @@ app.post('/api/logout', requireApiKey, async (req, res) => {
 app.get('/api/csrf-token', async (req, res) => {
   const csrfToken = await generateCsrfToken();
   res.cookie(CSRF_COOKIE_NAME, csrfToken, {
-    httpOnly: false,
+    httpOnly: true,
     sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
     path: '/',
@@ -602,8 +438,6 @@ function cleanupTempRepos() {
     console.error(`Failed to clean up temp_repos on exit: ${error.message}`);
   }
 }
-// Graceful shutdown used for SIGINT/SIGTERM — supervisors treat exit code 0
-// as an intentional stop, so this is the intended path.
 async function onShutdown() {
   cleanupTempRepos();
   cleanupTimers();
@@ -615,49 +449,21 @@ process.on('SIGINT', onShutdown);
 process.on('SIGTERM', onShutdown);
 process.on('exit', cleanupTempRepos);
 
-// Best-effort cleanup for an unrecoverable error path. Unlike onShutdown, this
-// drains in-flight requests (up to a cap) and exits NON-zero so supervisors
-// (systemd/PM2/K8s) detect the crash and restart the service. We never exit 0
-// from an error path: a "clean" exit tells supervisors the stop was intended.
-async function handleFatalError(err) {
-  console.error('FATAL: terminating process due to uncaught error');
-  if (err && err.stack) {
-    console.error(err.stack);
-  }
-  const drainDeadline = Date.now() + 10_000;
-  while (activeRequests > 0 && Date.now() < drainDeadline) {
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  if (activeRequests > 0) {
-    console.error(`FATAL: ${activeRequests} request(s) still in-flight after drain timeout; exiting anyway`);
-  }
-  cleanupTempRepos();
-  cleanupTimers();
-  if (redisClient) {
-    try { await redisClient.quit(); } catch (e) { console.error('FATAL: failed to quit redis cleanly:', e.message); }
-  }
-  try { await closeDatabase(); } catch (e) { console.error('FATAL: failed to close database cleanly:', e.message); }
-  process.exit(1);
-}
-
-// An uncaught exception leaves process state unreliable — Node docs recommend
-// NOT continuing. Log, drain active requests, and exit non-zero for restart.
+// Clean up temp_repos and timers on uncaught exceptions to prevent orphan temp folders
 process.on('uncaughtException', (err) => {
   console.error('Uncaught exception:', err);
   if (err.stack) {
     console.error(err.stack);
   }
-  handleFatalError(err);
+  onShutdown();
 });
 
-// An unhandled rejection is normally recoverable: log it and keep the server
-// alive rather than tearing down every session, webhook, SSE stream, and
-// analysis because one promise failed.
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason instanceof Error ? reason.message : reason);
   if (reason instanceof Error && reason.stack) {
     console.error(reason.stack);
   }
+  onShutdown();
 });
 
 // Repository contexts for chat are now persisted in MongoDB via the Session model.
@@ -666,8 +472,10 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Utility: fetch with configurable timeout using AbortController and optional SSRF check
 async function fetchWithTimeout(url, options = {}, timeoutMs = 120000) {
-  const validate = options.validate !== false;
-  if (validate) {
+  if (options.validate !== false && options.validate !== true) {
+    // default: skip validation for explicitly trusted URLs; validate only when requested
+  }
+  if (options.validate === true) {
     const safe = await isSafeUrl(url);
     if (!safe.valid) {
       throw new Error(`SSRF validation failed: ${safe.reason}`);
@@ -775,43 +583,22 @@ const DELIVERY_REDIS_TTL = 300;
 
 // In-memory fallback for webhook SHA dedup when Redis is unavailable
 const shaDedupMemoryMap = new Map();
-const shaDedupLocks = new Map();
 const SHA_DEDUP_MAX_SIZE = 10000;
 
-// Per-key mutex for atomic SHA dedup check-and-set to prevent TOCTOU races
-async function checkAndSetSha(mapKey) {
-  while (shaDedupLocks.has(mapKey)) {
-    await shaDedupLocks.get(mapKey);
-  }
-  const next = (async () => {
-    if (shaDedupMemoryMap.has(mapKey)) return true;
-    if (shaDedupMemoryMap.size >= SHA_DEDUP_MAX_SIZE) {
-      const oldestKey = shaDedupMemoryMap.keys().next().value;
-      if (oldestKey !== undefined) shaDedupMemoryMap.delete(oldestKey);
-    }
-    shaDedupMemoryMap.set(mapKey, Date.now());
-    return false;
-  })();
-  shaDedupLocks.set(mapKey, next.finally(() => {
-    if (shaDedupLocks.get(mapKey) === next) shaDedupLocks.delete(mapKey);
-  }));
-  return next;
-}
-
-const cacheMetricsTimer = registerTimer(setInterval(() => {
+const cacheMetricsTimer = setInterval(() => {
   const stats = analysisCache.getStats();
   console.log(`[cache] entries=${stats.size}/${stats.maxEntries} mock=${stats.mockCount} avgAge=${stats.avgAgeMs}ms hitRate=${stats.hitRate}`);
-}, 5 * 60 * 1000));
+}, 5 * 60 * 1000);
 cacheMetricsTimer.unref();
 
 // Proactive AI Engine health probe ΓÇö when the engine recovers, clear mock cache entries
 const AI_ENGINE_HEALTH_INTERVAL = 30000;
 let aiEngineHealthy = true;
 
-const aiEngineHealthTimer = registerTimer(setInterval(async () => {
-  const baseUrl = (AI_ENGINE_BASE_URL).replace(/\/+$/, '');
+const aiEngineHealthTimer = setInterval(async () => {
+  const baseUrl = (process.env.AI_ENGINE_URL || 'http://localhost:8000').replace(/\/+$/, '');
   try {
-    const resp = await fetchWithTimeout(`${baseUrl}/health`, { validate: false }, 5000);
+    const resp = await fetchWithTimeout(`${baseUrl}/health`, {}, 5000);
     if (resp.ok && !aiEngineHealthy) {
       console.log('≡ƒƒó AI Engine recovered ΓÇö clearing mock cache entries');
       analysisCache.clearMockEntries();
@@ -823,20 +610,20 @@ const aiEngineHealthTimer = registerTimer(setInterval(async () => {
     }
     aiEngineHealthy = false;
   }
-}, AI_ENGINE_HEALTH_INTERVAL));
+}, AI_ENGINE_HEALTH_INTERVAL);
 aiEngineHealthTimer.unref();
 
 // Periodic sweeper for stale exclusive locks to prevent unbounded memory growth
 const EXCLUSIVE_LOCK_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const EXCLUSIVE_LOCK_TTL = 30 * 60 * 1000;
-const exclusiveLockCleanupTimer = registerTimer(setInterval(() => {
+const exclusiveLockCleanupTimer = setInterval(() => {
   reviewQueue.cleanupStaleExclusiveLocks(EXCLUSIVE_LOCK_TTL);
-}, EXCLUSIVE_LOCK_CLEANUP_INTERVAL));
+}, EXCLUSIVE_LOCK_CLEANUP_INTERVAL);
 exclusiveLockCleanupTimer.unref();
 
 // Periodic sweeper for the SHA dedup memory map to prevent unbounded memory growth
 const SHA_DEDUP_CLEANUP_INTERVAL = 60 * 1000;
-const shaDedupCleanupTimer = registerTimer(setInterval(() => {
+const shaDedupCleanupTimer = setInterval(() => {
   const now = Date.now();
   const ttl = DELIVERY_REDIS_TTL * 1000;
   for (const [key, timestamp] of shaDedupMemoryMap) {
@@ -844,7 +631,7 @@ const shaDedupCleanupTimer = registerTimer(setInterval(() => {
       shaDedupMemoryMap.delete(key);
     }
   }
-}, SHA_DEDUP_CLEANUP_INTERVAL));
+}, SHA_DEDUP_CLEANUP_INTERVAL);
 shaDedupCleanupTimer.unref();
 
 function cleanupTimers() {
@@ -852,7 +639,6 @@ function cleanupTimers() {
   if (typeof aiEngineHealthTimer !== 'undefined') clearInterval(aiEngineHealthTimer);
   if (typeof exclusiveLockCleanupTimer !== 'undefined') clearInterval(exclusiveLockCleanupTimer);
   if (typeof shaDedupCleanupTimer !== 'undefined') clearInterval(shaDedupCleanupTimer);
-  clearAllTimers();
 }
 
   // Loaded from shared-safety-config.json via dangerousPhrases.js
@@ -931,24 +717,17 @@ app.post('/api/user/settings', requireApiKey, express.json(), async (req, res) =
 });
 
 // 🚀 Route: Stream AI Review (SSE)
-app.post('/api/review/stream', requireApiKey, requireJsonContentType, concurrencyThrottleMiddleware, llmAnalysisLimiter, streamReview);
+app.post('/api/review/stream', requireApiKey, requireJsonContentType, llmAnalysisLimiter, streamReview);
 // ≡ƒƒó Route: GitHub Import & AI Review
-app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrottleMiddleware, llmAnalysisLimiter, async (req, res) => {
+app.post('/api/analyze', requireApiKey, requireJsonContentType, llmAnalysisLimiter, async (req, res) => {
   let { repoUrl, company = 'General', language = 'English', model, temperature = 0.7,
      maxTokens = 2048, systemPrompt = '', batchSize = 5, githubToken
    } = req.body;
 
-  // Per-caller daily budget: blocks unbounded clone + LLM-call amplification (#3549).
-  const budget = consumeDailyAnalysisBudget(req);
-  if (!budget.allowed) {
-    return res.status(429).json({ error: `Daily analysis budget exceeded for this caller (${ANALYSIS_DAILY_BUDGET_PER_CLIENT} analyses per 24 hours). Please try again tomorrow.` });
-  }
-
   // Enforce boundary limits for batchSize to prevent downstream parsing crashes
   batchSize = Math.max(1, Math.min(20, parseInt(batchSize, 10) || 5));
 
-  const parsedTemp = parseFloat(temperature);
-  temperature = Math.max(0, Math.min(2, Number.isNaN(parsedTemp) ? 0.7 : parsedTemp));
+  temperature = Math.max(0, Math.min(2, parseFloat(temperature) || 0.7));
 
   const AI_ENGINE_MAX_TOKENS = parseInt(process.env.AI_ENGINE_MAX_TOKENS, 10) || 32768;
   maxTokens = Math.max(1, Math.min(AI_ENGINE_MAX_TOKENS, parseInt(maxTokens, 10) || 2048));
@@ -1001,55 +780,23 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
   const maxRepoSizeMB = parseInt(process.env.MAX_REPO_SIZE_MB, 10) || 100;
   const maxSizeBytes = maxRepoSizeMB * 1024 * 1024;
 
-  // Pre-clone size check via GitHub API to prevent disk exhaustion.
-  // This check is MANDATORY (#3549): when the PAT is rate-limited or
-  // unauthorized we fall back to an unauthenticated size lookup, and if the
-  // size still cannot be verified we refuse to clone rather than proceeding
-  // with a partial/filtered clone of unknown size.
-  const verifyRepoSize = async (octokitInstance) => {
-    const { data: repoData } = await octokitInstance.rest.repos.get({ owner, repo: repoName });
-    return (repoData.size || 0) * 1024;
-  };
-  const enforceSizeLimit = (repoSizeBytes) => {
-    if (repoSizeBytes > maxSizeBytes) {
-      return res.status(413).json({ error: `Repository exceeds the maximum allowed size of ${maxRepoSizeMB}MB (Reported size: ~${Math.round(repoSizeBytes / 1024 / 1024)}MB).` });
-    }
-    return null;
-  };
-
+  // Pre-clone size check via GitHub API to prevent disk exhaustion
   if (process.env.GITHUB_PAT) {
-    let repoSizeBytes;
     try {
-      repoSizeBytes = await verifyRepoSize(octokit);
+      const { data: repoData } = await octokit.rest.repos.get({ owner, repo: repoName });
+      const repoSizeBytes = (repoData.size || 0) * 1024;
+      if (repoSizeBytes > maxSizeBytes) {
+        return res.status(413).json({ error: `Repository exceeds the maximum allowed size of ${maxRepoSizeMB}MB (Reported size: ~${Math.round(repoSizeBytes/1024/1024)}MB).` });
+      }
     } catch (err) {
-      if (err.status === 403 || err.status === 429) {
-        // PAT rate-limited/blocked — retry without auth before refusing.
-        try {
-          repoSizeBytes = await verifyRepoSize(new Octokit());
-        } catch (fallbackErr) {
-          console.warn(`Could not verify repository size for ${owner}/${repoName} via GitHub API (${err.status ?? 'auth'} / ${fallbackErr.status ?? 'auth'}). Refusing to clone: pre-clone size check is mandatory.`);
-          return res.status(429).json({ error: 'Could not verify repository size because GitHub API is rate-limited. Please try again later.' });
-        }
-      } else {
+      if (err.status !== 403 && err.status !== 429) {
         console.error(`Γ¥î GitHub API error verifying size for ${owner}/${repoName}: ${err.message}`);
         return res.status(502).json({ error: `Failed to verify repository size: ${err.message}. Check GITHUB_PAT configuration.` });
       }
+      console.warn(`Could not verify repository size via GitHub API for ${owner}/${repoName}. Proceeding to clone with filters...`);
     }
-    const rejection = enforceSizeLimit(repoSizeBytes);
-    if (rejection) return rejection;
   } else {
-    // Without GITHUB_PAT, still enforce the limit pre-clone via GitHub's
-    // unauthenticated API (#3672) so a huge/malicious repo cannot force a full
-    // clone before the cap is applied. When the anonymous lookup fails
-    // (rate-limited or non-GitHub repo), fall through to the clone-time blob
-    // budget and the post-clone size check.
-    try {
-      const repoSizeBytes = await verifyRepoSize(new Octokit());
-      const rejection = enforceSizeLimit(repoSizeBytes);
-      if (rejection) return rejection;
-    } catch (err) {
-      console.warn(`Could not verify repository size anonymously for ${owner}/${repoName} (${err.status ?? 'unknown'}). Falling back to clone-time size enforcement.`);
-    }
+    console.warn('No GITHUB_PAT configured ΓÇö skipping pre-clone size check. Set MAX_REPO_SIZE_MB to enforce limit at clone time.');
   }
 
   const uniqueId = crypto.randomUUID();
@@ -1067,53 +814,21 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
     console.warn(`⚠️ Failed to fetch remote HEAD for ${repoUrl}: ${err.message}`);
   }
 
-  // The response cache key is namespaced by clientId so a cached response
-  // (and any data derived from it) is only ever served back to the caller
-  // that created it — never to a different tenant.
-  const finalCacheKey = commitSha ? crypto.createHash('sha256').update(`${repoUrl}|${req.clientId}|${commitSha}|${model}|${language}|${company}|${validatedPrompt}|${temperature}|${maxTokens}|${batchSize}`).digest('hex') : null;
+  const finalCacheKey = commitSha ? crypto.createHash('sha256').update(`${repoUrl}|${commitSha}|${model}|${language}|${company}|${validatedPrompt}|${temperature}|${maxTokens}|${batchSize}`).digest('hex') : null;
 
   if (finalCacheKey) {
     const cachedResponse = responseCache.get(finalCacheKey);
     if (cachedResponse) {
       console.log(`🎯 Using cached final response for ${repoUrl} at ${commitSha}`);
-      // The cached payload never contains per-session credentials (they are
-      // stripped before caching), so nothing from the original caller can be
-      // served to this one. Regenerate a fresh, per-caller session instead.
-      const freshSessionId = crypto.randomUUID();
-      const freshOwnerToken = crypto.randomUUID();
-      const freshCsrfToken = res.locals.rotatedCsrfToken || await generateCsrfToken();
-      let persisted = false;
-      const sessionFiles = Array.isArray(cachedResponse._sessionFiles) ? cachedResponse._sessionFiles : [];
-      if (sessionFiles.length > 0) {
-        try {
-          await Session.create({
-            sessionId: freshSessionId,
-            repoUrl,
-            repoName,
-            files: sessionFiles,
-            lastAccessedAt: new Date(),
-            ownerToken: freshOwnerToken,
-            csrfToken: freshCsrfToken,
-          });
-          persisted = true;
-        } catch (sessionErr) {
-          console.warn('⚠️ Failed to persist fresh session on cached review:', sessionErr.message);
-        }
+      if (cachedResponse.sessionPersisted && cachedResponse.csrfToken) {
+        res.cookie(CSRF_COOKIE_NAME, cachedResponse.csrfToken, {
+          httpOnly: true,
+          sameSite: 'strict',
+          path: '/',
+          secure: process.env.NODE_ENV === 'production',
+        });
       }
-      delete cachedResponse._sessionFiles;
-      res.cookie(CSRF_COOKIE_NAME, freshCsrfToken, {
-        httpOnly: false,
-        sameSite: 'strict',
-        path: '/',
-        secure: process.env.NODE_ENV === 'production',
-      });
-      return res.json({
-        ...cachedResponse,
-        sessionId: freshSessionId,
-        sessionPersisted: persisted,
-        chatAvailable: persisted,
-        ...(persisted ? { sessionOwnerToken: freshOwnerToken, csrfToken: freshCsrfToken } : {}),
-      });
+      return res.json(cachedResponse);
     }
   }
 
@@ -1158,8 +873,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
       let currentPayloadLength = 0;
       let truncatedFiles = [];
       for (const file of files) {
-        if (currentPayloadLength + file.content.length > MAX_PAYLOAD_CHARS
-            || truncatedFiles.length >= MAX_FILES_PER_ANALYSIS) {
+        if (currentPayloadLength + file.content.length > MAX_PAYLOAD_CHARS) {
           partial_review = true;
           break;
         }
@@ -1179,7 +893,7 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
 
       // 2. Mocking AI Response for initial setup (or forward to FastAPI AI Engine)
       // This is a perfect placeholder where contributors can connect the FastAPI server!
-      const aiEngineUrl = AI_ENGINE_BASE_URL;
+      const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
       
       let reviewResult;
       const baseUrl = aiEngineUrl.replace(/\/+$/, '');
@@ -1189,52 +903,47 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ files, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt, batchSize, repositoryContext })
         });
-
+        
         if (aiResponse.ok) {
           reviewResult = await aiResponse.json();
           reviewResult._mock = false;
         } else {
           throw new Error('AI engine responded with error');
+      console.log(`≡ƒôü Found ${files.length} valid source files. Checking cache...`);
+
+      // 1.3. Scan files for prompt injection patterns
+      const fileWarnings = [];
+      for (const file of files) {
+        const fileScanWarnings = scanFileContentForWarnings(file.content);
+        for (const warning of fileScanWarnings) {
+          fileWarnings.push({ file: file.name, warning });
         }
-      } catch (err) {
-        console.warn('⚠️ FastAPI engine error, falling back...');
+      }
+      if (fileWarnings.length > 0) {
+        console.warn(`ΓÜá∩╕Å Found ${fileWarnings.length} potential prompt injection patterns across ${files.length} files`);
       }
 
-      if (!reviewResult) {
-        console.log(`📁 Found ${files.length} valid source files. Checking cache...`);
+      // 1.5. Check analysis cache to avoid redundant LLM calls for identical analyses
+      const CONFIG_FILENAME = '.codereviewer.yml';
+      const scrubbedFiles = files
+        .filter(f => f.name !== CONFIG_FILENAME)
+        .map(file => ({
+        ...file,
+        content: scrubRepositoryPayload(file.content)
+      }));
 
-        const fileWarnings = [];
-        for (const file of files) {
-          const fileScanWarnings = scanFileContentForWarnings(file.content);
-          for (const warning of fileScanWarnings) {
-            fileWarnings.push({ file: file.name, warning });
-          }
-        }
-        if (fileWarnings.length > 0) {
-          console.warn(`⚠️ Found ${fileWarnings.length} potential prompt injection patterns across ${files.length} files`);
-        }
+      const cacheKey = analysisCache.generateKey(repoUrl, scrubbedFiles, { model, language, company, systemPrompt: validatedPrompt, temperature, maxTokens, batchSize });
+      let cacheHit = !!analysisCache.get(cacheKey);
+      if (cacheHit) {
+        console.log(`🎯 Using cached analysis result for this repository and configuration`);
+      }
 
-        const CONFIG_FILENAME = '.codereviewer.yml';
-        const scrubbedFiles = files
-          .filter(f => f.name !== CONFIG_FILENAME)
-          .map(file => ({
-          ...file,
-          content: scrubRepositoryPayload(file.content)
-        }));
-
-        const cacheKey = analysisCache.generateKey(repoUrl, scrubbedFiles, { model, language, company, systemPrompt: validatedPrompt, temperature, maxTokens, batchSize });
-        let cacheHit = !!analysisCache.get(cacheKey);
-        if (cacheHit) {
-          console.log(`🎯 Using cached analysis result for this repository and configuration`);
-        }
-
-        reviewResult = await analysisCache.getOrSet(cacheKey, async () => {
-          // 2. Mocking AI Response for initial setup (or forward to FastAPI AI Engine)
-        const aiEngineUrl = AI_ENGINE_BASE_URL;
+      let reviewResult = await analysisCache.getOrSet(cacheKey, async () => {
+        // 2. Mocking AI Response for initial setup (or forward to FastAPI AI Engine)
+        const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
         const baseUrl = aiEngineUrl.replace(/\/+$/, '');
         try {
           const aiResponse = await fetchWithTimeout(`${baseUrl}/analyze`, {
-            validate: false,
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
             body: JSON.stringify({ files: scrubbedFiles, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt, batchSize })
@@ -1329,7 +1038,6 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
             files: storedFiles,
             lastAccessedAt: new Date(),
             ownerToken: sessionOwnerToken,
-            clientId: req.clientId,
             csrfToken,
           });
           sessionPersisted = true;
@@ -1344,9 +1052,8 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
       let ragStatus = 'skipped';
       if (!cacheHit) {
         try {
-          const baseUrl = (AI_ENGINE_BASE_URL).replace(/\/+$/, '');
+          const baseUrl = (process.env.AI_ENGINE_URL || 'http://localhost:8000').replace(/\/+$/, '');
         const splitResp = await fetchWithTimeout(`${baseUrl}/api/rag/split`, {
-          validate: false,
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
           body: JSON.stringify({ files: storedFiles, repo_url: repoUrl })
@@ -1358,9 +1065,8 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
           for (let attempt = 1; attempt <= 3; attempt++) {
             try {
               const ingestResp = await fetchWithTimeout(`${baseUrl}/api/rag/ingest`, {
-                validate: false,
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '', 'x-rag-ingest-key': process.env.RAG_INGEST_KEY || '', 'x-client-id': req.clientId || '' },
+                headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '', 'x-rag-ingest-key': process.env.RAG_INGEST_KEY || '' },
                 body: JSON.stringify({ repo_url: repoUrl, chunks })
               }, 60000);
               if (ingestResp.ok) {
@@ -1368,9 +1074,8 @@ app.post('/api/analyze', requireApiKey, requireJsonContentType, concurrencyThrot
                 // Post-ingestion verification: check chunks are stored
                 try {
                   const verifyResp = await fetchWithTimeout(`${baseUrl}/api/rag/chunks`, {
-                    validate: false,
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '', 'x-client-id': req.clientId || '' },
+                    headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
                     body: JSON.stringify({ repo_url: repoUrl, limit: 1, offset: 0 })
                   }, 10000);
                   if (verifyResp.ok) {
@@ -1490,7 +1195,6 @@ const prSummary = {
           try {
             await Analytics.create({
               sessionId,
-              clientId: req.clientId,
               repoUrl,
               repoName,
               filesReviewedCount: files.length,
@@ -1564,29 +1268,10 @@ if (reviewResult?.fileReviews) {
       };
 
       if (finalCacheKey && !reviewResult?._mock) {
-        // Strip per-session credentials (sessionId, sessionOwnerToken,
-        // csrfToken, sessionPersisted, chatAvailable) from the cached
-        // payload so a cache hit can never return another caller's
-        // session credentials or CSRF token. The raw files are cached
-        // under a private field so a fresh session can be created for
-        // the next caller on a cache hit; the field is deleted before
-        // the response is returned.
-        const cachedPayload = {
-          ...responseObject,
-          sessionId: undefined,
-          sessionOwnerToken: undefined,
-          csrfToken: undefined,
-          sessionPersisted: false,
-          chatAvailable: false,
-        };
-        if (sessionPersisted && Array.isArray(storedFiles) && storedFiles.length > 0) {
-          cachedPayload._sessionFiles = storedFiles;
-        }
-        responseCache.set(finalCacheKey, cachedPayload, { repoUrl });
+        responseCache.set(finalCacheKey, responseObject, { repoUrl });
       }
 
       return res.json(responseObject);
-      }
 
     } catch (err) {
       console.error(err);
@@ -1596,24 +1281,12 @@ if (reviewResult?.fileReviews) {
 });
 
 // ≡ƒƒó Route: Direct File Analysis (for VS Code extension and single-file use cases)
-app.post('/api/analyze-file', requireApiKey, requireJsonContentType, concurrencyThrottleMiddleware, llmAnalysisLimiter, async (req, res) => {
+app.post('/api/analyze-file', requireApiKey, requireJsonContentType, llmAnalysisLimiter, async (req, res) => {
   try {
     let { files, company = 'General', language = 'English', model, temperature = 0.7, maxTokens = 2048, systemPrompt = '', batchSize = 5 } = req.body;
 
-    // Per-caller daily budget for direct file analysis (#3549).
-    const budget = consumeDailyAnalysisBudget(req);
-    if (!budget.allowed) {
-      return res.status(429).json({ error: `Daily analysis budget exceeded for this caller (${ANALYSIS_DAILY_BUDGET_PER_CLIENT} analyses per 24 hours). Please try again tomorrow.` });
-    }
-
     if (!files || !Array.isArray(files) || files.length === 0) {
       return res.status(400).json({ error: 'At least one file is required.' });
-    }
-
-    // Bound the number of files so a single request cannot fan out one LLM
-    // sub-call per tiny file (#3549).
-    if (files.length > MAX_FILES_PER_ANALYSIS) {
-      files = files.slice(0, MAX_FILES_PER_ANALYSIS);
     }
 
     for (const file of files) {
@@ -1623,8 +1296,7 @@ app.post('/api/analyze-file', requireApiKey, requireJsonContentType, concurrency
     }
 
     batchSize = Math.max(1, Math.min(20, parseInt(batchSize, 10) || 5));
-    const parsedTemp = parseFloat(temperature);
-  temperature = Math.max(0, Math.min(2, Number.isNaN(parsedTemp) ? 0.7 : parsedTemp));
+    temperature = Math.max(0, Math.min(2, parseFloat(temperature) || 0.7));
     const AI_ENGINE_MAX_TOKENS = parseInt(process.env.AI_ENGINE_MAX_TOKENS, 10) || 32768;
     maxTokens = Math.max(1, Math.min(AI_ENGINE_MAX_TOKENS, parseInt(maxTokens, 10) || 2048));
 
@@ -1664,13 +1336,12 @@ app.post('/api/analyze-file', requireApiKey, requireJsonContentType, concurrency
       }
     }
 
-    const aiEngineUrl = AI_ENGINE_BASE_URL;
+    const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
     const baseUrl = aiEngineUrl.replace(/\/+$/, '');
 
     let reviewResult;
     try {
       const aiResponse = await fetchWithTimeout(`${baseUrl}/analyze`, {
-        validate: false,
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
         body: JSON.stringify({ files, company, language, model, temperature, maxTokens, systemPrompt: validatedPrompt, batchSize })
@@ -1745,8 +1416,7 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
     model = chatNormalized;
   }
 
-  const parsedTemp = parseFloat(temperature);
-  temperature = Math.max(0, Math.min(2, Number.isNaN(parsedTemp) ? 0.7 : parsedTemp));
+  temperature = Math.max(0, Math.min(2, parseFloat(temperature) || 0.7));
   maxTokens = Math.max(1, Math.min(128000, parseInt(maxTokens, 10) || 2048));
 
   if (!message) {
@@ -1765,23 +1435,6 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
     validatedPrompt = validatePrompt(systemPrompt);
   } catch (err) {
     return res.status(400).json({ error: err.message });
-  }
-
-  // Validate all history messages for prompt injection, not just the current message
-  if (Array.isArray(history) && history.length > 0) {
-    for (const entry of history) {
-      if (entry && entry.content) {
-        try {
-          validatePrompt(entry.content);
-        } catch (err) {
-          return res.status(400).json({ error: `History contains prohibited content: ${err.message}` });
-        }
-      }
-    }
-    // Enforce message budget — limit history to 20 messages to prevent replay attacks
-    if (history.length > 20) {
-      history = history.slice(-20);
-    }
   }
 
   // Use reviewQueue to serialize requests per session, preventing
@@ -1832,14 +1485,13 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
       // Extend TTL atomically with ownership check, inside the lock
       await Session.updateOne({ sessionId }, { $set: { lastAccessedAt: new Date() }, $max: { absoluteExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000) } });
 
-      const aiEngineUrl = AI_ENGINE_BASE_URL;
+      const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
 
       try {
         const baseUrl = aiEngineUrl.replace(/\/+$/, '');
         const aiResponse = await fetchWithTimeout(`${baseUrl}/chat`, {
-          validate: false,
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '', 'x-client-id': req.clientId || '' },
+          headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
           body: JSON.stringify({
             files: context.files,
             message,
@@ -1878,37 +1530,19 @@ app.post('/api/chat', requireApiKey, requireJsonContentType, chatLimiter, async 
 });
 
 // ≡ƒƒó Route: Proxy for RAG query ΓÇö forwards to the AI engine
-app.post('/api/rag/query', requireApiKey, async (req, res) => {
+app.post('/api/rag/query', requireApiKey, requireJsonContentType, async (req, res) => {
   const { question, repoUrl } = req.body;
   if (!question) {
     return res.status(400).json({ error: 'question is required.' });
   }
-  if (!repoUrl || typeof repoUrl !== 'string') {
-    return res.status(400).json({ error: 'repoUrl is required.' });
-  }
 
-  // Tenant isolation: only allow RAG queries against a repository that this
-  // client has actually analyzed. Without this, any caller could read (or
-  // delete) another tenant's private source code via its repo_url.
-  try {
-    const ownsRepo = await Analytics.exists({ clientId: req.clientId, repoUrl });
-    if (!ownsRepo) {
-      console.warn(`⛔ RAG query blocked: caller ${req.clientId} does not own ${repoUrl}`);
-      return res.status(403).json({ error: 'Access denied: you have not analyzed this repository.' });
-    }
-  } catch (ownershipErr) {
-    console.error('Γ¥î RAG ownership check error:', sanitizeErrorMessage(ownershipErr.message));
-    return res.status(500).json({ error: 'RAG query failed: ownership check unavailable.' });
-  }
-
-  const aiEngineUrl = AI_ENGINE_BASE_URL;
+  const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
 
   try {
     const baseUrl = aiEngineUrl.replace(/\/+$/, '');
     const aiResponse = await fetchWithTimeout(`${baseUrl}/api/rag/query`, {
-      validate: false,
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '', 'x-client-id': req.clientId || '' },
+      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
       body: JSON.stringify({ question, repo_url: repoUrl })
     }, 30000);
 
@@ -1929,16 +1563,14 @@ app.post('/api/rag/query', requireApiKey, async (req, res) => {
 const repoRequestCounts = new Map();
 const REPO_WINDOW_MS = 60 * 1000;
 const REPO_MAX_REQUESTS = 5;
-const repoCleanupTimer = setInterval(() => {
+setInterval(() => {
   const now = Date.now();
   for (const [key, { count, windowStart }] of repoRequestCounts) {
     if (now - windowStart > REPO_WINDOW_MS) {
       repoRequestCounts.delete(key);
     }
   }
-}, 60 * 1000);
-repoCleanupTimer.unref();
-registerTimer(repoCleanupTimer);
+}, 60 * 1000).unref();
 
 const webhookLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -1951,31 +1583,9 @@ const webhookLimiter = rateLimit({
   message: { error: 'Too many webhook requests.' }
 });
 
-// Per-repository rate limit for the /ai-review manual trigger. The trigger
-// re-runs the full review pipeline, so an attacker commenting "/ai-review" on
-// many PRs (or repeatedly on one) must not be able to spam the shared PAT.
-const manualTriggerCounts = new Map(); // `${owner}/${repo}` -> { windowStart, count }
-const MANUAL_TRIGGER_WINDOW_MS = 60 * 60 * 1000; // 1 hour
-const MANUAL_TRIGGER_MAX = 3;
-
-function consumeManualTrigger(owner, repo) {
-  const now = Date.now();
-  const key = `${owner}/${repo}`;
-  const entry = manualTriggerCounts.get(key);
-  if (!entry || now - entry.windowStart >= MANUAL_TRIGGER_WINDOW_MS) {
-    manualTriggerCounts.set(key, { windowStart: now, count: 1 });
-    return true;
-  }
-  if (entry.count >= MANUAL_TRIGGER_MAX) {
-    return false;
-  }
-  entry.count += 1;
-  return true;
-}
-
-app.get('/api/roi', requireApiKey, roiLimiter, async (req, res) => {
+app.get('/api/roi', async (req, res) => {
   try {
-    const metrics = await RoiMetrics.find({ clientId: req.clientId });
+    const metrics = await RoiMetrics.find({});
     
     const aggregated = metrics.reduce((acc, curr) => {
       acc.totalPrsReviewed += curr.totalPrsReviewed;
@@ -1996,17 +1606,8 @@ app.get('/api/roi', requireApiKey, roiLimiter, async (req, res) => {
 
     const timeSavedHours = (aggregated.timeSavedMinutes / 60).toFixed(1);
 
-    // Do not return the entire RoiMetrics collection (repository names + per-repo
-    // counters are sensitive tenant data). The public dashboard only renders the
-    // aggregated hero metrics and a top-10 chart, so limit the response to those
-    // exact fields and cap the list at the top 10 repos.
-    const topRepos = metrics
-      .map(m => ({ repoName: m.repoName, timeSavedMinutes: m.timeSavedMinutes }))
-      .sort((a, b) => b.timeSavedMinutes - a.timeSavedMinutes)
-      .slice(0, 10);
-
     res.json({
-      metrics: topRepos,
+      metrics,
       aggregated: {
         ...aggregated,
         acceptanceRate,
@@ -2020,7 +1621,7 @@ app.get('/api/roi', requireApiKey, roiLimiter, async (req, res) => {
 });
 
 // 🚀 Route: GitHub Webhook Receiver for automated Pull Request Reviews
-app.post('/api/webhook', webhookLimiter, webhookRateLimiter, async (req, res) => {
+app.post('/api/webhook', webhookLimiter, async (req, res) => {
   const webhookSecret = process.env.WEBHOOK_SECRET;
   if (!webhookSecret) {
     console.error('Γ¥î WEBHOOK_SECRET not configured');
@@ -2087,11 +1688,6 @@ app.post('/api/webhook', webhookLimiter, webhookRateLimiter, async (req, res) =>
         const repo = payload.repository.name;
         const pullNumber = payload.issue.number;
         console.log(`Manual trigger /ai-review detected on PR #${pullNumber}`);
-
-        if (!consumeManualTrigger(owner, repo)) {
-          console.warn(`ΓÜá Manual /ai-review trigger limit reached for ${owner}/${repo}.`);
-          return res.json({ message: "Manual review trigger limit reached for this repository. Try again later." });
-        }
         
         try {
           const octokit = new Octokit({ auth: process.env.GITHUB_PAT });
@@ -2132,10 +1728,9 @@ app.post('/api/webhook', webhookLimiter, webhookRateLimiter, async (req, res) =>
       console.log(`💬 Conversational AI trigger on PR #${pullNumber}, file: ${filePath}`);
       
       try {
-        const aiEngineUrl = AI_ENGINE_BASE_URL;
+        const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
         const baseUrl = aiEngineUrl.replace(/\/+$/, '');
         const aiResponse = await fetchWithTimeout(`${baseUrl}/chat-inline`, {
-          validate: false,
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
           body: JSON.stringify({
@@ -2172,7 +1767,7 @@ app.post('/api/webhook', webhookLimiter, webhookRateLimiter, async (req, res) =>
       const repoName = payload.repository?.full_name;
       if (repoName) {
         console.log(`Tracking resolved AI comment for ROI on ${repoName}`);
-        await RoiMetrics.recordAcceptedSuggestion('system', repoName).catch(e => console.error("ROI tracking error", e));
+        await RoiMetrics.recordAcceptedSuggestion(repoName).catch(e => console.error("ROI tracking error", e));
       }
     }
     
@@ -2207,8 +1802,11 @@ app.post('/api/webhook', webhookLimiter, webhookRateLimiter, async (req, res) =>
     if (redisClient) {
       isDuplicate = await redisClient.setnx(deliveryDedupKey, Date.now().toString());
     } else {
-      const exists = await dedupStore.checkAndSet(deliveryDedupKey, Date.now().toString(), DELIVERY_REDIS_TTL * 1000);
-      isDuplicate = exists ? 0 : 1;
+      const existing = await dedupStore.get(deliveryDedupKey);
+      isDuplicate = existing ? 0 : 1;
+      if (isDuplicate) {
+        await dedupStore.set(deliveryDedupKey, Date.now().toString(), DELIVERY_REDIS_TTL * 1000);
+      }
     }
     if (isDuplicate === 0) {
       console.log(`ΓÅ¡∩╕Å Skipping duplicate webhook delivery: ${deliveryId}`);
@@ -2242,7 +1840,17 @@ app.post('/api/webhook', webhookLimiter, webhookRateLimiter, async (req, res) =>
         }
       } else {
         const mapKey = `${shaDedupKey}:${headSha}`;
-        shaAlreadyReviewed = (await checkAndSetSha(mapKey)) ? 1 : 0;
+        shaAlreadyReviewed = shaDedupMemoryMap.has(mapKey) ? 1 : 0;
+        if (!shaAlreadyReviewed) {
+          // Enforce max size cap with oldest-entry eviction
+          if (shaDedupMemoryMap.size >= SHA_DEDUP_MAX_SIZE) {
+            const oldestKey = shaDedupMemoryMap.keys().next().value;
+            if (oldestKey !== undefined) {
+              shaDedupMemoryMap.delete(oldestKey);
+            }
+          }
+          shaDedupMemoryMap.set(mapKey, Date.now());
+        }
       }
       if (shaAlreadyReviewed) {
         console.log(`ΓÅ¡∩╕Å Already reviewed commit ${headSha.substring(0,7)} for PR #${pullNumber}`);
@@ -2336,31 +1944,9 @@ app.post('/api/webhook', webhookLimiter, webhookRateLimiter, async (req, res) =>
   return res.json({ success: true, message: 'Webhook received.' });
 });
 
-// Per-client quota for issue creation. The server uses a shared GITHUB_PAT,
-// so a holder of the shared API key could otherwise create issues in arbitrary
-// repositories. Binding creation to an analyzed session plus this quota keeps
-// the blast radius of any leaked key limited.
-const ISSUE_QUOTA_WINDOW_MS = 60 * 60 * 1000; // 1 hour
-const MAX_ISSUES_PER_CLIENT = 5;
-const issueQuotaByClient = new Map(); // clientId -> { windowStart, count }
-
-function consumeIssueQuota(clientId) {
-  const now = Date.now();
-  const entry = issueQuotaByClient.get(clientId);
-  if (!entry || now - entry.windowStart >= ISSUE_QUOTA_WINDOW_MS) {
-    issueQuotaByClient.set(clientId, { windowStart: now, count: 1 });
-    return true;
-  }
-  if (entry.count >= MAX_ISSUES_PER_CLIENT) {
-    return false;
-  }
-  entry.count += 1;
-  return true;
-}
-
 // ≡ƒƒó Route: Create GitHub Issue automatically for Code Reviews
 app.post('/api/issues/create', requireApiKey, requireJsonContentType, issueLimiter, async (req, res) => {
-  const { repoUrl, title, body, labels = [], sessionId, sessionOwnerToken } = req.body;
+  const { repoUrl, title, body, labels = [] } = req.body;
   const token = process.env.GITHUB_PAT;
 
   if (!token) {
@@ -2392,51 +1978,9 @@ app.post('/api/issues/create', requireApiKey, requireJsonContentType, issueLimit
   const owner = parsed.owner;
   const repo = parsed.repo;
 
-  // The target repo must match the repository this caller actually analyzed in
-  // their own session. Without this binding, any holder of the shared API key
-  // could use the server's PAT to open issues in arbitrary repositories.
-  if (!isValidUuid(sessionId)) {
-    return res.status(400).json({ error: 'sessionId is required and must be a valid UUID.' });
-  }
-  if (!sessionOwnerToken || typeof sessionOwnerToken !== 'string') {
-    return res.status(403).json({ error: 'Access denied: sessionOwnerToken is required.' });
-  }
-
   try {
-    const session = await Session.findOne({ sessionId }).lean();
-    if (!session) {
-      return res.status(403).json({ error: 'Access denied: session not found or expired. Please analyze a repository first.' });
-    }
-    if (!session.ownerToken) {
-      return res.status(403).json({ error: 'Access denied: session has no ownership token.' });
-    }
-    const providedBuf = Buffer.from(sessionOwnerToken, 'utf8');
-    const storedBuf = Buffer.from(String(session.ownerToken), 'utf8');
-    if (providedBuf.length !== storedBuf.length || !crypto.timingSafeEqual(providedBuf, storedBuf)) {
-      console.warn(`ΓÜá Session ownership mismatch for issue creation: session ${sessionId}`);
-      return res.status(403).json({ error: 'Access denied: this session does not belong to you.' });
-    }
-
-    const analyzed = parseRepoUrl(session.repoUrl);
-    if (!analyzed || analyzed.owner !== owner || analyzed.repo !== repo) {
-      return res.status(403).json({ error: 'Access denied: you can only create issues for the repository you analyzed in your session.' });
-    }
-
-    if (!consumeIssueQuota(req.clientId || 'unknown')) {
-      return res.status(429).json({ error: 'Issue creation limit reached for this session. Try again later.' });
-    }
-
     const octokit = new Octokit({ auth: token });
-
-    // Verify the PAT can actually access the target repo before creating.
-    // Fails closed with a generic message so we don't leak repo existence.
-    try {
-      await octokit.rest.repos.get({ owner, repo });
-    } catch (patErr) {
-      console.warn(`ΓÜá Issue creation blocked: server token cannot access ${owner}/${repo}: ${patErr.message}`);
-      return res.status(403).json({ error: 'Access denied: the server token cannot access this repository.' });
-    }
-
+    
     console.log(`≡ƒñû Creating GitHub Issue in ${owner}/${repo}: "${title}"`);
     
     const response = await octokit.rest.issues.create({
@@ -2455,86 +1999,21 @@ app.post('/api/issues/create', requireApiKey, requireJsonContentType, issueLimit
 
   } catch (err) {
     console.error('Γ¥î Create GitHub Issue Error:', err.message);
-    return res.status(500).json({ error: 'Failed to create the GitHub issue. Please try again later.' });
+    return res.status(500).json({ error: `Failed to create issue: ${err.message}` });
   }
 });
 
 // ≡ƒƒó Route: Invalidate analysis cache by repo URL
-app.post('/api/cache/invalidate', requireApiKey, cacheInvalidateLimiter, async (req, res) => {
+app.post('/api/cache/invalidate', requireApiKey, async (req, res) => {
   const { repoUrl } = req.body;
   if (!repoUrl) {
     return res.status(400).json({ error: 'repoUrl is required.' });
-  }
-  const normalized = repoUrl.replace(/\/+$/, '').toLowerCase();
-  try {
-    const ownedSession = await Session.exists({
-      clientId: req.clientId,
-      repoUrl: { $regex: new RegExp(`^${normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/?$`, 'i') },
-    });
-    if (!ownedSession) {
-      return res.status(403).json({
-        error: 'You can only invalidate the cache for a repository you have analyzed with this client.',
-      });
-    }
-  } catch (err) {
-    console.error('⚠️ Cache invalidation ownership check failed:', err.message);
-    return res.status(500).json({ error: 'Failed to verify repository ownership.' });
   }
   const removed = analysisCache.invalidateByRepoUrl(repoUrl);
   res.json({ success: true, removed, stats: analysisCache.getStats() });
 });
 
 // Webhook review queueing uses ReviewQueue from reviewQueue.js (per-key mutex)
-
-// Hard cap on inline comments posted per review. The shared GITHUB_PAT is
-// shared across every repository, so unbounded comment volume on a single PR
-// would exhaust the token's GitHub API rate budget and DoS the bot globally.
-// GitHub also only allows 50 comments per review via the REST API.
-const MAX_COMMENTS_PER_REVIEW = 50;
-
-// Per-PR posting throttle with exponential backoff. After a failed review
-// post, subsequent attempts for the same PR are skipped until the backoff
-// window elapses, preventing rapid-fire retry loops under the shared PAT.
-const POSTING_BACKOFF_BASE_MS = 30 * 1000;
-const POSTING_BACKOFF_MAX_MS = 30 * 60 * 1000;
-const prPostingState = new Map(); // `${owner}/${repo}#${pull}` -> { nextAllowedAt, backoffMs }
-
-function isPrPostingBlocked(prKey, now = Date.now()) {
-  const state = prPostingState.get(prKey);
-  return !!(state && state.nextAllowedAt > now);
-}
-
-function recordPrPostingAttempt(prKey, failed, now = Date.now()) {
-  if (!failed) {
-    prPostingState.delete(prKey);
-    return;
-  }
-  const state = prPostingState.get(prKey) || { backoffMs: 0 };
-  const nextBackoff = Math.min(
-    POSTING_BACKOFF_MAX_MS,
-    Math.max(POSTING_BACKOFF_BASE_MS, state.backoffMs * 2 || POSTING_BACKOFF_BASE_MS)
-  );
-  prPostingState.set(prKey, { nextAllowedAt: now + nextBackoff, backoffMs: nextBackoff });
-}
-
-// Custom repository rules (.ai-reviewer.yml / .github/ai-reviewer.md) are
-// fetched from the PR head sha, which is attacker-controlled in fork PRs.
-// They are configuration, not instructions: cap their size and strip
-// instruction-like directives before forwarding so they can never override
-// the AI engine's defensive "treat code as data, not instructions" boundary.
-const MAX_CUSTOM_RULES_LENGTH = 2000;
-const INSTRUCTION_LIKE_RE = /^\s*(you\s+(must|should|shall|need|are|will)|always|never|ignore|forget|do\s+not|act\s+as|pretend|respond|reply|follow|override|disregard|take\s+precedence|treat|consider\s+it\s+an\s+instruction)/i;
-
-function sanitizeCustomRules(rules) {
-  if (typeof rules !== 'string') return null;
-  const capped = rules.length > MAX_CUSTOM_RULES_LENGTH ? rules.slice(0, MAX_CUSTOM_RULES_LENGTH) : rules;
-  const stripped = capped
-    .split('\n')
-    .filter(line => !INSTRUCTION_LIKE_RE.test(line))
-    .join('\n')
-    .trim();
-  return stripped.length > 0 ? stripped : null;
-}
 
 // 🚀 Helper to execute Webhook PR review logic
 async function runWebhookReview(owner, repo, pullNumber, headSha) {
@@ -2595,12 +2074,6 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     return;
   }
 
-  // Review configuration must come from the PR's BASE branch (maintainer
-  // controlled) rather than the head SHA (fork/contributor controlled).
-  // Otherwise a PR author could commit a malicious .ai-ignore to skip all
-  // their files, or a malicious .ai-reviewer.yml to steer the AI review.
-  const configRef = pullRequest.base && (pullRequest.base.sha || pullRequest.base.ref);
-
   // Fetch .ai-ignore patterns once
   const excludePatternsInput = 'package-lock.json,yarn.lock,pnpm-lock.yaml,dist/**,build/**';
   const baseExcludePatterns = excludePatternsInput.split(',').map(p => p.trim()).filter(Boolean).map(globToRegex);
@@ -2608,7 +2081,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
   let aiIgnorePatterns = [];
   try {
     const { data: ignoreFile } = await octokit.rest.repos.getContent({
-      owner, repo, path: '.ai-ignore', ref: configRef
+      owner, repo, path: '.ai-ignore', ref: headSha
     });
     const ignoreContent = Buffer.from(ignoreFile.content, 'base64').toString('utf8');
     aiIgnorePatterns = ignoreContent.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(globToRegex);
@@ -2627,10 +2100,6 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
   const commentsToPost = [];
   const filesToReview = [];
   const validChangedLines = new Map();
-  // Inline comments from the local scanners whose position is not part of the
-  // diff (or that fall outside the per-review cap) are dropped instead of being
-  // posted, so we never send GitHub API calls with invalid line locations.
-  let discardedLocalComments = 0;
 
   for (const file of parsedFiles) {
     // Check if file is supported
@@ -2644,11 +2113,6 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     // Run local secrets scanner
     const { findings: secretFindings, truncated: scanTruncated, totalChanges: scanTotal, skippedReason: scanReason } = scanSecretsInChanges(file.changes);
     secretFindings.forEach(f => {
-      const validLines = validChangedLines.get(file.path);
-      if (!validLines || !validLines.has(Number(f.line))) {
-        discardedLocalComments++;
-        return;
-      }
       commentsToPost.push({
         path: file.path,
         line: f.line,
@@ -2663,15 +2127,9 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     const fileContent = file.changes.map(c => c.content).join('\n');
     const injectionWarnings = scanFileContentForWarnings(fileContent);
     injectionWarnings.forEach(warning => {
-      const validLines = validChangedLines.get(file.path);
-      const injectionLine = file.changes[0]?.line || 1;
-      if (!validLines || !validLines.has(Number(injectionLine))) {
-        discardedLocalComments++;
-        return;
-      }
       commentsToPost.push({
         path: file.path,
-        line: injectionLine,
+        line: file.changes[0]?.line || 1,
         body: `<!-- RepoSage Review Comment -->\n⚠️ **Prompt Injection Warning:** ${warning}`
       });
     });
@@ -2688,10 +2146,6 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     });
   }
 
-  if (discardedLocalComments > 0) {
-    console.warn(`ΓÜá∩╕Å ${discardedLocalComments} local scanner comments dropped because their positions were not part of the diff`);
-  }
-
   // Track whether the AI engine was successfully queried
   let aiEngineQueried = false;
   let aiCommentsDiscarded = 0;
@@ -2703,11 +2157,11 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     try {
       let customRulesResponse;
       try {
-        customRulesResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.ai-reviewer.yml', ref: configRef });
+        customRulesResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.ai-reviewer.yml', ref: headSha });
       } catch (err) {
         if (err.status === 404) {
           try {
-            customRulesResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.github/ai-reviewer.md', ref: configRef });
+            customRulesResponse = await octokit.rest.repos.getContent({ owner, repo, path: '.github/ai-reviewer.md', ref: headSha });
           } catch (err2) {
             // Not found
           }
@@ -2715,7 +2169,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       }
       
       if (customRulesResponse && customRulesResponse.data && customRulesResponse.data.content) {
-        customRules = sanitizeCustomRules(Buffer.from(customRulesResponse.data.content, 'base64').toString('utf8'));
+        customRules = Buffer.from(customRulesResponse.data.content, 'base64').toString('utf8');
         console.log('✅ Found custom repository rules.');
       }
     } catch (err) {
@@ -2723,7 +2177,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
     }
 
     console.log(`🧠 Querying AI engine for ${filesToReview.length} files...`);
-    const aiEngineUrl = AI_ENGINE_BASE_URL;
+    const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
     
     try {
       // Look for .ai-reviewer.yml to check security mode
@@ -2738,7 +2192,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
           owner,
           repo,
           path: '.ai-reviewer.yml',
-          ref: configRef
+          ref: headSha
         });
         const content = Buffer.from(configFile.content, 'base64').toString('utf8');
         const config = yaml.load(content);
@@ -2747,7 +2201,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
           if (securityMode) {
             console.log(`🔒 Dedicated Security Mode enabled for ${owner}/${repo}`);
           }
-          customPrompt = sanitizeCustomRules(config.custom_prompt) || '';
+          customPrompt = config.custom_prompt || '';
           autoFixTrivial = !!config.auto_fix_trivial;
           if (config.severity) {
             severityOverrides = config.severity;
@@ -2759,7 +2213,6 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
 
       const baseUrl = aiEngineUrl.replace(/\/+$/, '');
       const aiResponse = await fetchWithTimeout(`${baseUrl}/review-diff`, {
-        validate: false,
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
         body: JSON.stringify({ files: filesToReview, security_mode: securityMode, custom_prompt: customPrompt, custom_rules: customRules })
@@ -2772,9 +2225,7 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
         } catch (parseErr) {
           console.warn('ΓÜá∩╕Å AI engine returned HTTP 200 with malformed (non-JSON) body:', parseErr.message);
         }
-        if (result && result.status === 'error') {
-          console.error(`Γ¥î ALERT: AI Engine review returned error status for ${owner}/${repo}#${pullNumber}. Review blocked from auto-approval.`);
-        } else if (result && Array.isArray(result.comments)) {
+        if (result && Array.isArray(result.comments)) {
           
           // Map body to message for categorizeFinding
           result.comments.forEach(c => { c.message = c.body; });
@@ -2830,14 +2281,13 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
 
   // PR Summary generation
   try {
-    const aiEngineUrl = AI_ENGINE_BASE_URL;
+    const aiEngineUrl = process.env.AI_ENGINE_URL || 'http://localhost:8000';
     const baseUrl = aiEngineUrl.replace(/\/+$/, '');
     
     // We truncate diff to max 15000 chars for summary
     const truncatedDiff = diff.length > 15000 ? diff.substring(0, 15000) + '\n...[Diff truncated]' : diff;
     
     const summaryResponse = await fetchWithTimeout(`${baseUrl}/summarize-pr`, {
-      validate: false,
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REPOSAGE_API_KEY || '' },
       body: JSON.stringify({ diff: truncatedDiff })
@@ -2877,19 +2327,6 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
   }
 
   // 3. Post consolidated review comment back to GitHub PR
-  const prKey = `${owner}/${repo}#${pullNumber}`;
-  if (isPrPostingBlocked(prKey)) {
-    console.warn(`⏳ Skipping review posting for ${prKey} — posting rate limit / backoff active.`);
-    return;
-  }
-
-  // Enforce the hard per-review comment cap. Anything beyond the cap is
-  // dropped so the number of GitHub API calls per event stays bounded.
-  if (commentsToPost.length > MAX_COMMENTS_PER_REVIEW) {
-    console.warn(`⚠️ Capping ${commentsToPost.length} comments to ${MAX_COMMENTS_PER_REVIEW} for PR #${pullNumber}.`);
-    commentsToPost.length = MAX_COMMENTS_PER_REVIEW;
-  }
-
   if (commentsToPost.length > 0) {
     console.log(`Γ£ì∩╕Å Posting PR Review with ${commentsToPost.length} inline comments...`);
 
@@ -2913,7 +2350,6 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
       
       const reviewEvent = 'COMMENT';
 
-      let batchPosted = false;
       try {
         const { data: createdReview } = await octokit.rest.pulls.createReview({
           owner,
@@ -2925,54 +2361,31 @@ async function runWebhookReview(owner, repo, pullNumber, headSha) {
           comments: batch
         });
         postedReviewIds.push(createdReview.id);
-        batchPosted = true;
       } catch (reviewErr) {
-        // Do NOT retry every comment as its own API call: on a batch failure
-        // that could multiply to 50 extra calls per batch under the shared
-        // PAT. Instead post a single fallback COMMENT review that lists the
-        // findings as text, and back off further posting attempts for this PR.
-        console.warn(`⚠️ Batched review creation failed (${reviewErr.message}); posting a single fallback review instead of per-comment retries.`);
-        try {
-          const fallbackBody =
-            `## 🛡️ RepoSage AI Code Review — Inline Comments Unavailable\n\n` +
-            `The bot could not post inline review comments on this batch (${batch.length} of ${commentsToPost.length} findings) because some positions were not part of the diff. The findings are listed below for manual review:\n\n` +
-            batch.map(c => `- **\`${c.path}:${c.line}\`**\n\n${c.body}`).join('\n\n');
-          const { data: fallbackReview } = await octokit.rest.pulls.createReview({
-            owner,
-            repo,
-            pull_number: pullNumber,
-            commit_id: headSha,
-            event: 'COMMENT',
-            body: fallbackBody
-          });
-          postedReviewIds.push(fallbackReview.id);
-        } catch (fallbackErr) {
-          console.warn(`⚠️ Fallback review also failed for PR #${pullNumber}: ${fallbackErr.message}`);
-          recordPrPostingAttempt(prKey, true);
+        console.warn(`⚠️ Batched review creation failed (${reviewErr.message}); retrying comments individually and skipping invalid ones.`);
+        for (const comment of batch) {
+          try {
+            const { data: singleReview } = await octokit.rest.pulls.createReview({
+              owner,
+              repo,
+              pull_number: pullNumber,
+              commit_id: headSha,
+              event: 'COMMENT',
+              body: `## 🛡️ RepoSage AI Code Review Audit Completed!\n\n${body}`,
+              comments: [comment]
+            });
+            postedReviewIds.push(singleReview.id);
+          } catch (commentErr) {
+            console.warn(`⚠️ Skipping invalid inline comment on ${comment.path}:${comment.line} — ${commentErr.message}`);
+          }
         }
-      }
-      if (batchPosted) {
-        recordPrPostingAttempt(prKey, false);
       }
     }
     
     // Log metrics for ROI Dashboard
     const repoName = `${owner}/${repo}`;
-    await RoiMetrics.recordPrReview('system', repoName, commentsToPost.length).catch(e => console.error("ROI tracking error", e));
+    await RoiMetrics.recordPrReview(repoName, commentsToPost.length).catch(e => console.error("ROI tracking error", e));
 
-  } else if (filesToReview.length === 0) {
-    // Every file in the diff was excluded or unsupported — no AI analysis
-    // actually happened, so we must NOT auto-approve or grant the label.
-    console.warn(`⚠️ No files were eligible for AI review on PR #${pullNumber} — refusing to auto-approve.`);
-    const { data: createdReview } = await octokit.rest.pulls.createReview({
-      owner,
-      repo,
-      pull_number: pullNumber,
-      commit_id: headSha,
-      event: 'COMMENT',
-      body: `## ⚠️ RepoSage AI Code Review — No Files Reviewed\n\nNo files in this PR were eligible for automated review (all changed files were excluded or unsupported), so no approval or label was granted.`
-    });
-    postedReviewIds.push(createdReview.id);
   } else if (aiCommentsDiscarded > 0) {
     console.warn(`ΓÜá∩╕Å ${aiCommentsDiscarded} AI comments were discarded due to line number mismatches ΓÇö posting COMMENT review instead of approving.`);
     const { data: createdReview } = await octokit.rest.pulls.createReview({
@@ -3383,7 +2796,6 @@ app.get('/api/analytics/trends', requireApiKey, async (req, res) => {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     const matchFilter = {
-      clientId: req.clientId,
       analyzedAt: { $gte: thirtyDaysAgo },
     };
 
@@ -3432,14 +2844,6 @@ app.get('/api/analytics/trends', requireApiKey, async (req, res) => {
     return res.status(500).json({ error: 'Failed to retrieve analytics trends.' });
   }
 });
-
-async function verifyAnalyticsOwnership(recordId, clientId) {
-  const record = await Analytics.findOne({ _id: recordId, clientId });
-  if (!record) {
-    return null;
-  }
-  return record;
-}
 
 app.get("/api/review-history", requireApiKey, async (req, res) => {
 
@@ -3520,13 +2924,16 @@ app.get("/api/review-history/compare/:id1/:id2", requireApiKey, async (req, res)
           return res.status(400).json({ error: 'Invalid ID format.' });
         }
 
-        const first = await verifyAnalyticsOwnership(req.params.id1, req.clientId);
-        const second = await verifyAnalyticsOwnership(req.params.id2, req.clientId);
+        const first = await Analytics.findOne({ _id: req.params.id1, clientId: req.clientId });
+
+        const second = await Analytics.findOne({ _id: req.params.id2, clientId: req.clientId });
 
         if (!first || !second) {
+
             return res.status(404).json({
                 error: "Review not found."
             });
+
         }
 
         res.json({
@@ -3569,18 +2976,26 @@ app.get("/api/review-history/compare/:id1/:id2", requireApiKey, async (req, res)
 });
 
 app.get('/health', (req, res) => {
-  // Liveness-only probe. Intentionally returns no internal state (database
-  // connectivity, run mode, circuit-breaker details) to avoid leaking
-  // deployment internals to unauthenticated callers.
   if (!serverReady) {
     return res.status(503).json({
       status: 'starting_up',
       timestamp: new Date().toISOString(),
+      database: isDatabaseConnected() ? 'connected' : 'disconnected',
       message: 'Server is still initializing. Please retry shortly.',
     });
   }
   res.json({
     status: 'ok',
+    timestamp: new Date().toISOString(),
+    database: isDatabaseConnected() ? 'connected' : 'disconnected',
+    mode: isDatabaseConnected() ? 'full' : 'degraded',
+    circuitBreaker: reviewQueue.getCircuitState(),
+  });
+});
+
+app.get('/api/health/circuit-breaker', (req, res) => {
+  res.json({
+    ...reviewQueue.getCircuitState(),
     timestamp: new Date().toISOString(),
   });
 });

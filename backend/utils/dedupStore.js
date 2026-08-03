@@ -1,41 +1,13 @@
-import { registerTimer } from './timerRegistry.js';
-
 class DedupStore {
   constructor(redisClient) {
     this.redisClient = redisClient;
     this.memoryStore = new Map();
-    this._locks = new Map();
     this._sweeper = null;
     this._startSweeper();
   }
 
   get size() {
     return this.memoryStore.size;
-  }
-
-  // Atomic check-and-set: returns true if key already exists, false if set was performed
-  async checkAndSet(key, value, ttlMs) {
-    if (this.redisClient) {
-      try {
-        const result = await this.redisClient.set(key, value, 'NX', 'PX', ttlMs);
-        return result === null;
-      } catch (err) {
-        console.warn(`⚠️ Redis checkAndSet failed for ${key}, falling back to memory:`, err.message);
-      }
-    }
-    while (this._locks.has(key)) {
-      await this._locks.get(key);
-    }
-    const next = (async () => {
-      const entry = this.memoryStore.get(key);
-      if (entry && Date.now() <= entry.expiresAt) return true;
-      this.memoryStore.set(key, { value, expiresAt: Date.now() + ttlMs });
-      return false;
-    })();
-    this._locks.set(key, next.finally(() => {
-      if (this._locks.get(key) === next) this._locks.delete(key);
-    }));
-    return next;
   }
 
   async set(key, value, ttlMs) {
@@ -106,12 +78,13 @@ class DedupStore {
       }
     }
     const entry = this.memoryStore.get(key);
-    if (!entry || !(entry.value instanceof Set)) return false;
+    if (!entry) return false;
     if (Date.now() > entry.expiresAt) {
       this.memoryStore.delete(key);
       return false;
     }
-    return entry.value instanceof Set ? entry.value.has(member) : false;
+    if (!(entry.value instanceof Set)) return false;
+    return entry.value.has(member);
   }
 
   async removeFromSet(key, member) {
@@ -163,14 +136,14 @@ class DedupStore {
 
   _startSweeper(intervalMs = 60000) {
     if (this._sweeper) return;
-    this._sweeper = registerTimer(setInterval(() => {
+    this._sweeper = setInterval(() => {
       const now = Date.now();
       for (const [key, entry] of this.memoryStore) {
         if (now > entry.expiresAt) {
           this.memoryStore.delete(key);
         }
       }
-    }, intervalMs));
+    }, intervalMs);
     if (this._sweeper.unref) this._sweeper.unref();
   }
 
