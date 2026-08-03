@@ -116,17 +116,20 @@ const MAX_FILES_PER_ANALYSIS = parseInt(process.env.MAX_FILES_PER_ANALYSIS || '1
 // Trust the first hop of reverse proxy headers (Render, Railway, Heroku, Nginx, AWS ALB, etc.)
 // so that req.ip and express-rate-limit resolve the real client IP from X-Forwarded-For
 // rather than the internal proxy address.
-// Set TRUST_PROXY=false in .env to disable this when running without a proxy (e.g. local dev).
-const trustProxy = process.env.TRUST_PROXY !== 'false';
+// This is opt-in: it is enabled ONLY when TRUST_PROXY=true. Trusting X-Forwarded-For by
+// default lets anyone who can reach the app directly spoof req.ip and bypass rate limits.
+const trustProxy = process.env.TRUST_PROXY === 'true';
 if (trustProxy) {
   app.set('trust proxy', 1);
 }
 
-// NOTE: No custom keyGenerator is needed. With `trust proxy: 1` set above, Express
-// automatically resolves req.ip to the real client IP by stripping the known proxy
+// NOTE: No custom keyGenerator is needed. When `trust proxy: 1` is enabled (TRUST_PROXY=true),
+// Express automatically resolves req.ip to the real client IP by stripping the known proxy
 // hop from X-Forwarded-For. express-rate-limit defaults to req.ip, which is already
 // correct. A custom function that reads X-Forwarded-For directly would trust the
 // leftmost (client-controlled) value, allowing IP spoofing to bypass rate limits.
+// By default (no TRUST_PROXY), req.ip is the direct socket address, so rate limits
+// cannot be bypassed via spoofed headers.
 
 // Enable CORS with explicit origin
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:5173').split(',').map(s => s.trim());
