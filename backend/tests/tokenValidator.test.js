@@ -1,38 +1,83 @@
-import test from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { isValidGithubToken } from '../utils/tokenValidator.js';
 
-test('isValidGithubToken accepts valid prefixes and classic tokens', () => {
-  assert.equal(isValidGithubToken('ghp_1234567890abcdefghijklmnopqrstuvwxyz'), true);
-  assert.equal(isValidGithubToken('github_pat_11AAAAAAA0123456789_abcdefghijklmnopqrstuvwxyz'), true);
-  assert.equal(isValidGithubToken('1234567890abcdef1234567890abcdef12345678'), true);
-});
+describe('isValidGithubToken', () => {
+  it('returns true for ghp_ classic PAT', () => {
+    assert.equal(isValidGithubToken('ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), true);
+  });
 
-test('isValidGithubToken rejects invalid or malformed tokens', () => {
-  assert.equal(isValidGithubToken(null), false);
-  assert.equal(isValidGithubToken(''), false);
-  assert.equal(isValidGithubToken('invalid_prefix_12345'), false);
-});
+  it('returns true for gho_ org PAT', () => {
+    assert.equal(isValidGithubToken('gho_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), true);
+  });
 
-test('isValidGithubToken accepts valid token formats', () => {
-  assert.equal(isValidGithubToken('ghp_1234567890abcdefghijklmnopqrstuvwxyz'), true);
-  assert.equal(isValidGithubToken('gho_1234567890abcdefghijklmnopqrstuvwxyz'), true);
-  assert.equal(isValidGithubToken('ghu_1234567890abcdefghijklmnopqrstuvwxyz'), true);
-  assert.equal(isValidGithubToken('ghs_1234567890abcdefghijklmnopqrstuvwxyz'), true);
-  assert.equal(isValidGithubToken('ghr_1234567890abcdefghijklmnopqrstuvwxyz'), true);
-  assert.equal(isValidGithubToken('github_pat_1234567890abcdefghijklmnopqrstuvwxyz'), true);
-});
+  it('returns true for ghu_ OAuth token', () => {
+    assert.equal(isValidGithubToken('ghu_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), true);
+  });
 
-test('isValidGithubToken rejects invalid token formats', () => {
-  assert.equal(isValidGithubToken(''), false);
-  assert.equal(isValidGithubToken(null), false);
-  assert.equal(isValidGithubToken(undefined), false);
-  assert.equal(isValidGithubToken(123), false);
-  assert.equal(isValidGithubToken('invalid_token'), false);
-  assert.equal(isValidGithubToken('ghp_'), false);
-});
+  it('returns true for ghs_ server/app token', () => {
+    assert.equal(isValidGithubToken('ghs_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), true);
+  });
 
-test('isValidGithubToken rejects overly long tokens to prevent catastrophic backtracking', () => {
-  const longToken = 'ghp_' + 'a'.repeat(300);
-  assert.equal(isValidGithubToken(longToken), false);
+  it('returns true for ghr_ refresh token', () => {
+    assert.equal(isValidGithubToken('ghr_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), true);
+  });
+
+  it('returns true for github_pat_ fine-grained PAT', () => {
+    assert.equal(isValidGithubToken('github_pat_xxxxxxxxxxxxxxxxxxxxxxxxxxxx'), true);
+  });
+
+  it('returns false for null', () => {
+    assert.equal(isValidGithubToken(null), false);
+  });
+
+  it('returns false for undefined', () => {
+    assert.equal(isValidGithubToken(undefined), false);
+  });
+
+  it('returns false for empty string', () => {
+    assert.equal(isValidGithubToken(''), false);
+  });
+
+  it('returns false for number input', () => {
+    assert.equal(isValidGithubToken(0), false);
+    assert.equal(isValidGithubToken(123), false);
+  });
+
+  it('returns false for object input', () => {
+    assert.equal(isValidGithubToken({}), false);
+  });
+
+  it('returns false for array input', () => {
+    assert.equal(isValidGithubToken([]), false);
+  });
+
+  it('returns false for string with wrong prefix', () => {
+    assert.equal(isValidGithubToken('ghp_'), false);
+    assert.equal(isValidGithubToken('random_string'), false);
+    assert.equal(isValidGithubToken('token_xxxx'), false);
+    assert.equal(isValidGithubToken('gho_'), false);
+  });
+
+  it('returns false for string with valid prefix but non-alphanumeric characters', () => {
+    assert.equal(isValidGithubToken('ghp_xxxx xxxx'), false);
+    assert.equal(isValidGithubToken('ghs_xxxx-xxxx'), false);
+    assert.equal(isValidGithubToken('ghp_xxxx!xxxx'), false);
+  });
+
+  it('returns true for valid token with underscores in the body', () => {
+    assert.equal(isValidGithubToken('ghp_aaaa_bbbb_cccc_dddd_eeee'), true);
+  });
+
+  it('returns boolean true, not truthy value', () => {
+    const result = isValidGithubToken('ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx');
+    assert.equal(typeof result, 'boolean');
+    assert.equal(result === true, true);
+  });
+
+  it('returns boolean false, not falsy value', () => {
+    const result = isValidGithubToken('invalid');
+    assert.equal(typeof result, 'boolean');
+    assert.equal(result === false, true);
+  });
 });

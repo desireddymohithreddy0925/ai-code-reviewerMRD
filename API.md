@@ -17,6 +17,7 @@ This document describes the HTTP endpoints exposed by the two services in this p
   - [POST /review-diff](#post-review-diff)
   - [POST /api/rag/split](#post-apiragsplit)
   - [POST /api/rag/query](#post-apiragquery)
+  - [POST /api/rag/cleanup](#post-apiragcleanup)
 - [Error Responses](#error-responses)
 
 ---
@@ -549,7 +550,7 @@ curl -X POST http://localhost:8000/api/rag/query \
 
 ### POST /api/rag/cleanup
 
-Removes stale vector embeddings from the ChromaDB collection for files that no longer exist in the repository. This is typically called before a re-ingestion to prevent stale chunks from polluting new reviews.
+Removes stale vector embeddings from ChromaDB for files that no longer exist in the repository. This is called during repository re-analysis to prevent old code from polluting new review results.
 
 #### Request
 
@@ -558,21 +559,20 @@ Removes stale vector embeddings from the ChromaDB collection for files that no l
 | Header         | Value              | Required |
 | -------------- | ------------------ | -------- |
 | `Content-Type` | `application/json` | Yes      |
-| `x-api-key`    | API key string     | Yes      |
 
 **Body**
 
-| Field          | Type     | Required | Description                                           |
-| -------------- | -------- | -------- | ----------------------------------------------------- |
-| `current_files`| array\<string> | Yes | List of file paths currently present in the repository. |
-| `repo_url`     | string  | No       | Repository URL to scope the cleanup operation.           |
+| Field         | Type     | Required | Description                                              |
+| ------------ | -------- | -------- | -------------------------------------------------------- |
+| `current_files` | array\<string> | Yes | List of file paths currently present in the repository. |
+| `repo_url`   | string   | No       | Repository URL used to scope cleanup to a specific repo. |
 
 **Example request body**
 
 ```json
 {
-  "current_files": ["src/main.py", "src/utils.py"],
-  "repo_url": "https://github.com/user/repo"
+  "current_files": ["src/app.py", "src/utils.py", "README.md"],
+  "repo_url": "https://github.com/user/my-repo"
 }
 ```
 
@@ -580,15 +580,15 @@ Removes stale vector embeddings from the ChromaDB collection for files that no l
 
 **Status `200 OK`**
 
-| Field       | Type   | Description                                       |
-| ----------- | ------ | ------------------------------------------------- |
-| `deleted_count` | number | Number of stale chunks removed from the vector store. |
+| Field          | Type   | Description                                   |
+| -------------- | ------ | --------------------------------------------- |
+| `deleted_count` | number | Number of stale chunks removed from ChromaDB. |
 
 **Example response body**
 
 ```json
 {
-  "deleted_count": 12
+  "deleted_count": 7
 }
 ```
 
@@ -597,66 +597,10 @@ Removes stale vector embeddings from the ChromaDB collection for files that no l
 ```bash
 curl -X POST http://localhost:8000/api/rag/cleanup \
   -H "Content-Type: application/json" \
-  -H "x-api-key: your-api-key" \
-  -d '{"current_files": ["src/main.py"], "repo_url": "https://github.com/user/repo"}'
-```
-
----
-
-### POST /api/rag/delete-vectors
-
-Deletes all vector embeddings for a specific file from the ChromaDB collection. Use this when a file is renamed or deleted and its vectors should be removed.
-
-#### Request
-
-**Headers**
-
-| Header         | Value              | Required |
-| -------------- | ------------------ | -------- |
-| `Content-Type` | `application/json` | Yes      |
-| `x-api-key`    | API key string     | Yes      |
-
-**Body**
-
-| Field       | Type   | Required | Description                                          |
-| ----------- | ------ | -------- | ----------------------------------------------------- |
-| `file_path` | string | Yes      | Exact file path whose vectors should be deleted.        |
-| `repo_url`  | string | No       | Repository URL to scope the deletion.                   |
-
-**Example request body**
-
-```json
-{
-  "file_path": "src/removed.py",
-  "repo_url": "https://github.com/user/repo"
-}
-```
-
-#### Response
-
-**Status `200 OK`**
-
-| Field         | Type   | Description                                       |
-| ------------ | ------ | ------------------------------------------------- |
-| `removed_count` | number | Number of chunks removed for the file.             |
-| `file_path`    | string | Echoed back the file_path from the request.        |
-
-**Example response body**
-
-```json
-{
-  "removed_count": 3,
-  "file_path": "src/removed.py"
-}
-```
-
-#### curl Example
-
-```bash
-curl -X POST http://localhost:8000/api/rag/delete-vectors \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: your-api-key" \
-  -d '{"file_path": "src/removed.py", "repo_url": "https://github.com/user/repo"}'
+  -d '{
+    "current_files": ["src/app.py", "src/utils.py"],
+    "repo_url": "https://github.com/user/my-repo"
+  }'
 ```
 
 ---
