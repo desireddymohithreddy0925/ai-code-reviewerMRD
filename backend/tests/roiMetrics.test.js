@@ -80,9 +80,9 @@ test('RoiMetrics recordPrReview calls findOneAndUpdate with correct arguments', 
     return { repoName: 'test/repo', totalPrsReviewed: 1, totalAiComments: 3 };
   };
 
-  const result = await RoiMetrics.recordPrReview('test/repo', 3);
+  const result = await RoiMetrics.recordPrReview('test-client', 'test/repo', 3);
 
-  assert.deepEqual(capturedQuery, { repoName: 'test/repo' }, 'query should filter by repoName');
+  assert.deepEqual(capturedQuery, { clientId: 'test-client', repoName: 'test/repo' }, 'query should filter by clientId and repoName');
   assert.equal(capturedUpdate.$inc.totalPrsReviewed, 1, 'should increment totalPrsReviewed by 1');
   assert.equal(capturedUpdate.$inc.totalAiComments, 3, 'should increment totalAiComments by given count');
   assert.equal(result.totalPrsReviewed, 1, 'result should reflect the updated values');
@@ -100,9 +100,9 @@ test('RoiMetrics recordAcceptedSuggestion calls findOneAndUpdate with correct ar
     return { repoName: 'test/repo', acceptedSuggestions: 1, timeSavedMinutes: 15 };
   };
 
-  const result = await RoiMetrics.recordAcceptedSuggestion('test/repo');
+  const result = await RoiMetrics.recordAcceptedSuggestion('test-client', 'test/repo');
 
-  assert.deepEqual(capturedQuery, { repoName: 'test/repo' }, 'query should filter by repoName');
+  assert.deepEqual(capturedQuery, { clientId: 'test-client', repoName: 'test/repo' }, 'query should filter by clientId and repoName');
   assert.equal(capturedUpdate.$inc.acceptedSuggestions, 1, 'should increment acceptedSuggestions by 1');
   assert.equal(capturedUpdate.$inc.timeSavedMinutes, 15, 'should increment timeSavedMinutes by 15 (15min per suggestion)');
   assert.equal(result.acceptedSuggestions, 1, 'result should reflect the updated values');
