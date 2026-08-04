@@ -1269,6 +1269,7 @@ if (reviewResult?.fileReviews) {
         chatAvailable: sessionPersisted,
         sessionPersisted,
         ragStatus,
+        ...(dependencyReport ? { dependencyReport } : {}),
         ...(fileWarnings.length > 0
             ? { warnings: fileWarnings }
             : {})
