@@ -1871,6 +1871,7 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
       if (reviewQueue._queues.size >= reviewQueue._maxQueues) {
         if (redisClient) {
           await redisClient.srem(shaDedupKey, headSha);
+          await redisClient.del(processingKey);
         } else {
           shaDedupMemoryMap.delete(`${shaDedupKey}:${headSha}`);
         }
@@ -1902,6 +1903,7 @@ app.post('/api/webhook', webhookLimiter, async (req, res) => {
         console.warn(`ΓÜá∩╕Å Rate limit exceeded for repository ${repoKey}`);
         if (redisClient) {
           await redisClient.srem(shaDedupKey, headSha);
+          await redisClient.del(processingKey);
         } else {
           shaDedupMemoryMap.delete(`${shaDedupKey}:${headSha}`);
         }
